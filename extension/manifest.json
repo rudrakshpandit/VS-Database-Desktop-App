@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "VS Database - Desktop Extension",
+  "version": "2.0.1",
+  "description": "Dedicated companion extension for VS Database Desktop Application (Port 8767). Auto-detects documents and saves filings directly into Desktop App.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "unlimitedStorage",
+    "commands",
+    "downloads",
+    "downloads.shelf",
+    "tabs",
+    "scripting",
+    "sidePanel",
+    "webNavigation",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["monogram.png", "icon.png", "icon16.png", "icon32.png", "icon48.png", "icon128.png", "logo.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "VS Database - Filing Side Panel",
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "save-filing": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+F"
+      },
+      "description": "Open filing save panel"
+    }
+  }
+}

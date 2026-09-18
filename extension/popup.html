@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VS Database</title>
+    <link rel="stylesheet" href="popup.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="app">
+    <header class="topbar">
+        <div class="brand" style="display:flex;align-items:center;gap:8px;">
+            <img src="monogram.png" alt="VS Database" style="width:34px;height:34px;object-fit:contain;border-radius:50%;background:#ffffff;padding:2px;box-shadow:0 2px 8px rgba(10,31,68,0.15);border:1.5px solid #e2e8f0;flex-shrink:0;">
+            <span style="font-size:14px;font-weight:800;color:#0A1F44;letter-spacing:-0.02em;">VS Database</span>
+        </div>
+        <div class="server-pill" id="server-pill-wrap" style="cursor:pointer;" title="Click to refresh connection">
+            <span class="dot" id="server-dot" style="background:#22c55e;"></span>
+            <span id="health">Online</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- STATUS BANNER / ALERTS -->
+        <div id="status" style="margin-bottom:12px;font-size:12px;font-weight:600;text-align:center;"></div>
+
+        <!-- PRE-DETECTED / DOWNLOAD INTERCEPT FILE BANNER -->
+        <div id="detected-file-banner" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:12px;margin-bottom:14px;box-shadow:0 4px 12px rgba(37,99,235,0.08);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <span style="font-size:10px;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:0.05em;">⚡ Auto-Detected File</span>
+                <div style="display:flex;gap:6px;">
+                    <button id="btn-rename-detected" type="button" style="font-size:10px;color:#2563eb;background:#fff;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;cursor:pointer;font-weight:700;">✏️ Rename</button>
+                    <button id="btn-clear-detected" type="button" style="font-size:10px;color:#dc2626;background:none;border:none;cursor:pointer;font-weight:700;">Clear</button>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span id="detected-file-icon" style="font-size:24px;">📑</span>
+                <div style="overflow:hidden;flex:1;">
+                    <strong id="detected-file-name" style="font-size:12.5px;color:#1e293b;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;">filing.pdf</strong>
+                    <small id="detected-file-info" style="color:#64748b;font-size:10px;">Ready to file into VS Database</small>
+                </div>
+            </div>
+
+            <!-- INLINE RENAME FORM IN POPUP -->
+            <div id="popup-rename-box" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #bfdbfe;">
+                <label style="font-size:10px;font-weight:700;color:#1e40af;margin:0 0 4px 0;display:block;">RENAME DOCUMENT</label>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <input id="popup-rename-basename" type="text" style="flex:1;font-size:12px;padding:6px 8px;font-weight:600;" placeholder="Document Name">
+                    <span id="popup-rename-ext-badge" style="background:#e2e8f0;color:#1e293b;font-weight:800;font-size:11px;padding:6px 8px;border-radius:8px;border:1px solid #cbd5e1;user-select:none;">.pdf</span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:8px;">
+                    <button id="btn-popup-rename-save" type="button" style="flex:1;background:#2563eb;color:#fff;border:none;border-radius:8px;padding:6px;font-size:11px;font-weight:700;cursor:pointer;">✓ Save Name</button>
+                    <button id="btn-popup-rename-cancel" type="button" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- AUTHENTICATED MAIN ACTIONS -->
+        <div id="auth-actions">
+            <!-- FILE UPLOAD DROPZONE -->
+            <section class="card" id="card-upload">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <div class="card-title" style="margin:0;">Select or Drop File</div>
+                    <button id="btn-rename-selected" type="button" style="display:none;font-size:10px;color:#2563eb;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:2px 8px;cursor:pointer;font-weight:700;">✏️ Rename</button>
+                </div>
+                <p class="subtitle" style="margin-bottom:10px;">PDF, Excel, Word, CSV, Zip</p>
+
+                <label id="drop" class="dropzone" style="min-height:100px;padding:12px;">
+                    <div class="upload-icon" style="font-size:26px;margin-bottom:4px;">📄</div>
+                    <small id="file-label" style="font-size:11px;font-weight:600;color:#334155;">Click or drop document here</small>
+                </label>
+
+                <input id="pdf" type="file" accept=".pdf,.xlsx,.xls,.csv,.docx,.doc,.zip,.json,application/*" multiple hidden>
+            </section>
+
+            <!-- PDF SECURITY TOOLS -->
+            <section class="card" id="pdf-security-card" style="display:none;background:#fefce8;border-color:#fef08a;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <div style="font-size:12px;font-weight:700;color:#854d0e;display:flex;align-items:center;gap:6px;">
+                        <span>🔒</span> PDF Security Tools
+                    </div>
+                    <span id="pdf-sec-status-badge" style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:#fffbeb;color:#b45309;">PDF Detected</span>
+                </div>
+                <p style="font-size:11px;color:#713f12;margin:0 0 10px 0;" id="pdf-sec-desc">Lock with password or unlock before filing</p>
+                <div style="display:flex;gap:6px;">
+                    <button type="button" class="secondary" id="btn-popup-lock-pdf" style="flex:1;font-size:11px;padding:6px 8px;border-color:#fca5a5;color:#991b1b;background:#fff;">🔒 Lock PDF</button>
+                    <button type="button" class="secondary" id="btn-popup-unlock-pdf" style="flex:1;font-size:11px;padding:6px 8px;border-color:#86efac;color:#166534;background:#fff;">🔓 Unlock PDF</button>
+                </div>
+
+                <!-- POPUP LOCK INLINE FORM -->
+                <div id="popup-lock-form" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #fde047;">
+                    <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Password *</label>
+                    <input type="password" id="popup-lock-pw" placeholder="Enter password to encrypt" style="width:100%;margin-bottom:6px;">
+                    <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Confirm Password *</label>
+                    <input type="password" id="popup-lock-confirm-pw" placeholder="Re-enter password" style="width:100%;margin-bottom:6px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;margin-bottom:6px;">
+                        <input type="checkbox" id="popup-lock-remember" checked>
+                        <span>Remember password for this client</span>
+                    </label>
+                    <input type="text" id="popup-lock-label" value="GST Password" placeholder="Label (e.g. GST Password)" style="width:100%;margin-bottom:8px;font-size:11px;">
+                    <button type="button" class="primary" id="btn-apply-popup-lock" style="width:100%;background:#dc2626;border-color:#b91c1c;font-size:11px;">Encrypt & Lock PDF</button>
+                </div>
+
+                <!-- POPUP UNLOCK INLINE FORM -->
+                <div id="popup-unlock-form" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #fde047;">
+                    <div id="popup-saved-passwords-wrap" style="display:none;margin-bottom:8px;">
+                        <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Client Saved Passwords:</label>
+                        <select id="popup-saved-password-select" style="width:100%;margin-bottom:6px;font-size:11px;"></select>
+                    </div>
+                    <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Enter Password (or choose above)</label>
+                    <input type="password" id="popup-unlock-pw" placeholder="Enter PDF password" style="width:100%;margin-bottom:6px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;margin-bottom:6px;">
+                        <input type="checkbox" id="popup-unlock-remember">
+                        <span>Remember this password for client</span>
+                    </label>
+                    <input type="text" id="popup-unlock-label" placeholder="Label (e.g. GST)" style="width:100%;margin-bottom:8px;font-size:11px;display:none;">
+                    <div style="display:flex;gap:6px;">
+                        <button type="button" class="secondary" id="btn-popup-auto-try" style="flex:1;font-size:10px;display:none;">⚡ Try Saved</button>
+                        <button type="button" class="primary" id="btn-apply-popup-unlock" style="flex:1;background:#16a34a;border-color:#15803d;font-size:11px;">Decrypt PDF</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- DETAILS & FILING -->
+            <section class="card">
+                <div class="row">
+                    <div style="flex:2;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <label style="margin:0;font-size:12px;font-weight:700;">Client *</label>
+                            <button id="btn-refresh-clients" type="button" title="Refresh client list" style="border:none;background:none;color:#2563eb;cursor:pointer;font-size:11px;font-weight:700;">🔄 Refresh</button>
+                        </div>
+                        <select id="client"><option value="">Select client...</option></select>
+                    </div>
+                    <div style="flex:1;">
+                        <label style="margin:0 0 4px 0;font-size:12px;font-weight:700;">Storage</label>
+                        <select id="storage-kind">
+                            <option value="local">Local</option>
+                            <option value="drive">Drive</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- DIRECT FOLDER DESTINATION NAVIGATOR -->
+                <div style="margin-top:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <label style="margin:0;font-size:12px;font-weight:700;">Destination Folder *</label>
+                        <span id="folder-status-tag" style="font-size:10px;color:#2563eb;font-weight:600;">Client Folders</span>
+                    </div>
+                    <div id="selected-folder-box" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;font-size:11px;">
+                        <div style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            <span>📁</span>
+                            <strong id="selected-folder-label" style="color:#1e40af;">/ (Client Root)</strong>
+                        </div>
+                        <button id="btn-reset-folder-sel" type="button" style="font-size:10px;padding:2px 6px;border:0;background:transparent;color:#2563eb;cursor:pointer;font-weight:700;">Root</button>
+                    </div>
+                    
+                    <div id="folder-navigator" style="margin-top:8px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:8px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #f1f5f9;gap:6px;">
+                            <button id="folder-nav-up" type="button" style="font-size:10px;font-weight:700;padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#f8fafc;cursor:pointer;">⮜ Up</button>
+                            <span id="folder-nav-current-crumb" style="font-size:11px;font-weight:600;color:#1e293b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/ (Client Root)</span>
+                            <button id="folder-nav-select-this" type="button" style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:#2563eb;color:#fff;border:0;cursor:pointer;">✓ Select This</button>
+                        </div>
+                        <div id="folder-nav-list" style="max-height:140px;overflow-y:auto;">
+                            <div style="padding:10px;font-size:11px;color:#64748b;text-align:center;">Select a client above to view folders</div>
+                        </div>
+                    </div>
+                </div>
+
+                <label style="margin-top:12px;">Expected Practive Task (Optional)</label>
+                <input id="practive-task" placeholder="ITR Filing / GST Return">
+
+                <label class="checkbox">
+                    <input id="practive" type="checkbox">
+                    Continue with visible Practive Upload
+                </label>
+
+                <label class="checkbox">
+                    <input id="client-visible" type="checkbox">
+                    Save a copy in client's shared folder
+                </label>
+
+                <button id="save" class="primary" style="margin-top:14px;padding:14px;">Save Document</button>
+            </section>
+        </div>
+
+        <input id="server" type="hidden" value="http://localhost:8767">
+    </main>
+</div>
+
+<script src="config.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

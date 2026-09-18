@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# PyInstaller / Build outputs
+build/
+dist/
+*.exe
+*.pkg
+*.spec.bak
+
+# App Data & Local State (Databases, logs, tokens, backups, staging)
+data/
+scratch/
+*.log
+*.tmp
+console_run.txt
+winforms_error.log
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

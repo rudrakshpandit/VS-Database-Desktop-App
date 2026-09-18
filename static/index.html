@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+    <title>VS Database</title>
+    
+    <!-- Mobile PWA & Home Screen App Meta -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="VS Database">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="application-name" content="VS Database">
+
+    <!-- High-Resolution Home Screen Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=20260822">
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png?v=20260822">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20260822">
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=20260822">
+    <link rel="manifest" href="/manifest.json?v=20260822">
+    <link rel="stylesheet" href="app.css?v=20260821_storage_levels">
+</head>
+
+<body>
+
+<!-- Universal Desktop Drag & Drop Overlay -->
+<div id="vs-global-drop-overlay" class="vs-global-drop-overlay">
+    <div class="vs-global-drop-card">
+        <div style="font-size: 48px; margin-bottom: 12px; filter: drop-shadow(0 4px 12px rgba(59,130,246,0.3));">📥</div>
+        <h2 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em;">Drop Files to Import</h2>
+        <p style="margin: 0; font-size: 13px; color: #64748b; font-weight: 500;">Release to import files directly into VS Database</p>
+    </div>
+</div>
+
+<!-- 4K Startup Intro Glassmorphic Splash Screen -->
+<div id="vs-daily-startup-splash" class="startup-splash-overlay" style="display:none;">
+    <div class="startup-frosted-glass-card">
+        <div class="startup-glass-reflection"></div>
+        <video id="vs-startup-video" src="Startup.mp4?v=20260827_smooth_fade_v2" playsinline muted autoplay preload="auto"></video>
+    </div>
+</div>
+
+<div id="app-startup-splash" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg, rgba(238,242,255,0.98), rgba(248,250,252,0.98));z-index:999999;flex-direction:column;align-items:center;justify-content:center;font-family:Inter,system-ui,-apple-system,sans-serif;transition:opacity 0.35s ease, visibility 0.35s ease;">
+    <div style="background:rgba(255,255,255,0.85);backdrop-filter:blur(16px);border:1px solid rgba(226,232,240,0.9);border-radius:24px;padding:36px 44px;display:flex;flex-direction:column;align-items:center;box-shadow:0 20px 50px rgba(10,31,68,0.12);max-width:380px;width:90%;text-align:center;">
+        <img src="monogram.png" alt="VS Database" style="width:72px;height:72px;object-fit:contain;margin-bottom:14px;filter:drop-shadow(0 6px 16px rgba(37,99,235,0.2));">
+        <h2 style="margin:0 0 4px;font-size:20px;font-weight:800;color:#0A1F44;letter-spacing:-0.03em;">VS DATABASE</h2>
+        <p style="margin:0 0 20px;font-size:12px;color:#64748b;font-weight:500;">Office Filing & Client Vault</p>
+        
+        <div style="width:100%;background:#f1f5f9;border-radius:12px;padding:12px 16px;margin-bottom:16px;text-align:left;font-size:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="color:#475569;font-weight:600;">Database Engine</span>
+                <span id="splash-step-db" style="color:#16a34a;font-weight:700;">✓ Ready</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="color:#475569;font-weight:600;">Desktop Server</span>
+                <span id="splash-step-srv" style="color:#16a34a;font-weight:700;">✓ Online</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="color:#475569;font-weight:600;">Client Vault</span>
+                <span id="splash-step-auth" style="color:#2563eb;font-weight:700;">Loading...</span>
+            </div>
+        </div>
+        
+        <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#64748b;">
+            <div style="width:14px;height:14px;border:2px solid #cbd5e1;border-top-color:#2563eb;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+            <span>Starting workspace...</span>
+        </div>
+    </div>
+</div>
+
+<header class="app-header">
+    <div class="header-drag-zone">
+        <div class="brand">
+            <img src="logo.png" alt="VS Database" height="120">
+        </div>
+    </div>
+
+    <div class="header-status-group">
+        <div class="server-status">
+            <span class="online-dot"></span>
+            <span id="health">Checking server...</span>
+        </div>
+        <div class="server-status" id="drive-status">Drive status checking...</div>
+        <div class="user-profile-badge" id="user-status" style="display:none">
+            <span class="user-avatar-icon">👤</span>
+            <span id="current-user-badge">User</span>
+            <button id="logout-btn" class="btn-logout" title="Sign out of VS Database">
+                <span>Logout</span>
+                <span style="font-size:11px;">🚪</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Desktop Window Controls (Minimize, Maximize, Close) -->
+    <div class="window-controls" id="desktop-window-controls" style="display:none;">
+        <button class="win-btn win-min" id="btn-win-min" title="Minimize">🗕</button>
+        <button class="win-btn win-max" id="btn-win-max" title="Maximize / Restore">🗖</button>
+        <button class="win-btn win-close" id="btn-win-close" title="Close">✕</button>
+    </div>
+</header>
+
+<main>
+    <nav id="main-nav">
+        <button class="active" data-page="dashboard"><span class="nav-icon">📊</span><span class="nav-text">Dashboard</span></button>
+        <button data-page="clients"><span class="nav-icon">👥</span><span class="nav-text">Clients</span></button>
+        <button data-page="folders"><span class="nav-icon">📁</span><span class="nav-text">Folder Structure</span></button>
+        <button data-page="save"><span class="nav-icon">💾</span><span class="nav-text">Save Files</span></button>
+        <button data-page="pdf-studio"><span class="nav-icon">📄</span><span class="nav-text">PDF Studio</span></button>
+        <button data-page="drive"><span class="nav-icon"><img src="google-drive.ico" alt="Drive" class="nav-img-icon"></span><span class="nav-text">Drive Sharing</span></button>
+        <button data-page="backup"><span class="nav-icon">🛡️</span><span class="nav-text">Backup & Restore</span></button>
+        <button data-page="activity"><span class="nav-icon">⚡</span><span class="nav-text">Activity</span></button>
+        <button data-page="setup"><span class="nav-icon">⚙️</span><span class="nav-text">Setup</span></button>
+        <button data-page="users" id="nav-users" style="display:none"><span class="nav-icon">👤</span><span class="nav-text">Users & Devices</span></button>
+    </nav>
+
+    <section id="content"></section>
+    
+    <footer class="app-site-footer">
+        <div class="site-credit-badge">
+            <span style="font-size:14px;line-height:1;">✨</span>
+            <span>© Designed & Created By Rudraksh Sikhwal</span>
+        </div>
+    </footer>
+</main>
+
+<div id="auth-modal-root"></div>
+
+<script src="save-staging.js?v=20260917"></script>
+<script src="pdf-studio.js?v=20260917"></script>
+<script src="app.js?v=20260821_isolated_portals"></script>
+<script src="enhancements.js?v=20260821_isolated_portals"></script>
+<script src="client-portal.js?v=20260821_isolated_portals"></script>
+
+</body>
+</html>

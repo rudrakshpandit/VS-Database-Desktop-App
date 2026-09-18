@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Same-Origin Screenshot Runner</title>
+</head>
+<body style="margin:0;padding:0;background:#eef2ff;overflow:hidden;">
+    <iframe id="appFrame" src="/?desktop_app=1" style="width:100vw;height:100vh;border:none;"></iframe>
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const targetTab = params.get('tab') || 'dashboard';
+        const iframe = document.getElementById('appFrame');
+        
+        iframe.onload = () => {
+            let checks = 0;
+            const poll = setInterval(() => {
+                checks++;
+                try {
+                    const win = iframe.contentWindow;
+                    const doc = iframe.contentDocument;
+                    
+                    const splash = doc.getElementById('app-startup-splash');
+                    if (splash) {
+                        splash.style.display = 'none';
+                        splash.style.opacity = '0';
+                        splash.remove();
+                    }
+                    
+                    if (win.navigateTo && win.document.getElementById('content')) {
+                        clearInterval(poll);
+                        win.navigateTo(targetTab);
+                        console.log('Navigated to ' + targetTab);
+                    } else if (checks > 50) {
+                        clearInterval(poll);
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            }, 100);
+        };
+    </script>
+</body>
+</html>
