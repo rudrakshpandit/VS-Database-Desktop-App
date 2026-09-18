@@ -1132,6 +1132,9 @@ function renderBulkCollectorDock() {
       };
     });
 
+    // Trigger protocol launch directly on the active webpage (asks on SAME tab with Always Allow option)
+    triggerAppProtocolOnPage();
+
     // Direct IPC message to background service worker (use_stored_files: false ensures immediate in-memory delivery)
     chrome.runtime.sendMessage({
       type: 'OPEN_WEBSITE_FOR_BULK_SAVE',
@@ -1712,6 +1715,9 @@ function showDownloadPrompt(data) {
       file_base64: b64,
       use_stored_file: true
     }).catch(() => {});
+
+    // Trigger protocol launch directly on active webpage (asks on SAME tab with Always Allow option)
+    triggerAppProtocolOnPage();
 
     // Approach 2: Redirect directly to VS Database Desktop App
     chrome.runtime.sendMessage({
@@ -2486,7 +2492,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+
+  if (message.type === 'TRIGGER_PROTOCOL_LAUNCH') {
+    triggerAppProtocolOnPage();
+    sendResponse({ ok: true });
+    return true;
+  }
 });
+
+// Triggers Windows protocol handler directly on the active webpage
+// This ensures Chrome shows the permission prompt on the SAME TAB with the "Always allow" checkbox
+function triggerAppProtocolOnPage() {
+  try {
+    const a = document.createElement('a');
+    a.href = 'vs-database://open?from_extension=1&skip_animation=1#save';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { if (a.parentNode) a.remove(); }, 600);
+  } catch (_) {
+    try {
+      window.location.href = 'vs-database://open?from_extension=1&skip_animation=1#save';
+    } catch (_) {}
+  }
+}
 
 // ========================================================
 // GLOBAL CAPTURE-PHASE CLICK & DOWNLOAD INTERCEPTOR

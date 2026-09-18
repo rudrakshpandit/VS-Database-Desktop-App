@@ -715,61 +715,83 @@ function desktopEndpointForPort(port) {
   return `http://127.0.0.1:${port}`;
 }
 
-async function findDesktopEndpoint(timeoutMs = 1200) {
+let cachedDesktopEndpoint = 'http://127.0.0.1:8767';
+
+async function findDesktopEndpoint(timeoutMs = 400) {
+  // 1. Ultra-fast check on cached/default 8767 endpoint (completes in 1-2ms on local loopback)
+  const candidate = cachedDesktopEndpoint || 'http://127.0.0.1:8767';
+  try {
+    const fastResp = await fetch(`${candidate}/api/desktop/health`, {
+      signal: AbortSignal.timeout(120)
+    });
+    if (fastResp.ok) {
+      const health = await fastResp.json().catch(() => null);
+      if (health && health.ok && health.service === 'VS Database Desktop') {
+        cachedDesktopEndpoint = candidate;
+        return candidate;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Fast check of stored server or fallback localhost
   const stored = await chrome.storage.local.get(['server']);
   let storedServer = (stored.server || '').replace(/\/$/, '');
   if (storedServer.includes(':8766')) storedServer = '';
 
-  const candidates = [
-    storedServer,
-    ...DESKTOP_PORTS.map(desktopEndpointForPort)
-  ].filter(Boolean);
-
-  const checks = await Promise.all([...new Set(candidates)].map(async endpoint => {
+  const quickCandidates = [storedServer, 'http://127.0.0.1:8767', 'http://localhost:8767'].filter(Boolean);
+  for (const ep of [...new Set(quickCandidates)]) {
     try {
-      const response = await fetch(`${endpoint}/api/desktop/health`, {
-        signal: AbortSignal.timeout(timeoutMs)
-      });
+      const resp = await fetch(`${ep}/api/desktop/health`, { signal: AbortSignal.timeout(180) });
+      if (resp.ok) {
+        const h = await resp.json().catch(() => null);
+        if (h && h.ok && h.service === 'VS Database Desktop') {
+          cachedDesktopEndpoint = ep;
+          await chrome.storage.local.set({ server: ep });
+          return ep;
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 3. Fallback scan across dynamic range (8767-8799)
+  const checks = await Promise.all(DESKTOP_PORTS.map(async p => {
+    const ep = `http://127.0.0.1:${p}`;
+    try {
+      const response = await fetch(`${ep}/api/desktop/health`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) return null;
       const health = await response.json().catch(() => null);
-      return health && health.ok && health.service === 'VS Database Desktop' ? endpoint : null;
+      return health && health.ok && health.service === 'VS Database Desktop' ? ep : null;
     } catch (_) {
       return null;
     }
   }));
   const endpoint = checks.find(Boolean) || null;
-  if (endpoint) await chrome.storage.local.set({ server: endpoint });
+  if (endpoint) {
+    cachedDesktopEndpoint = endpoint;
+    await chrome.storage.local.set({ server: endpoint });
+  }
   return endpoint;
 }
 
 async function redirectToDesktopApp(stagingData = null, originTabId = null) {
   if (isRedirectingToApp) return { ok: false, busy: true };
   isRedirectingToApp = true;
-  setTimeout(() => { isRedirectingToApp = false; }, 1500);
+  setTimeout(() => { isRedirectingToApp = false; }, 800);
 
-  // 1. Check if desktop application is currently running
-  let targetEndpoint = await findDesktopEndpoint(1200);
+  // 1. Ultra-fast check if desktop application is currently running (< 2ms)
+  let targetEndpoint = await findDesktopEndpoint(250);
 
-  // 2. If Desktop App is offline, launch it via Windows protocol handler
-  let launcherTabId = null;
+  // 2. If Desktop App is offline, wake it up via in-page protocol on the user's active tab
   if (!targetEndpoint) {
-    try {
-      launcherTabId = await new Promise(res => {
-        chrome.tabs.create({ url: 'vs-database://open?from_extension=1&skip_animation=1', active: false }, t => res(t?.id || null));
-      });
-
-      // Wait up to 20 seconds for PyInstaller cold-boot and server readiness
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        targetEndpoint = await findDesktopEndpoint(1200);
-        if (targetEndpoint) break;
-      }
-    } catch (_) {}
-  }
-
-  // Safely clean up protocol launcher tab now that application is verified ready
-  if (launcherTabId) {
-    chrome.tabs.remove(launcherTabId).catch(() => {});
+    if (originTabId) {
+      chrome.tabs.sendMessage(originTabId, { type: 'TRIGGER_PROTOCOL_LAUNCH' }).catch(() => {});
+    }
+    // Fast poll every 250ms for server readiness (completes as soon as binary boots)
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      targetEndpoint = await findDesktopEndpoint(150);
+      if (targetEndpoint) break;
+    }
   }
 
   if (!targetEndpoint) {
@@ -782,7 +804,7 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
   if (stagingData) {
     stagingData.origin_tab_id = originTabId;
     stagingData.is_redirected = true;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const postRes = await fetch(`${targetEndpoint}/api/staging/incoming`, {
           method: 'POST',
@@ -794,7 +816,7 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
           break;
         }
       } catch (e) {
-        await new Promise(r => setTimeout(r, 400));
+        await new Promise(r => setTimeout(r, 200));
       }
     }
     if (!serverResult || !serverResult.success) {
@@ -803,23 +825,12 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
     }
   }
 
-  // 4. Bring native desktop window to front on Windows
-  try {
-    await fetch(`${targetEndpoint}/api/desktop/bring_to_front`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}'
-    });
-  } catch (_) {}
-
-  // Also trigger protocol launch to ensure Windows OS brings minimized/background window to front
-  try {
-    chrome.tabs.create({ url: 'vs-database://open?from_extension=1&skip_animation=1#save', active: false }, t => {
-      if (t?.id) {
-        setTimeout(() => { chrome.tabs.remove(t.id).catch(() => {}); }, 1200);
-      }
-    });
-  } catch (_) {}
+  // 4. Bring native desktop window to front on Windows (non-blocking)
+  fetch(`${targetEndpoint}/api/desktop/bring_to_front`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  }).catch(() => {});
 
   return { ok: true, endpoint: targetEndpoint, result: serverResult };
 }
