@@ -202,10 +202,32 @@ async function startBackgroundCapture(url, downloadId) {
   return capturePromise;
 }
 
-// ========================================================
-// DOWNLOAD INTERCEPTOR (Instant UI + Concurrent Pre-fetch)
-// ========================================================
 const pendingDownloadDecisions = new Map();
+let isBulkModeActive = false;
+const bulkInterceptedDownloadIds = new Set();
+
+try {
+  chrome.storage.local.get(['bulk_mode'], (res) => {
+    if (res && res.bulk_mode) isBulkModeActive = true;
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.bulk_mode !== undefined) {
+      isBulkModeActive = Boolean(changes.bulk_mode.newValue);
+      if (!isBulkModeActive) {
+        bulkInterceptedDownloadIds.clear();
+      }
+    }
+  });
+} catch (_) {}
+
+chrome.downloads.onChanged.addListener((delta) => {
+  const dlId = Number(delta.id);
+  if (bulkInterceptedDownloadIds.has(dlId)) {
+    if (delta.state && delta.state.current === 'complete') {
+      cancelOrDeleteDownload(dlId);
+    }
+  }
+});
 
 async function waitForDownloadComplete(downloadId, timeoutMs = 45000) {
   if (!downloadId) return null;
@@ -346,28 +368,54 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     startBackgroundCapture(downloadItem.url, downloadItem.id).catch(() => {});
   }
 
-  // Set timeout to auto-allow normal download if user doesn't respond within 25 seconds
-  const timeoutId = setTimeout(() => {
-    pendingDownloadDecisions.delete(downloadItem.id);
-    try { suggest({ filename: downloadItem.filename || filename, conflictAction: 'uniquify' }); } catch (_) {}
-  }, 25000);
+  // Check storage asynchronously to ensure service worker wake-up has latest bulk_mode
+  chrome.storage.local.get(['bulk_mode'], (store) => {
+    const isBulk = Boolean(store && store.bulk_mode) || isBulkModeActive;
+    if (isBulk) {
+      isBulkModeActive = true;
+      bulkInterceptedDownloadIds.add(Number(downloadItem.id));
+      cancelOrDeleteDownload(downloadItem.id);
 
-  pendingDownloadDecisions.set(downloadItem.id, { suggest, timeoutId });
-
-  // Broadcast prompt to active tab
-  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-    if (tabs[0]?.id && !tabs[0].url?.startsWith('chrome://')) {
-      ensureContentScript(tabs[0].id).then(() => {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          type: 'SHOW_DOWNLOAD_INTERCEPT_PROMPT',
-          downloadId: downloadItem.id,
-          filename: filename,
-          url: downloadItem.url,
-          mime: downloadItem.mime,
-          fileSize: downloadItem.fileSize || downloadItem.totalBytes || 0
-        }).catch(() => {});
+      // Broadcast file to bulk collector dock on active tab
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        if (tabs[0]?.id && !tabs[0].url?.startsWith('chrome://')) {
+          ensureContentScript(tabs[0].id).then(() => {
+            chrome.tabs.sendMessage(tabs[0].id, {
+              type: 'SHOW_DOWNLOAD_INTERCEPT_PROMPT',
+              downloadId: downloadItem.id,
+              filename: filename,
+              url: downloadItem.url,
+              mime: downloadItem.mime,
+              fileSize: downloadItem.fileSize || downloadItem.totalBytes || 0
+            }).catch(() => {});
+          });
+        }
       });
+      return;
     }
+
+    // Normal non-bulk download prompt
+    const timeoutId = setTimeout(() => {
+      pendingDownloadDecisions.delete(downloadItem.id);
+      try { suggest({ filename: downloadItem.filename || filename, conflictAction: 'uniquify' }); } catch (_) {}
+    }, 25000);
+
+    pendingDownloadDecisions.set(downloadItem.id, { suggest, timeoutId });
+
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (tabs[0]?.id && !tabs[0].url?.startsWith('chrome://')) {
+        ensureContentScript(tabs[0].id).then(() => {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'SHOW_DOWNLOAD_INTERCEPT_PROMPT',
+            downloadId: downloadItem.id,
+            filename: filename,
+            url: downloadItem.url,
+            mime: downloadItem.mime,
+            fileSize: downloadItem.fileSize || downloadItem.totalBytes || 0
+          }).catch(() => {});
+        });
+      }
+    });
   });
 
   return true; // asynchronous filename determination
@@ -438,23 +486,34 @@ function flashBadge(text, color = '#22c55e', durationMs = 4000) {
 
 function cancelOrDeleteDownload(downloadId) {
   if (!downloadId) return;
-  chrome.downloads.search({ id: downloadId }, (items) => {
+  const numId = Number(downloadId);
+  const dlId = (!isNaN(numId) && Number.isInteger(numId) && numId > 0) ? numId : downloadId;
+
+  // 1. Immediate cancel to abort in-flight transfers instantly
+  try {
+    chrome.downloads.cancel(dlId, () => {
+      chrome.downloads.erase({ id: dlId }, () => {});
+    });
+  } catch (_) {}
+
+  // 2. Query download state to remove from disk if already completed
+  chrome.downloads.search({ id: dlId }, (items) => {
     if (items && items[0]) {
       const item = items[0];
-      if (item.state === 'in_progress') {
-        chrome.downloads.cancel(downloadId, () => {
-          chrome.downloads.erase({ id: downloadId }, () => {});
-        });
-      } else if (item.state === 'complete') {
+      if (item.state === 'complete') {
         try {
-          chrome.downloads.removeFile(downloadId, () => {
-            chrome.downloads.erase({ id: downloadId }, () => {});
+          chrome.downloads.removeFile(dlId, () => {
+            chrome.downloads.erase({ id: dlId }, () => {});
           });
         } catch (_) {
-          chrome.downloads.erase({ id: downloadId }, () => {});
+          chrome.downloads.erase({ id: dlId }, () => {});
         }
       } else {
-        chrome.downloads.erase({ id: downloadId }, () => {});
+        try {
+          chrome.downloads.cancel(dlId, () => {
+            chrome.downloads.erase({ id: dlId }, () => {});
+          });
+        } catch (_) {}
       }
     }
   });
@@ -658,13 +717,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       if (decision === 'bulk') {
-        // Permanently cancel and block normal browser download
+        isBulkModeActive = true;
+        await chrome.storage.local.set({ bulk_mode: true });
+        const pending = pendingDownloadDecisions.get(downloadId);
+        if (pending) {
+          clearTimeout(pending.timeoutId);
+          pendingDownloadDecisions.delete(downloadId);
+        }
         if (downloadId) {
-          try {
-            chrome.downloads.cancel(downloadId, () => {
-              chrome.downloads.erase({ id: downloadId }, () => {});
-            });
-          } catch (_) {}
+          const numId = Number(downloadId);
+          const dlId = (!isNaN(numId) && numId > 0) ? numId : downloadId;
+          bulkInterceptedDownloadIds.add(dlId);
+          cancelOrDeleteDownload(dlId);
         }
         sendResponse({ ok: true, blocked: true });
         return;
@@ -896,8 +960,7 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
         for (const sf of stagedList) {
           const dlId = sf.download_id || downloadId;
           if (dlId) {
-            try { chrome.downloads.cancel(dlId, () => {}); } catch (_) {}
-            try { chrome.downloads.erase({ id: dlId }, () => {}); } catch (_) {}
+            cancelOrDeleteDownload(dlId);
           }
         }
         await chrome.storage.local.remove(['pending_detected_file', 'latest_download_detected']);
@@ -972,10 +1035,10 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
           for (const sf of stagedList) {
             const numId = Number(sf.download_id);
             if (!isNaN(numId) && numId > 0) {
-              try { chrome.downloads.cancel(numId, () => {}); } catch (_) {}
-              try { chrome.downloads.erase({ id: numId }, () => {}); } catch (_) {}
+              cancelOrDeleteDownload(numId);
             }
           }
+          isBulkModeActive = false;
           await chrome.storage.local.remove(['bulk_pending_files', 'bulk_mode']);
         } else {
           console.warn('[Extension] Bulk staging was not acknowledged by desktop; preserving local downloads intact.');

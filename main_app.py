@@ -197,44 +197,65 @@ def main():
             is_from_ext = True
             break
 
-    # 2. Single-Instance Guard: If application server is already active, attempt to focus existing window
-    server_already_running = is_server_healthy(DESKTOP_PORT)
-    print(f"[Main] server_already_running={server_already_running} on port {DESKTOP_PORT}", flush=True)
-    if server_already_running:
-        brought = False
-        try:
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{DESKTOP_PORT}/api/desktop/bring_to_front",
-                data=b"{}",
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=1.2) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    print(f"[Main] Existing server bring_to_front response: {data}", flush=True)
-                    if data.get("ok") and data.get("brought_to_front"):
-                        brought = True
-        except Exception as b_exc:
-            print(f"[Main] bring_to_front request error: {b_exc}", flush=True)
-        if brought:
-            print("[Main] Existing window brought to front. Exiting duplicate instance.")
-            sys.exit(0)
+    # 2. Strict Single-Instance Windows Mutex Guard
+    # Guarantees that only ONE VS_Database.exe process can ever run at any time.
+    _instance_mutex = None
+    is_duplicate = False
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        MUTEX_NAME = "Global\\VS_Database_Single_Instance_Mutex_2026"
+        _instance_mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        last_error = kernel32.GetLastError()
+        is_duplicate = (last_error == 183)  # ERROR_ALREADY_EXISTS
+    except Exception as m_err:
+        print(f"[Main] Mutex initialization error: {m_err}", flush=True)
 
-    # 3. Start dedicated desktop server in background (only if not already running)
-    if not server_already_running:
-        DESKTOP_PORT = find_available_port(8767, 8799)
-        print(f"[Main] Starting background server on port {DESKTOP_PORT}...")
-        sys.stdout.flush()
-        server.start_server_background(port=DESKTOP_PORT)
-        for _ in range(50):
-            time.sleep(0.06)
+    server_already_running = is_server_healthy(DESKTOP_PORT)
+    print(f"[Main] Instance check: is_duplicate={is_duplicate}, server_already_running={server_already_running} on port {DESKTOP_PORT}", flush=True)
+
+    if is_duplicate or server_already_running:
+        print("[Main] Secondary instance detected. Focusing active instance and exiting...", flush=True)
+
+        # Attempt to focus window via existing desktop server
+        for _ in range(15):
             if is_server_healthy(DESKTOP_PORT):
-                print(f"[Main] Server verified healthy on port {DESKTOP_PORT}")
-                sys.stdout.flush()
-                break
-    else:
-        print(f"[Main] Reusing existing healthy server on port {DESKTOP_PORT} to open window.")
-        sys.stdout.flush()
+                try:
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{DESKTOP_PORT}/api/desktop/bring_to_front",
+                        data=b"{}",
+                        headers={"Content-Type": "application/json"}
+                    )
+                    with urllib.request.urlopen(req, timeout=1.0) as resp:
+                        if resp.status == 200:
+                            data = json.loads(resp.read().decode("utf-8"))
+                            print(f"[Main] Existing server bring_to_front response: {data}", flush=True)
+                            break
+                except Exception:
+                    pass
+            time.sleep(0.12)
+
+        # Direct Win32 Bring Window to Front Fallback
+        try:
+            bf_res = server.bring_desktop_app_to_front()
+            print(f"[Main] Direct Win32 bring_desktop_app_to_front: {bf_res}", flush=True)
+        except Exception as bf_err:
+            print(f"[Main] Direct Win32 focus error: {bf_err}", flush=True)
+
+        print("[Main] Secondary process exiting cleanly. Single instance preserved.")
+        sys.exit(0)
+
+    # 3. Start dedicated desktop server in background (Primary Instance Only)
+    DESKTOP_PORT = find_available_port(8767, 8799)
+    print(f"[Main] Starting background server on port {DESKTOP_PORT}...")
+    sys.stdout.flush()
+    server.start_server_background(port=DESKTOP_PORT)
+    for _ in range(50):
+        time.sleep(0.06)
+        if is_server_healthy(DESKTOP_PORT):
+            print(f"[Main] Server verified healthy on port {DESKTOP_PORT}")
+            sys.stdout.flush()
+            break
 
     # 4. Prepare window & icon
     bridge = DesktopBridge()

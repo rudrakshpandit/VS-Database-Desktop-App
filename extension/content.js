@@ -684,8 +684,14 @@ let bulkDockPos = null; // { left, top }
 
 // Restore saved dock position from chrome.storage
 try {
-  chrome.storage.local.get(['vs_bulk_dock_pos'], (res) => {
+  chrome.storage.local.get(['vs_bulk_dock_pos', 'bulk_mode'], (res) => {
     if (res && res.vs_bulk_dock_pos) bulkDockPos = res.vs_bulk_dock_pos;
+    if (res && res.bulk_mode) isBulkMode = true;
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.bulk_mode !== undefined) {
+      isBulkMode = Boolean(changes.bulk_mode.newValue);
+    }
   });
 } catch (_) {}
 
@@ -757,6 +763,7 @@ function addToBulkQueue(data) {
   };
   bulkQueue.push(item);
   isBulkMode = true;
+  try { chrome.storage.local.set({ bulk_mode: true }); } catch (_) {}
   renderBulkCollectorDock();
   showToast(`Added to Bulk Collector: "${item.filename}" (${bulkQueue.length} total)`);
 
@@ -1035,6 +1042,7 @@ function renderBulkCollectorDock() {
     if (confirm('Close Bulk Collector? Any queued files will be dismissed.')) {
       bulkQueue = [];
       isBulkMode = false;
+      try { chrome.storage.local.set({ bulk_mode: false }); } catch (_) {}
       dock.remove();
     }
   };
@@ -1042,6 +1050,7 @@ function renderBulkCollectorDock() {
   dock.querySelector('#vs-dock-btn-clear').onclick = () => {
     bulkQueue = [];
     isBulkMode = false;
+    try { chrome.storage.local.set({ bulk_mode: false }); } catch (_) {}
     dock.remove();
     showToast('Bulk Queue cleared.');
   };
@@ -1131,9 +1140,6 @@ function renderBulkCollectorDock() {
         base64: f.file_base64 || f.base64 || null
       };
     });
-
-    // Trigger protocol launch directly on the active webpage (asks on SAME tab with Always Allow option)
-    triggerAppProtocolOnPage();
 
     // Direct IPC message to background service worker (use_stored_files: false ensures immediate in-memory delivery)
     chrome.runtime.sendMessage({
@@ -1715,9 +1721,6 @@ function showDownloadPrompt(data) {
       file_base64: b64,
       use_stored_file: true
     }).catch(() => {});
-
-    // Trigger protocol launch directly on active webpage (asks on SAME tab with Always Allow option)
-    triggerAppProtocolOnPage();
 
     // Approach 2: Redirect directly to VS Database Desktop App
     chrome.runtime.sendMessage({
