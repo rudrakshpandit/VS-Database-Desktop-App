@@ -210,7 +210,8 @@ const pendingDownloadDecisions = new Map();
 async function waitForDownloadComplete(downloadId, timeoutMs = 45000) {
   if (!downloadId) return null;
   const numId = Number(downloadId);
-  const query = isNaN(numId) ? { id: downloadId } : { id: numId };
+  if (isNaN(numId) || !Number.isInteger(numId) || numId <= 0) return null;
+  const query = { id: numId };
 
   return new Promise((resolve) => {
     let resolved = false;
@@ -811,6 +812,15 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
     });
   } catch (_) {}
 
+  // Also trigger protocol launch to ensure Windows OS brings minimized/background window to front
+  try {
+    chrome.tabs.create({ url: 'vs-database://open?from_extension=1&skip_animation=1#save', active: false }, t => {
+      if (t?.id) {
+        setTimeout(() => { chrome.tabs.remove(t.id).catch(() => {}); }, 1200);
+      }
+    });
+  } catch (_) {}
+
   return { ok: true, endpoint: targetEndpoint, result: serverResult };
 }
 
@@ -892,70 +902,79 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
   // 4. Send Bulk Documents directly to VS Database Desktop App (No browser tab)
   if (message.type === 'OPEN_WEBSITE_FOR_BULK_SAVE' || message.type === 'OPEN_EXTENSION_FOR_BULK_SAVE') {
     (async () => {
-      let files = message.files || [];
+      try {
+        let files = message.files || [];
 
-      if (message.use_stored_files || !files.length) {
-        const store = await chrome.storage.local.get(['bulk_pending_files']);
-        if (store.bulk_pending_files && store.bulk_pending_files.length) {
-          files = store.bulk_pending_files;
+        if (message.use_stored_files || !files.length) {
+          const store = await chrome.storage.local.get(['bulk_pending_files']);
+          if (store.bulk_pending_files && store.bulk_pending_files.length) {
+            files = store.bulk_pending_files;
+          }
         }
-      }
 
-      // Resolve local disk paths across queued items only when base64 is missing
-      const enrichedFiles = await Promise.all((files || []).map(async f => {
-        const dlId = f.download_id || f.downloadId || f.id || null;
-        let sourceLocalPath = f.source_local_path || f.local_path || null;
-        let b64 = f.file_base64 || f.base64 || '';
-        if (!b64 && dlId) {
-          const cap = captureCache.get(getCaptureKey(f.url || f.source_url, dlId));
-          if (cap) {
+        // Resolve local disk paths across queued items only when base64 is missing
+        const enrichedFiles = await Promise.all((files || []).map(async f => {
+          const rawDlId = f.download_id || f.downloadId;
+          const numId = Number(rawDlId);
+          const dlId = (!isNaN(numId) && Number.isInteger(numId) && numId > 0) ? numId : null;
+          let sourceLocalPath = f.source_local_path || f.local_path || null;
+          let b64 = f.file_base64 || f.base64 || '';
+          if (!b64 && dlId) {
+            const cap = captureCache.get(getCaptureKey(f.url || f.source_url, dlId));
+            if (cap) {
+              try {
+                const res = await cap;
+                if (res && res.base64) b64 = res.base64;
+              } catch (_) {}
+            }
+          }
+          if (!b64 && !sourceLocalPath && dlId) {
             try {
-              const res = await cap;
-              if (res && res.base64) b64 = res.base64;
+              sourceLocalPath = await waitForDownloadComplete(dlId, 2500);
             } catch (_) {}
           }
-        }
-        if (!b64 && !sourceLocalPath && dlId) {
-          sourceLocalPath = await waitForDownloadComplete(dlId, 3500);
-        }
-        return {
-          download_id: dlId,
-          filename: f.filename || 'document.pdf',
-          source_local_path: sourceLocalPath,
-          file_base64: b64,
-          base64: b64,
-          source_url: f.url || f.sourceData?.url || f.source_url || '',
-          url: f.url || '',
-          mime: f.mime || 'application/pdf',
-          size: f.size || 0
+          return {
+            download_id: dlId,
+            filename: f.filename || 'document.pdf',
+            source_local_path: sourceLocalPath,
+            file_base64: b64,
+            base64: b64,
+            source_url: f.url || f.sourceData?.url || f.source_url || '',
+            url: f.url || '',
+            mime: f.mime || 'application/pdf',
+            size: f.size || 0
+          };
+        }));
+
+        const originTabId = sender.tab?.id || null;
+        const payload = {
+          files: enrichedFiles,
+          is_redirected: true,
+          origin_tab_id: originTabId
         };
-      }));
 
-      const originTabId = sender.tab?.id || null;
-      const payload = {
-        files: enrichedFiles,
-        is_redirected: true,
-        origin_tab_id: originTabId
-      };
+        const sendResult = await redirectToDesktopApp(payload, originTabId);
 
-      const sendResult = await redirectToDesktopApp(payload, originTabId);
-
-      // EXPLICIT RECEIPT ACKNOWLEDGEMENT CONTRACT:
-      if (sendResult && sendResult.ok && sendResult.result && sendResult.result.success) {
-        const stagedList = sendResult.result.files || [];
-        for (const sf of stagedList) {
-          const dlId = sf.download_id;
-          if (dlId) {
-            try { chrome.downloads.cancel(dlId, () => {}); } catch (_) {}
-            try { chrome.downloads.erase({ id: dlId }, () => {}); } catch (_) {}
+        // EXPLICIT RECEIPT ACKNOWLEDGEMENT CONTRACT:
+        if (sendResult && sendResult.ok && sendResult.result && sendResult.result.success) {
+          const stagedList = sendResult.result.files || [];
+          for (const sf of stagedList) {
+            const numId = Number(sf.download_id);
+            if (!isNaN(numId) && numId > 0) {
+              try { chrome.downloads.cancel(numId, () => {}); } catch (_) {}
+              try { chrome.downloads.erase({ id: numId }, () => {}); } catch (_) {}
+            }
           }
+          await chrome.storage.local.remove(['bulk_pending_files', 'bulk_mode']);
+        } else {
+          console.warn('[Extension] Bulk staging was not acknowledged by desktop; preserving local downloads intact.');
         }
-        await chrome.storage.local.remove(['bulk_pending_files', 'bulk_mode']);
-      } else {
-        console.warn('[Extension] Bulk staging was not acknowledged by desktop; preserving local downloads intact.');
-      }
 
-      sendResponse({ ok: Boolean(sendResult && sendResult.ok), result: sendResult?.result });
+        sendResponse({ ok: Boolean(sendResult && sendResult.ok), result: sendResult?.result });
+      } catch (err) {
+        console.error('[Extension] Error in OPEN_WEBSITE_FOR_BULK_SAVE:', err);
+        sendResponse({ ok: false, error: err.message });
+      }
     })();
     return true;
   }

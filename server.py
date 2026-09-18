@@ -1051,9 +1051,9 @@ def resolve_canonical_period(target_folder: str = "", period: str = "", service:
     return "AY 2025-26"
 
 
-def sync_document_to_google_drive(client: dict, target_folder: str, period: str, filename: str, raw_bytes: bytes, client_visibility: bool = False):
+def sync_document_to_google_drive(client: dict, target_folder: str, period: str, filename: str, raw_bytes: bytes, client_visibility: bool = False, save_drive: bool = True):
     """Syncs a saved document directly to Google Drive hierarchy and/or Client Shared Folder."""
-    if not GOOGLE_TOKEN_FILE.is_file():
+    if not GOOGLE_TOKEN_FILE.is_file() or not save_drive:
         return None
     try:
         service = google_service()
@@ -1705,37 +1705,51 @@ def bring_desktop_app_to_front() -> dict:
         from ctypes import wintypes
         user32 = ctypes.windll.user32
         
-        my_pid = os.getpid()
         found = []
         class RECT(ctypes.Structure):
             _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long), ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
         
         def enum_cb(hwnd, _):
-            if user32.IsWindowVisible(hwnd):
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buff = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(hwnd, buff, length + 1)
-                    val = buff.value
-                    if "VS Database" in val:
-                        # Exclude browsers, IDEs, Explorer, command prompts
-                        if any(b in val for b in ("Visual Studio", "Code", "Google Chrome", "Edge", "Firefox", "Opera", "Brave", "Explorer", "Antigravity")):
-                            return True
-                        r = RECT()
-                        user32.GetWindowRect(hwnd, ctypes.byref(r))
-                        w = r.right - r.left
-                        h = r.bottom - r.top
-                        if w > 300 and h > 200:
-                            found.append((hwnd, val))
+            # Check window text length
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buff = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buff, length + 1)
+                val = buff.value
+                if "VS Database" in val:
+                    # Exclude browsers, IDEs, Explorer, command prompts
+                    if any(b in val for b in ("Visual Studio", "Code", "Google Chrome", "Edge", "Firefox", "Opera", "Brave", "Explorer", "Antigravity")):
+                        return True
+                    r = RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(r))
+                    w = r.right - r.left
+                    h = r.bottom - r.top
+                    is_iconic = bool(user32.IsIconic(hwnd))
+                    is_visible = bool(user32.IsWindowVisible(hwnd))
+                    if is_iconic or (is_visible and (w > 200 and h > 150)) or val.strip() == "VS Database":
+                        found.append((hwnd, val, is_iconic))
             return True
-        proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(enum_cb)
-        user32.EnumWindows(proc, 0)
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+
+        # Fallback: direct FindWindowW
+        if not found:
+            direct_hwnd = user32.FindWindowW(None, "VS Database")
+            if direct_hwnd:
+                found.append((direct_hwnd, "VS Database", bool(user32.IsIconic(direct_hwnd))))
+
         if found:
-            hwnd, title = found[0]
-            logging.info(f"bring_desktop_app_to_front found HWND {hwnd} with title: '{title}'")
-            print(f"[bring_desktop_app_to_front] Found HWND {hwnd} with title: '{title}'")
+            hwnd, title, is_iconic = found[0]
+            logging.info(f"bring_desktop_app_to_front found HWND {hwnd} with title: '{title}' (iconic={is_iconic})")
+            print(f"[bring_desktop_app_to_front] Found HWND {hwnd} with title: '{title}' (iconic={is_iconic})")
             sys.stdout.flush()
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+            if is_iconic or user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            else:
+                user32.ShowWindow(hwnd, 5)  # SW_SHOW
+
             try:
                 fore_hwnd = user32.GetForegroundWindow()
                 fore_thread = user32.GetWindowThreadProcessId(fore_hwnd, None)
@@ -1750,6 +1764,12 @@ def bring_desktop_app_to_front() -> dict:
                     user32.BringWindowToTop(hwnd)
             except Exception:
                 user32.SetForegroundWindow(hwnd)
+
+            try:
+                user32.SwitchToThisWindow(hwnd, True)
+            except Exception:
+                pass
+
             return {"ok": True, "brought_to_front": True, "found_title": title, "hwnd": hwnd}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

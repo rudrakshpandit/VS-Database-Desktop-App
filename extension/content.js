@@ -1084,44 +1084,62 @@ function renderBulkCollectorDock() {
     isRedirectingToWeb = true;
     setTimeout(() => { isRedirectingToWeb = false; }, 2500);
 
+    const doneBtn = dock.querySelector('#vs-dock-btn-done');
+    if (doneBtn) {
+      doneBtn.style.opacity = '0.7';
+      doneBtn.style.pointerEvents = 'none';
+      doneBtn.innerHTML = `<span>⏳ Transferring...</span>`;
+    }
+
     const filesToSave = [...bulkQueue];
     bulkQueue = [];
     isBulkMode = false;
+    try { chrome.storage.local.set({ bulk_mode: false }); } catch (_) {}
     dock.remove();
 
-    // Send lightweight metadata only (zero Base64 in JS memory)
-    const lightweightFiles = filesToSave.map(f => ({
-      download_id: f.downloadId || f.sourceData?.downloadId || null,
-      downloadId: f.downloadId || f.sourceData?.downloadId || null,
-      id: f.id,
-      filename: f.filename,
-      baseName: f.baseName,
-      fileExt: f.fileExt,
-      url: f.url,
-      mime: f.mime,
-      size: f.size,
-      file_base64: f.file_base64 || f.base64 || null,
-      base64: f.file_base64 || f.base64 || null
+    showToast(`⚡ Sending ${filesToSave.length} file(s) to VS Database Desktop App...`);
+
+    // Ensure all queued files have in-memory binary base64 before posting
+    await Promise.all(filesToSave.map(async (f) => {
+      if (!f.base64 && f.url) {
+        try {
+          const b64 = await retrieveDocumentBytes(f.url);
+          if (b64) {
+            f.base64 = b64;
+            f.file_base64 = b64;
+          }
+        } catch (_) {}
+      }
     }));
 
-    // Persist lightweight metadata in storage for service worker recovery
-    try {
-      await chrome.storage.local.set({
-        bulk_pending_files: lightweightFiles,
-        bulk_mode: true
-      });
-    } catch (err) {
-      console.warn('Could not save bulk metadata to chrome.storage.local:', err);
-    }
+    // Build clean file objects with sanitized positive integer downloadIds
+    const filesPayload = filesToSave.map(f => {
+      const rawDlId = f.downloadId || f.sourceData?.downloadId;
+      const numId = Number(rawDlId);
+      const validDlId = (!isNaN(numId) && Number.isInteger(numId) && numId > 0) ? numId : null;
+      return {
+        download_id: validDlId,
+        downloadId: validDlId,
+        id: f.id,
+        filename: f.filename,
+        baseName: f.baseName,
+        fileExt: f.fileExt,
+        url: f.url,
+        mime: f.mime,
+        size: f.size,
+        file_base64: f.file_base64 || f.base64 || null,
+        base64: f.file_base64 || f.base64 || null
+      };
+    });
 
-    // Direct lightweight IPC message to background service worker
+    // Direct IPC message to background service worker (use_stored_files: false ensures immediate in-memory delivery)
     chrome.runtime.sendMessage({
       type: 'OPEN_WEBSITE_FOR_BULK_SAVE',
-      files: lightweightFiles,
-      use_stored_files: true
-    }).catch(() => {});
-
-    showToast(`⚡ Sending ${filesToSave.length} file(s) to VS Database Desktop App...`);
+      files: filesPayload,
+      use_stored_files: false
+    }).catch((err) => {
+      console.warn('OPEN_WEBSITE_FOR_BULK_SAVE error:', err);
+    });
   };
 }
 
@@ -1535,17 +1553,18 @@ async function showInPageBulkFilingModal(files) {
 // ========================================================
 function showDownloadPrompt(data) {
   if (window !== window.top) return;
-  // If Bulk Mode is currently active, directly auto-collect into Bulk Queue!
+  // If Bulk Mode is currently active, directly auto-collect into Bulk Queue and block normal download!
   if (isBulkMode) {
     addToBulkQueue(data);
     chrome.runtime.sendMessage({
       type: 'VS_DOWNLOAD_DECISION',
-      decision: 'yes',
+      decision: 'bulk',
       downloadId: data.downloadId,
       filename: data.filename,
       url: data.url,
       mime: data.mime,
-      fileSize: data.fileSize
+      fileSize: data.fileSize,
+      file_base64: data.file_base64 || data.fileBase64 || null
     });
     return;
   }
