@@ -512,6 +512,12 @@ function dismissStartupAnimationImmediately() {
     try { video.pause(); } catch (_) {}
     video.currentTime = 0;
   }
+  const splash = document.getElementById('app-startup-splash');
+  if (splash) {
+    splash.style.display = 'none';
+    splash.style.opacity = '0';
+    splash.style.pointerEvents = 'none';
+  }
   if (startupVideoDismissTimeout) {
     clearTimeout(startupVideoDismissTimeout);
     startupVideoDismissTimeout = null;
@@ -678,6 +684,7 @@ async function load() {
     } catch (_) {}
 
     await render();
+    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.page === current));
     dismissSplash();
   } catch (e) {
     dismissSplash();
@@ -2602,8 +2609,9 @@ async function processIncomingStaging(staging) {
     // 4. Ensure app is on the Save workspace
     if (typeof current !== 'undefined' && current !== 'save') {
       current = 'save';
+      document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.page === 'save'));
+      if (typeof save === 'function') save();
       window.location.hash = 'save';
-      if (typeof nav === 'function') nav();
     }
 
     // 5. Ingest into Save Files list
@@ -3016,7 +3024,16 @@ function save() {
   // Check incoming staging buffer from Chrome Extension
   if (typeof window.processIncomingStaging === 'function' && !incomingDrainInProgress) {
     api('/api/staging/incoming?drain=1').then(stageRes => {
-      if (stageRes && stageRes.ok && (stageRes.count > 0 || stageRes.staging)) {
+      const hasFiles = stageRes && stageRes.ok && (
+        (stageRes.count && stageRes.count > 0) ||
+        (stageRes.staging && (
+          (stageRes.staging.files && stageRes.staging.files.length > 0) ||
+          (stageRes.staging.bulk && stageRes.staging.bulk.length > 0) ||
+          (stageRes.staging.single && (stageRes.staging.single.filename || stageRes.staging.single.name)) ||
+          stageRes.staging.is_redirected
+        ))
+      );
+      if (hasFiles) {
         window.processIncomingStaging(stageRes.staging || stageRes);
       }
     }).catch(() => {});
@@ -5039,6 +5056,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 
 function applyHashRoute() {
   const hash = (window.location.hash || '').replace('#', '').trim();
+  if (!hash || hash === current) return;
   if (hash === 'dashboard') {
     current = 'dashboard';
     nav();
@@ -5107,7 +5125,16 @@ async function pollIncomingStaging() {
   try {
     isPollingStaging = true;
     const stageRes = await api('/api/staging/incoming?drain=1', { timeout: 1500 });
-    if (stageRes && stageRes.ok && (stageRes.count > 0 || stageRes.staging)) {
+    const hasFiles = stageRes && stageRes.ok && (
+      (stageRes.count && stageRes.count > 0) ||
+      (stageRes.staging && (
+        (stageRes.staging.files && stageRes.staging.files.length > 0) ||
+        (stageRes.staging.bulk && stageRes.staging.bulk.length > 0) ||
+        (stageRes.staging.single && (stageRes.staging.single.filename || stageRes.staging.single.name)) ||
+        stageRes.staging.is_redirected
+      ))
+    );
+    if (hasFiles) {
       if (typeof window.processIncomingStaging === 'function') {
         await window.processIncomingStaging(stageRes.staging || stageRes);
       }

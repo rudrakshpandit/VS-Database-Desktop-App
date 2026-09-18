@@ -1698,8 +1698,18 @@ def get_desktop_health() -> dict:
     }
 
 
+_LAST_BRING_FRONT_TIME = 0
+_BRING_FRONT_LOCK = threading.Lock()
+
 def bring_desktop_app_to_front() -> dict:
     """Brings the native VS Database window to the foreground on Windows."""
+    global _LAST_BRING_FRONT_TIME
+    with _BRING_FRONT_LOCK:
+        now = time.time()
+        if now - _LAST_BRING_FRONT_TIME < 0.35:
+            return {"ok": True, "debounced": True}
+        _LAST_BRING_FRONT_TIME = now
+
     try:
         import ctypes
         from ctypes import wintypes
@@ -1710,7 +1720,6 @@ def bring_desktop_app_to_front() -> dict:
             _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long), ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
         
         def enum_cb(hwnd, _):
-            # Check window text length
             length = user32.GetWindowTextLengthW(hwnd)
             if length > 0:
                 buff = ctypes.create_unicode_buffer(length + 1)
@@ -1742,8 +1751,7 @@ def bring_desktop_app_to_front() -> dict:
         if found:
             hwnd, title, is_iconic = found[0]
             logging.info(f"bring_desktop_app_to_front found HWND {hwnd} with title: '{title}' (iconic={is_iconic})")
-            print(f"[bring_desktop_app_to_front] Found HWND {hwnd} with title: '{title}' (iconic={is_iconic})")
-            sys.stdout.flush()
+            print(f"[bring_desktop_app_to_front] Found HWND {hwnd} with title: '{title}' (iconic={is_iconic})", flush=True)
 
             if is_iconic or user32.IsIconic(hwnd):
                 user32.ShowWindow(hwnd, 9)  # SW_RESTORE
@@ -1751,22 +1759,8 @@ def bring_desktop_app_to_front() -> dict:
                 user32.ShowWindow(hwnd, 5)  # SW_SHOW
 
             try:
-                fore_hwnd = user32.GetForegroundWindow()
-                fore_thread = user32.GetWindowThreadProcessId(fore_hwnd, None)
-                app_thread = user32.GetWindowThreadProcessId(hwnd, None)
-                if fore_thread and app_thread and fore_thread != app_thread:
-                    user32.AttachThreadInput(fore_thread, app_thread, True)
-                    user32.SetForegroundWindow(hwnd)
-                    user32.BringWindowToTop(hwnd)
-                    user32.AttachThreadInput(fore_thread, app_thread, False)
-                else:
-                    user32.SetForegroundWindow(hwnd)
-                    user32.BringWindowToTop(hwnd)
-            except Exception:
+                user32.BringWindowToTop(hwnd)
                 user32.SetForegroundWindow(hwnd)
-
-            try:
-                user32.SwitchToThisWindow(hwnd, True)
             except Exception:
                 pass
 
@@ -7897,8 +7891,6 @@ class Handler(BaseHTTPRequestHandler):
                 if staged_metadata_items:
                     with _STAGING_QUEUE_LOCK:
                         incoming_staging_queue.extend(staged_metadata_items)
-
-                threading.Thread(target=bring_desktop_app_to_front, daemon=True).start()
 
                 any_staged = any(f.get("status") == "staged" for f in file_results)
                 all_staged = len(file_results) > 0 and all(f.get("status") == "staged" for f in file_results)
