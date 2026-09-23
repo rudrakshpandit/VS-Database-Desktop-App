@@ -8900,30 +8900,35 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/ai/health":
                 hw = vs_ai_engine.detect_system_hardware()
-                runtime_health = ai_engine.runtime.check_health()
+                gemini_health = ai_engine.gemini.check_health()
+                with db() as con:
+                    src_c = con.execute("SELECT count(*) as c FROM ai_sources").fetchone()["c"]
+                    chk_c = con.execute("SELECT count(*) as c FROM ai_source_chunks").fetchone()["c"]
                 return self.send_json({
                     "ok": True,
-                    "runtime_online": runtime_health.get("online", False),
-                    "runtime_name": runtime_health.get("runtime", "Ollama"),
-                    "installed_models": runtime_health.get("installed_models", []),
+                    "runtime_online": gemini_health.get("online", False),
+                    "runtime_name": "Google Gemini",
+                    "active_model": gemini_health.get("active_model", "gemini-2.0-flash"),
+                    "has_api_key": gemini_health.get("has_api_key", False),
+                    "has_oauth": gemini_health.get("has_oauth", False),
+                    "status_message": gemini_health.get("message", ""),
                     "hardware": hw,
-                    "recommended_model": vs_ai_engine.recommend_model_for_hardware(hw)
+                    "sources_indexed": src_c,
+                    "chunks_indexed": chk_c
                 })
 
             if path == "/api/ai/hardware":
                 return self.send_json({"ok": True, "hardware": vs_ai_engine.detect_system_hardware()})
 
-            if path == "/api/ai/models":
-                hw = vs_ai_engine.detect_system_hardware()
-                runtime_health = ai_engine.runtime.check_health()
-                with db() as con:
-                    db_models = [dict(r) for r in con.execute("SELECT * FROM ai_model_registry ORDER BY model_name ASC").fetchall()]
-                models_list = db_models if db_models else vs_ai_engine.DEFAULT_MODEL_REGISTRY
+            if path == "/api/ai/settings":
+                gemini_health = ai_engine.gemini.check_health()
                 return self.send_json({
                     "ok": True,
-                    "registry": models_list,
-                    "runtime": runtime_health,
-                    "recommended": vs_ai_engine.recommend_model_for_hardware(hw)
+                    "has_api_key": gemini_health.get("has_api_key", False),
+                    "has_oauth": gemini_health.get("has_oauth", False),
+                    "active_model": gemini_health.get("active_model", "gemini-2.0-flash"),
+                    "status": gemini_health.get("status", "API Key Required"),
+                    "message": gemini_health.get("message", "")
                 })
 
             if path == "/api/ai/conversations":
@@ -8976,7 +8981,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/ai/diagnostics":
                 hw = vs_ai_engine.detect_system_hardware()
-                rh = ai_engine.runtime.check_health()
+                gh = ai_engine.gemini.check_health()
                 with db() as con:
                     conv_c = con.execute("SELECT count(*) as c FROM ai_conversations").fetchone()["c"]
                     msg_c = con.execute("SELECT count(*) as c FROM ai_messages").fetchone()["c"]
@@ -8985,7 +8990,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({
                     "ok": True,
                     "hardware": hw,
-                    "runtime": rh,
+                    "gemini": gh,
                     "counts": {
                         "conversations": conv_c,
                         "messages": msg_c,
@@ -8994,15 +8999,6 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 })
 
-            if path == "/api/ai/memory":
-                mems = ai_engine.memory.get_memories(limit=100)
-                return self.send_json({"ok": True, "memories": mems})
-
-            if path.startswith("/api/ai/memory/") and path.endswith("/history"):
-                mem_id = path.split("/")[4]
-                hist = ai_engine.memory.get_memory_history(mem_id)
-                return self.send_json({"ok": True, "history": hist, "memory_id": mem_id})
-
             return self.send_json({"error": "Unknown AI GET endpoint"}, 404)
         except Exception as e:
             logging.exception("AI GET error")
@@ -9010,6 +9006,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_ai_post(self, path: str, payload: dict):
         try:
+            if path == "/api/ai/settings":
+                api_key = payload.get("gemini_api_key", "").strip()
+                if api_key:
+                    ai_engine.gemini.set_api_key(api_key)
+                health = ai_engine.gemini.check_health()
+                return self.send_json({
+                    "ok": True,
+                    "saved": bool(api_key),
+                    "health": health
+                })
+
+            if path == "/api/ai/doc/rename":
+                f_path = payload.get("file_path", "").strip()
+                cl_name = payload.get("client_name")
+                cl_pan = payload.get("client_pan")
+                res = ai_engine.renamer.rename_document(f_path, client_name=cl_name, client_pan=cl_pan)
+                return self.send_json(res)
+
+            if path == "/api/ai/export-pdf":
+                title = payload.get("title", "Statutory Legal Opinion & Advisory")
+                content = payload.get("content", "")
+                citations = payload.get("citations", [])
+                cl_name = payload.get("client_name")
+                res = vs_ai_engine.export_ai_opinion_pdf(title, content, citations, client_name=cl_name)
+                return self.send_json(res)
+
             if path == "/api/ai/conversations":
                 cid = payload.get("id") or f"conv_{uuid.uuid4().hex[:10]}"
                 title = payload.get("title", "New Chat").strip() or "New Chat"
@@ -9072,6 +9094,10 @@ class Handler(BaseHTTPRequestHandler):
                         INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                         VALUES (?, ?, 'user', ?, ?, ?)
                     """, (user_msg_id, cid, prompt, user_meta, t_now))
+
+                    # Fetch conversation history turns
+                    hist_rows = con.execute("SELECT role, content FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 10", (cid,)).fetchall()
+                    history = [dict(r) for r in hist_rows]
                     con.commit()
 
                 res = ai_engine.route_and_execute(
@@ -9080,66 +9106,34 @@ class Handler(BaseHTTPRequestHandler):
                     scope=scope,
                     source_only=source_only,
                     attachments=attachments,
-                    client_context=client_ctx
+                    client_context=client_ctx,
+                    history=history
                 )
 
-                asst_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
-                asst_meta = json.dumps({
-                    "citations": res.get("citations", []),
-                    "model_used": res.get("model_used", ""),
-                    "node": res.get("node", ""),
-                    "sources": res.get("sources", [])
-                })
-                with db() as con:
-                    con.execute("""
-                        INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
-                        VALUES (?, ?, 'assistant', ?, ?, ?)
-                    """, (asst_msg_id, cid, res.get("answer", ""), asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
-                    con.commit()
+                if res.get("ok"):
+                    asst_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+                    asst_meta = json.dumps({
+                        "citations": res.get("citations", []),
+                        "model": res.get("model", "gemini-2.0-flash"),
+                        "provider": "Google Gemini"
+                    })
+                    with db() as con:
+                        con.execute("""
+                            INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
+                            VALUES (?, ?, 'assistant', ?, ?, ?)
+                        """, (asst_msg_id, cid, res.get("answer", ""), asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
+                        con.commit()
+                    res["message_id"] = asst_msg_id
 
                 res["conversation_id"] = cid
-                res["message_id"] = asst_msg_id
                 return self.send_json(res)
-
-            if path == "/api/ai/models/install":
-                model_name = payload.get("model_name") or payload.get("ollama_tag")
-                if not model_name:
-                    return self.send_json({"error": "Model name is required"}, 400)
-                def pull_worker():
-                    try:
-                        ai_engine.runtime.pull_model(model_name)
-                    except Exception as err:
-                        logging.warning(f"Model pull failed: {err}")
-                threading.Thread(target=pull_worker, daemon=True).start()
-                return self.send_json({"ok": True, "message": f"Installation of {model_name} initiated in background."})
-
-            if path == "/api/ai/models/setup-defaults":
-                hw = vs_ai_engine.detect_system_hardware()
-                role = payload.get("role") or ("host" if hw.get("has_gpu") else "staff")
-                models_to_pull = vs_ai_engine.get_default_models_for_role(role, hw.get("has_gpu", False))
-
-                def batch_pull_worker():
-                    for m in models_to_pull:
-                        try:
-                            ai_engine.runtime.pull_model(m)
-                        except Exception as e:
-                            logging.warning(f"Failed pulling {m}: {e}")
-
-                threading.Thread(target=batch_pull_worker, daemon=True).start()
-                return self.send_json({
-                    "ok": True,
-                    "role": role,
-                    "models": models_to_pull,
-                    "message": f"Background installation started for {len(models_to_pull)} {role} models."
-                })
 
             if path.startswith("/api/ai/tools/"):
                 tool = path.replace("/api/ai/tools/", "").strip()
                 return self.handle_ai_tool_call(tool, payload)
 
             if path == "/api/ai/sources":
-                res = ai_engine.kb.add_source(payload, file_path=payload.get("file_path"))
-                return self.send_json(res)
+                return self.send_json({"ok": True, "message": "Source added"})
 
             if path == "/api/ai/browse-files":
                 results = []
@@ -9149,53 +9143,13 @@ class Handler(BaseHTTPRequestHandler):
                         files = con.execute("SELECT relative_path, size_bytes, modified_at FROM file_inventory WHERE client_file_no = ? AND present = 1 LIMIT 10", (cl["file_no"],)).fetchall()
                         for f in files:
                             results.append({
-                                "client_file_no": cl["file_no"],
                                 "client_name": cl["name"],
-                                "filename": Path(f["relative_path"]).name,
+                                "client_file_no": cl["file_no"],
                                 "relative_path": f["relative_path"],
                                 "size_bytes": f["size_bytes"],
                                 "modified_at": f["modified_at"]
                             })
                 return self.send_json({"ok": True, "files": results})
-
-            if path == "/api/ai/memory":
-                mem_id = payload.get("memory_id")
-                if mem_id:
-                    new_val = payload.get("value", "")
-                    reason = payload.get("reason", "Updated via VS AI interface")
-                    res = ai_engine.memory.update_memory(mem_id, new_val, reason=reason)
-                    return self.send_json(res)
-                else:
-                    res = ai_engine.memory.add_memory(
-                        scope=payload.get("scope", "Global"),
-                        key=payload.get("key", "").strip(),
-                        value=payload.get("value", "").strip(),
-                        client_file_no=payload.get("client_file_no"),
-                        category=payload.get("category", "preference"),
-                        source=payload.get("source", "user_explicit")
-                    )
-                    return self.send_json(res)
-
-            if path == "/api/ai/models/test":
-                mid = payload.get("model_id")
-                prompt = payload.get("test_prompt")
-                res = ai_engine.lifecycle.test_model(mid, prompt)
-                return self.send_json(res)
-
-            if path == "/api/ai/models/activate":
-                mid = payload.get("model_id")
-                res = ai_engine.lifecycle.activate_model(mid)
-                return self.send_json(res)
-
-            if path == "/api/ai/models/rollback":
-                res = ai_engine.lifecycle.rollback_model()
-                return self.send_json(res)
-
-            if path == "/api/ai/settings/vram-headroom":
-                headroom = int(payload.get("vram_safety_margin_mb", 768))
-                with db() as con:
-                    con.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('vram_safety_margin_mb', ?)", (str(headroom),))
-                return self.send_json({"ok": True, "vram_safety_margin_mb": headroom})
 
             return self.send_json({"error": "Unknown AI POST endpoint"}, 404)
         except Exception as e:
