@@ -18,6 +18,7 @@ dist/
 # App Data & Local State (Databases, logs, tokens, backups, staging)
 data/
 scratch/
+Sources/
 *.log
 *.tmp
 console_run.txt

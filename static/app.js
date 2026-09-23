@@ -252,7 +252,7 @@ const setDeviceName = (name) => localStorage.setItem('vs-device-name', name);
 const api = (path, options = {}) => {
   const t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
   const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-  const timeoutMs = options.timeout || (path.startsWith('/api/pdf-studio') ? 60000 : 30000);
+  const timeoutMs = options.timeout || (path.startsWith('/api/ai') ? 120000 : (path.startsWith('/api/pdf-studio') ? 60000 : 30000));
   let timeoutId = null;
   if (controller) {
     timeoutId = setTimeout(() => {
@@ -5045,6 +5045,7 @@ async function render() {
   else if (current === 'backup') await backupPage();
   else if (current === 'users') await usersPage();
   else if (current === 'pdf-studio') { if (typeof pdfStudioPage === 'function') await pdfStudioPage(); }
+  else if (current === 'vs-ai' || current === 'ai') { if (typeof renderVsAi === 'function') await renderVsAi(); }
   else await activity();
 }
 
@@ -5065,6 +5066,9 @@ function applyHashRoute() {
     nav();
   } else if (hash === 'pdf-studio') {
     current = 'pdf-studio';
+    nav();
+  } else if (hash === 'vs-ai' || hash === 'ai') {
+    current = 'vs-ai';
     nav();
   } else if (hash === 'clients') {
     current = 'clients';
@@ -5124,6 +5128,20 @@ async function pollIncomingStaging() {
   if (isPollingStaging || incomingDrainInProgress) return;
   try {
     isPollingStaging = true;
+    // 1. Check for remote navigation requests (e.g. from extension or secondary launcher)
+    try {
+      const navRes = await api('/api/desktop/navigate', { timeout: 1000 });
+      if (navRes && navRes.ok && navRes.has_route && navRes.route) {
+        const targetRoute = navRes.route.replace(/^#/, '').trim();
+        if (targetRoute && targetRoute !== current) {
+          window.location.hash = targetRoute;
+          current = targetRoute;
+          if (typeof nav === 'function') nav();
+        }
+      }
+    } catch (_) {}
+
+    // 2. Poll incoming staging files
     const stageRes = await api('/api/staging/incoming?drain=1', { timeout: 1500 });
     const hasFiles = stageRes && stageRes.ok && (
       (stageRes.count && stageRes.count > 0) ||

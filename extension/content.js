@@ -1542,6 +1542,12 @@ async function showInPageBulkFilingModal(files) {
             method: 'POST',
             body: payload
           });
+          if (item.downloadId) {
+            chrome.runtime.sendMessage({
+              type: 'CANCEL_OR_DELETE_DOWNLOAD',
+              downloadId: item.downloadId
+            }).catch(() => {});
+          }
         }
       }
 

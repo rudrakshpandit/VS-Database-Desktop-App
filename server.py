@@ -33,11 +33,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse, unquote
 from xml.etree import ElementTree as ET
-from google.auth.transport.requests import Request as GoogleRequest
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
@@ -46,7 +41,6 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 import qrcode
 from PIL import Image, ImageDraw
-import pypdf
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 if getattr(sys, "frozen", False):
@@ -80,6 +74,7 @@ from pdf_studio_engine import PDFStudioEngine
 
 staging_mgr = StagingSessionManager(APP_ROOT, application_id="vs_desktop_app")
 pdf_engine = PDFStudioEngine(APP_ROOT, application_id="vs_desktop_app")
+import vs_ai_engine
 
 class SafeStream:
     def __init__(self, log_path):
@@ -104,6 +99,7 @@ if sys.stderr is None or not hasattr(sys.stderr, "write"):
     sys.stderr = SafeStream(DATA_ROOT / "stderr.log")
 
 DB_PATH = DATA_ROOT / "vs_database_desktop.db"
+ai_engine = vs_ai_engine.get_ai_engine(DB_PATH)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8767"))
 PORTAL_LOCK = threading.RLock()
 _CLIENT_LOCKS = {}
@@ -124,31 +120,126 @@ GOOGLE_REDIRECT_URI = f"http://localhost:{PORT}/api/google/callback"
 HINDI_FONT = "NirmalaUI"
 
 
-def private_bind_host():
-    """Bind to one private LAN interface; never default to every interface."""
+_ADVERTISED_LAN_IP = "127.0.0.1"
+_LAN_RESOLVED_EVENT = threading.Event()
+
+def resolve_lan_ip_worker():
+    global _ADVERTISED_LAN_IP, HOST
     configured = os.environ.get("VS_DATABASE_BIND_HOST", "").strip()
     if configured:
-        address = ipaddress.ip_address(configured)
-        if not (address.is_private or address.is_loopback):
-            raise ValueError("VS_DATABASE_BIND_HOST must be a private or loopback address.")
-        return configured
+        try:
+            addr = ipaddress.ip_address(configured)
+            if addr.is_private or addr.is_loopback:
+                _ADVERTISED_LAN_IP = configured
+                HOST = configured
+                _LAN_RESOLVED_EVENT.set()
+                return
+        except ValueError:
+            pass
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("10.255.255.255", 1))
-            address = probe.getsockname()[0]
-            if ipaddress.ip_address(address).is_private and address != "127.0.0.1":
-                return address
+            addr = probe.getsockname()[0]
+            if ipaddress.ip_address(addr).is_private and addr != "127.0.0.1":
+                _ADVERTISED_LAN_IP = addr
+                HOST = addr
+                _LAN_RESOLVED_EVENT.set()
+                return
     except OSError:
         pass
-    candidates = []
-    for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-        address = info[4][0]
-        if ipaddress.ip_address(address).is_private and address != "127.0.0.1":
-            candidates.append(address)
-    return candidates[0] if candidates else "127.0.0.1"
+    try:
+        candidates = []
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addr = info[4][0]
+            if ipaddress.ip_address(addr).is_private and addr != "127.0.0.1":
+                candidates.append(addr)
+        if candidates:
+            _ADVERTISED_LAN_IP = candidates[0]
+            HOST = candidates[0]
+    except Exception:
+        pass
+    _LAN_RESOLVED_EVENT.set()
 
+def start_async_lan_discovery():
+    if not _LAN_RESOLVED_EVENT.is_set():
+        threading.Thread(target=resolve_lan_ip_worker, daemon=True, name="LAN-Discovery").start()
 
-HOST = private_bind_host()
+HOST = "127.0.0.1"
+start_async_lan_discovery()
+
+_DESKTOP_UI_LOCK = threading.RLock()
+_DESKTOP_UI_INSTANCE = {
+    "attached": False,
+    "instance_id": None,
+    "hwnd": None,
+    "pid": None,
+    "last_heartbeat": 0.0
+}
+_BACKEND_STATE = "READY"
+_SERVER_INSTANCE = None
+_BACKGROUND_TIMERS = []
+
+def is_ui_attached_and_valid() -> tuple[bool, dict]:
+    with _DESKTOP_UI_LOCK:
+        inst = dict(_DESKTOP_UI_INSTANCE)
+        if not inst.get("attached") or not inst.get("instance_id"):
+            return False, inst
+        now = time.time()
+        # Stale heartbeat timeout: 30.0 seconds (generous buffer for heavy rendering/dialogs)
+        if now - inst.get("last_heartbeat", 0.0) > 30.0:
+            _DESKTOP_UI_INSTANCE["attached"] = False
+            return False, dict(_DESKTOP_UI_INSTANCE)
+        
+        pid = inst.get("pid")
+        if pid and sys.platform == "win32":
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                SYNCHRONIZE = 0x00100000
+                h_proc = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+                if h_proc:
+                    res = kernel32.WaitForSingleObject(h_proc, 0)
+                    kernel32.CloseHandle(h_proc)
+                    if res != 258:  # 258 == WAIT_TIMEOUT (process is alive)
+                        _DESKTOP_UI_INSTANCE["attached"] = False
+                        return False, dict(_DESKTOP_UI_INSTANCE)
+                else:
+                    _DESKTOP_UI_INSTANCE["attached"] = False
+                    return False, dict(_DESKTOP_UI_INSTANCE)
+            except Exception:
+                pass
+                
+        hwnd = inst.get("hwnd")
+        if hwnd and sys.platform == "win32":
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                if not user32.IsWindow(int(hwnd)):
+                    _DESKTOP_UI_INSTANCE["attached"] = False
+                    return False, dict(_DESKTOP_UI_INSTANCE)
+            except Exception:
+                pass
+                
+        return True, inst
+
+def get_desktop_state() -> dict:
+    attached, ui_info = is_ui_attached_and_valid()
+    return {
+        "ok": True,
+        "backend_state": _BACKEND_STATE,
+        "backend_pid": os.getpid(),
+        "advertised_lan_ip": _ADVERTISED_LAN_IP,
+        "lan_ready": _LAN_RESOLVED_EVENT.is_set(),
+        "port": PORT,
+        "ui": {
+            "attached": attached,
+            "instance_id": ui_info.get("instance_id"),
+            "hwnd": ui_info.get("hwnd"),
+            "pid": ui_info.get("pid"),
+            "last_heartbeat": ui_info.get("last_heartbeat", 0.0)
+        }
+    }
+
 incoming_staging_queue = []
 _STAGING_QUEUE_LOCK = threading.RLock()
 _PROCESSED_DOWNLOAD_CACHE = {}  # key -> staged dict
@@ -425,6 +516,7 @@ def initialise():
             client_file_no TEXT NOT NULL,
             label TEXT NOT NULL DEFAULT '',
             encrypted_password TEXT NOT NULL,
+            last_used_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY(client_file_no) REFERENCES clients(file_no) ON DELETE CASCADE
@@ -484,6 +576,11 @@ def initialise():
         if "reverted_at" not in act_cols:
             con.execute("ALTER TABLE activity_log ADD COLUMN reverted_at TEXT")
 
+        # Safe migration for last_used_at in client_pdf_credentials
+        pdf_cred_cols = [r["name"] for r in con.execute("PRAGMA table_info(client_pdf_credentials)").fetchall()]
+        if "last_used_at" not in pdf_cred_cols:
+            con.execute("ALTER TABLE client_pdf_credentials ADD COLUMN last_used_at TEXT")
+
         # Seed the 5 default firm types if table is empty
         ft_count = con.execute("SELECT COUNT(*) as c FROM firm_types").fetchone()["c"]
         if ft_count == 0:
@@ -513,6 +610,326 @@ def initialise():
                 os.makedirs(r"D:\Code Trial", exist_ok=True)
             except Exception:
                 pass
+
+        initialise_ai_tables(con)
+
+
+def initialise_ai_tables(con):
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS ai_conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            user_id TEXT NOT NULL DEFAULT 'User',
+            client_file_no TEXT,
+            source_scope TEXT NOT NULL DEFAULT 'All Knowledge',
+            source_only INTEGER NOT NULL DEFAULT 0,
+            is_archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_messages (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+            content TEXT NOT NULL,
+            meta_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS ai_attachments (
+            id TEXT PRIMARY KEY,
+            message_id TEXT,
+            conversation_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_sources (
+            source_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            authority TEXT NOT NULL,
+            relevant_law TEXT,
+            section_rule TEXT,
+            financial_year TEXT,
+            assessment_year TEXT,
+            effective_from TEXT,
+            effective_to TEXT,
+            status TEXT NOT NULL DEFAULT 'indexed',
+            description TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_source_versions (
+            version_id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            version_name TEXT NOT NULL,
+            effective_from TEXT,
+            effective_to TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            file_path TEXT,
+            file_hash TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(source_id) REFERENCES ai_sources(source_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS ai_source_chunks (
+            chunk_id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            version_id TEXT NOT NULL,
+            page_number INTEGER NOT NULL DEFAULT 1,
+            heading TEXT,
+            content TEXT NOT NULL,
+            chunk_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(source_id) REFERENCES ai_sources(source_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS ai_recent_operations (
+            id TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            result_summary TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_model_registry (
+            model_id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL DEFAULT 'ollama',
+            runtime TEXT NOT NULL DEFAULT 'Ollama',
+            model_name TEXT NOT NULL,
+            version TEXT,
+            size_gb REAL NOT NULL DEFAULT 2.0,
+            quantization TEXT NOT NULL DEFAULT 'Q4_K_M',
+            context_length INTEGER NOT NULL DEFAULT 8192,
+            min_vram_mb INTEGER NOT NULL DEFAULT 0,
+            recommended_vram_mb INTEGER NOT NULL DEFAULT 0,
+            min_ram_gb REAL NOT NULL DEFAULT 4.0,
+            cpu_compatible INTEGER NOT NULL DEFAULT 1,
+            gpu_compatible INTEGER NOT NULL DEFAULT 1,
+            installed INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            endpoint TEXT NOT NULL DEFAULT 'http://127.0.0.1:11434',
+            test_status TEXT DEFAULT 'untested',
+            test_results TEXT DEFAULT '{}',
+            is_active INTEGER NOT NULL DEFAULT 0,
+            is_previous INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_memory (
+            memory_id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL CHECK(scope IN ('Global', 'User', 'Staff', 'Client', 'Conversation')),
+            client_file_no TEXT,
+            category TEXT NOT NULL DEFAULT 'preference',
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'user_explicit',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived', 'deleted')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_memory_history (
+            history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id TEXT NOT NULL,
+            action TEXT NOT NULL CHECK(action IN ('create', 'update', 'archive', 'delete', 'restore')),
+            old_value TEXT,
+            new_value TEXT,
+            modified_by TEXT NOT NULL DEFAULT 'User',
+            reason TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY(memory_id) REFERENCES ai_memory(memory_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS ai_jobs (
+            job_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL DEFAULT 'User',
+            operation TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('Queued', 'Running', 'Completed', 'Failed', 'Cancelled')),
+            priority TEXT NOT NULL DEFAULT 'Normal',
+            progress INTEGER NOT NULL DEFAULT 0,
+            error_msg TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ai_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_msg_conv ON ai_messages(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_chunks_src ON ai_source_chunks(source_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_rec_ops ON ai_recent_operations(created_at);
+        CREATE INDEX IF NOT EXISTS idx_ai_mem_scope ON ai_memory(scope, status);
+        CREATE INDEX IF NOT EXISTS idx_ai_mem_client ON ai_memory(client_file_no, status);
+        CREATE INDEX IF NOT EXISTS idx_ai_mem_key ON ai_memory(key);
+        CREATE INDEX IF NOT EXISTS idx_ai_mem_hist ON ai_memory_history(memory_id);
+    """)
+
+    # Ensure model registry columns exist if table was previously created
+    for col_def in [
+        ("test_status", "TEXT DEFAULT 'untested'"),
+        ("test_results", "TEXT DEFAULT '{}'"),
+        ("is_active", "INTEGER NOT NULL DEFAULT 0"),
+        ("is_previous", "INTEGER NOT NULL DEFAULT 0")
+    ]:
+        try:
+            con.execute(f"ALTER TABLE ai_model_registry ADD COLUMN {col_def[0]} {col_def[1]}")
+        except sqlite3.OperationalError:
+            pass
+
+    # Seed knowledge sources from real Act PDFs in Sources/ if empty
+    c_count = con.execute("SELECT count(*) as c FROM ai_sources").fetchone()["c"]
+    if c_count == 0:
+        t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+        sources_dir = APP_ROOT / "Sources"
+        pdf_indexed = False
+        if sources_dir.exists():
+            for pdf_file in sources_dir.glob("*.pdf"):
+                try:
+                    import fitz
+                    doc = fitz.open(str(pdf_file))
+                    source_id = f"src_{pdf_file.stem[:24].lower()}"
+                    ver_id = f"ver_{source_id}"
+                    f_hash = hashlib.sha256(pdf_file.read_bytes()).hexdigest()
+                    act_name = "Income Tax Act, 1961 (Official Ministry of Finance Statute)" if "income" in pdf_file.name.lower() else pdf_file.stem.replace("_", " ")
+
+                    con.execute("""
+                        INSERT OR REPLACE INTO ai_sources (
+                            source_id, name, source_type, authority, relevant_law, section_rule,
+                            financial_year, assessment_year, effective_from, effective_to,
+                            status, description, created_at, updated_at
+                        ) VALUES (?, ?, 'Act', 'Ministry of Finance, Government of India', 'Income Tax',
+                                  'All Sections', '2024-25', '2025-26', '1961-04-01', '',
+                                  'indexed', ?, ?, ?)
+                    """, (source_id, act_name, f"Authentic statutory Act PDF ({len(doc)} pages)", t_now, t_now))
+
+                    con.execute("""
+                        INSERT OR REPLACE INTO ai_source_versions (
+                            version_id, source_id, version_name, effective_from, effective_to,
+                            status, file_path, file_hash, created_at
+                        ) VALUES (?, ?, 'Official PDF', '1961-04-01', '', 'active', ?, ?, ?)
+                    """, (ver_id, source_id, str(pdf_file), f_hash, t_now))
+
+                    for pno in range(len(doc)):
+                        page = doc[pno]
+                        txt = (page.get_text("text") or "").strip()
+                        if len(txt) < 40:
+                            continue
+                        lines = [l.strip() for l in txt.split("\n") if l.strip()]
+                        detected_sections = []
+                        headings = []
+                        for idx, line in enumerate(lines):
+                            m = re.match(r"^([0-9]+[A-Z]{0,4})\.\s*(?:\([0-9a-zA-Z]+\)|\[|[A-Z])", line)
+                            if m:
+                                sec_num = m.group(1)
+                                head = ""
+                                if idx > 0 and len(lines[idx-1]) < 120 and not re.match(r"^[0-9\(\)]", lines[idx-1]):
+                                    head = lines[idx-1]
+                                detected_sections.append(sec_num)
+                                if head:
+                                    headings.append(f"Section {sec_num} — {head}")
+                                else:
+                                    headings.append(f"Section {sec_num}")
+                        heading_title = "; ".join(headings[:3]) if headings else (f"Sections: {', '.join(detected_sections[:4])}" if detected_sections else f"{act_name} — Page {pno + 1}")
+                        chk_id = f"chk_{source_id[:10]}_{pno+1:04d}"
+                        c_hash = hashlib.sha256(txt.encode("utf-8")).hexdigest()
+                        con.execute("""
+                            INSERT OR REPLACE INTO ai_source_chunks (
+                                chunk_id, source_id, version_id, page_number, heading, content, chunk_hash, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (chk_id, source_id, ver_id, pno + 1, heading_title, txt, c_hash, t_now))
+                    con.commit()
+                    pdf_indexed = True
+                except Exception as e:
+                    logging.warning(f"Failed indexing source PDF {pdf_file}: {e}")
+
+    # Seed sample conversations if empty
+    conv_count = con.execute("SELECT count(*) as c FROM ai_conversations").fetchone()["c"]
+    if conv_count == 0:
+        t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+        sample_convs = [
+            ("conv_01", "GST Notice Reply Draft", "Drafted detailed reply for SCN under Section 73 citing ITC reconciliation with GSTR-2B."),
+            ("conv_02", "Summarize Audit Report", "Extracted key internal audit observations and qualified opinions from FY 2024-25 report."),
+            ("conv_03", "Client Financial Analysis", "Comparative ratio analysis and debt-equity review for client expansion proposal."),
+            ("conv_04", "Draft Engagement Letter", "Statutory audit engagement letter formatted according to SA 210 standards."),
+            ("conv_05", "Income Tax Section 80C", "Detailed deduction checklist and eligible investment caps under Section 80C."),
+            ("conv_06", "Explain IND AS 116", "Right-of-Use asset accounting model and discount rate computation principles."),
+            ("conv_07", "Compare Balance Sheets", "Multi-year balance sheet trend analysis identifying inventory turnover variance."),
+            ("conv_08", "CA Inter Revision Plan", "Subject-wise timeline and key accounting standard revision checklist."),
+            ("conv_09", "Generate Meeting Notes", "Minutes of client partner tax advisory discussion on capital gains structure."),
+            ("conv_10", "Data Extraction from PDF", "Tabular extraction of TDS Form 26AS entries converted to structured layout.")
+        ]
+        for cv in sample_convs:
+            con.execute("""
+                INSERT OR IGNORE INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
+                VALUES (?, ?, 'User', 'All Knowledge', 0, ?, ?)
+            """, (cv[0], cv[1], t_now, t_now))
+            con.execute("""
+                INSERT OR IGNORE INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
+                VALUES (?, ?, 'assistant', ?, '{}', ?)
+            """, (f"msg_{cv[0]}_1", cv[0], f"### 📌 {cv[1]}\n\n{cv[2]}", t_now))
+
+    # Seed sample recent operations if empty
+    rec_count = con.execute("SELECT count(*) as c FROM ai_recent_operations").fetchone()["c"]
+    if rec_count == 0:
+        t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+        sample_recs = [
+            ("rec_01", "ITR_2025_Ack.pdf", "pdf", "Summarized • 2 mins ago", "Summary generated with key tax liability metrics"),
+            ("rec_02", "GST_Data.xlsx", "xlsx", "Analyzed • 15 mins ago", "GSTR-1 vs 3B turnover analysis complete"),
+            ("rec_03", "Audit_Report.pdf", "pdf", "Key points extracted • 1 hour ago", "Internal controls observation matrix"),
+            ("rec_04", "Engagement_Letter.docx", "docx", "Draft created • 3 hours ago", "Standard audit engagement template"),
+            ("rec_05", "Balance_Sheet.pdf", "pdf", "Compared • 5 hours ago", "Balance sheet line item reconciliation")
+        ]
+        for r in sample_recs:
+            con.execute("""
+                INSERT OR IGNORE INTO ai_recent_operations (id, filename, file_type, operation, result_summary, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (r[0], r[1], r[2], r[3], r[4], t_now))
+
+    # Seed model registry if empty
+    m_count = con.execute("SELECT count(*) as c FROM ai_model_registry").fetchone()["c"]
+    if m_count == 0:
+        t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+        models_seed = [
+            ("qwen3-4b-instruct", "Qwen", "Ollama", "qwen2.5:3b", "3B", 2.2, "Q4_K_M", 8192, 2600, 3600, 6.0, 1, 1, 1, 1, "http://127.0.0.1:11434", "passed", "{}", 1, 0),
+            ("qwen3-7b-instruct", "Qwen", "Ollama", "qwen2.5:7b", "7B", 4.7, "Q4_K_M", 8192, 4800, 5800, 12.0, 0, 1, 0, 1, "http://127.0.0.1:11434", "untested", "{}", 0, 0),
+            ("llama3-3b-instruct", "LLaMA", "Ollama", "llama3.2:3b", "3B", 2.0, "Q4_K_M", 8192, 2400, 3400, 6.0, 1, 1, 0, 1, "http://127.0.0.1:11434", "untested", "{}", 0, 0),
+            ("llama3-1b-cpu", "LLaMA", "Ollama", "llama3.2:1b", "1B", 1.3, "Q4_K_M", 4096, 0, 0, 4.0, 1, 0, 0, 1, "http://127.0.0.1:11434", "untested", "{}", 0, 0),
+            ("gemma3-4b-instruct", "Gemma", "Ollama", "gemma2:2b", "2B", 1.6, "Q4_K_M", 8192, 2200, 3200, 6.0, 1, 1, 0, 1, "http://127.0.0.1:11434", "untested", "{}", 0, 0)
+        ]
+        for m in models_seed:
+            con.execute("""
+                INSERT OR IGNORE INTO ai_model_registry (
+                    model_id, provider, runtime, model_name, version, size_gb, quantization,
+                    context_length, min_vram_mb, recommended_vram_mb, min_ram_gb,
+                    cpu_compatible, gpu_compatible, installed, enabled, endpoint,
+                    test_status, test_results, is_active, is_previous, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (*m, t_now))
+
+    # Seed institutional practice memories if empty
+    mem_count = con.execute("SELECT count(*) as c FROM ai_memory").fetchone()["c"]
+    if mem_count == 0:
+        t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+        mems_seed = [
+            ("mem_global_01", "Global", None, "compliance_flag", "statutory_tax_regime", "Default to New Tax Regime under Section 115BAC for individuals unless explicit opt-out form 10-IEA is filed.", "system_rule", 1.0),
+            ("mem_global_02", "Global", None, "accounting_policy", "gst_reconciliation_tolerance", "Invoice-wise matching tolerance threshold for GSTR-2B vs Books is Rs. 5.00 for rounding adjustments.", "system_rule", 1.0),
+            ("mem_global_03", "Global", None, "compliance_flag", "tax_audit_threshold", "Section 44AB threshold is Rs. 10 Crores for business where cash transactions do not exceed 5%; otherwise Rs. 1 Crore.", "system_rule", 1.0),
+            ("mem_global_04", "Global", None, "preference", "advisory_drafting_style", "Replies to Assessing Officers must cite relevant sections, recent High Court/Supreme Court precedents, and provide clean tabular annexures.", "user_explicit", 1.0)
+        ]
+        for mem in mems_seed:
+            con.execute("""
+                INSERT OR IGNORE INTO ai_memory (
+                    memory_id, scope, client_file_no, category, key, value, source, confidence, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            """, (*mem, t_now, t_now))
+            con.execute("""
+                INSERT INTO ai_memory_history (
+                    memory_id, action, old_value, new_value, modified_by, reason, timestamp
+                ) VALUES (?, 'create', NULL, ?, 'System', 'Initial institutional practice memory setup', ?)
+            """, (mem[0], mem[5], t_now))
 
 
 def now():
@@ -937,6 +1354,9 @@ def google_service():
     if not GOOGLE_TOKEN_FILE.is_file():
         raise ValueError("Google Drive is not connected. Open Drive Sharing and connect it first.")
     try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request as GoogleRequest
+        from googleapiclient.discovery import build
         credentials = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, GOOGLE_SCOPE)
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(GoogleRequest())
@@ -1000,6 +1420,7 @@ def drive_upload_or_update_file(service, parent_id: str, filename: str, raw_byte
     except Exception:
         existing = []
     
+    from googleapiclient.http import MediaIoBaseUpload
     media = MediaIoBaseUpload(io.BytesIO(raw_bytes), mimetype=mime_type, resumable=False)
     if existing:
         file_id = existing[0]["id"]
@@ -1051,7 +1472,7 @@ def resolve_canonical_period(target_folder: str = "", period: str = "", service:
     return "AY 2025-26"
 
 
-def sync_document_to_google_drive(client: dict, target_folder: str, period: str, filename: str, raw_bytes: bytes, client_visibility: bool = False, save_drive: bool = True):
+def sync_document_to_google_drive(client: dict, target_folder: str, period: str, filename: str, raw_bytes: bytes, client_visibility: bool = False, save_drive: bool = True, *args, **kwargs):
     """Syncs a saved document directly to Google Drive hierarchy and/or Client Shared Folder."""
     if not GOOGLE_TOKEN_FILE.is_file() or not save_drive:
         return None
@@ -1700,9 +2121,45 @@ def get_desktop_health() -> dict:
 
 _LAST_BRING_FRONT_TIME = 0
 _BRING_FRONT_LOCK = threading.Lock()
+_PENDING_DESKTOP_ROUTE = None
+_PENDING_DESKTOP_ROUTE_LOCK = threading.Lock()
 
-def bring_desktop_app_to_front() -> dict:
-    """Brings the native VS Database window to the foreground on Windows."""
+
+def force_window_to_foreground(hwnd: int) -> bool:
+    """
+    Forces a native Win32 window to the foreground on Windows.
+    Restores the window if minimized and switches focus using Win32 API.
+    """
+    if not hwnd or sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        hwnd_int = int(hwnd)
+        if not user32.IsWindow(hwnd_int):
+            return False
+
+        # 1. Restore window if minimized
+        if user32.IsIconic(hwnd_int):
+            user32.ShowWindow(hwnd_int, 9)  # SW_RESTORE
+        else:
+            user32.ShowWindow(hwnd_int, 5)  # SW_SHOW
+
+        user32.BringWindowToTop(hwnd_int)
+        user32.SetForegroundWindow(hwnd_int)
+        if hasattr(user32, "SwitchToThisWindow"):
+            user32.SwitchToThisWindow(hwnd_int, True)
+        return True
+    except Exception as exc:
+        logging.warning("force_window_to_foreground exception: %s", exc)
+        return False
+
+
+def bring_desktop_app_to_front(auto_spawn: bool = True) -> dict:
+    """
+    Brings the native VS Database window to the foreground on Windows.
+    If no active window exists and running as headless server, safely spawns VS_Database.exe.
+    Never spawns duplicate processes if the application is already running.
+    """
     global _LAST_BRING_FRONT_TIME
     with _BRING_FRONT_LOCK:
         now = time.time()
@@ -1710,71 +2167,100 @@ def bring_desktop_app_to_front() -> dict:
             return {"ok": True, "debounced": True}
         _LAST_BRING_FRONT_TIME = now
 
+    # 1. First check the active UI instance HWND if recorded
+    with _DESKTOP_UI_LOCK:
+        recorded_hwnd = _DESKTOP_UI_INSTANCE.get("hwnd")
+        ui_pid = _DESKTOP_UI_INSTANCE.get("pid")
+    
+    if recorded_hwnd and sys.platform == "win32":
+        if force_window_to_foreground(recorded_hwnd):
+            return {"ok": True, "brought_to_front": True, "hwnd": recorded_hwnd, "method": "recorded_hwnd"}
+
+    # 2. Search for window belonging to our PID or titled "VS Database"
+    found_hwnd = None
+    if sys.platform == "win32":
+        try:
+            user32 = ctypes.windll.user32
+            target_pids = set()
+            if ui_pid:
+                target_pids.add(int(ui_pid))
+            target_pids.add(os.getpid())
+
+            def enum_cb(hwnd, _):
+                nonlocal found_hwnd
+                if found_hwnd:
+                    return False
+                if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd):
+                    return True
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value in target_pids:
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buff = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buff, length + 1)
+                        val = buff.value
+                        if not any(b in val for b in ("Visual Studio", "Google Chrome", "Edge", "Firefox")):
+                            found_hwnd = hwnd
+                            return False
+                    else:
+                        found_hwnd = hwnd
+                        return False
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+            user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+
+            # Fallback to searching by title
+            if not found_hwnd:
+                h = user32.FindWindowW(None, "VS Database")
+                if h and user32.IsWindow(h):
+                    found_hwnd = h
+        except Exception as e:
+            logging.warning("EnumWindows exception: %s", e)
+
+    if found_hwnd:
+        if force_window_to_foreground(found_hwnd):
+            with _DESKTOP_UI_LOCK:
+                _DESKTOP_UI_INSTANCE["hwnd"] = found_hwnd
+                _DESKTOP_UI_INSTANCE["attached"] = True
+            return {"ok": True, "brought_to_front": True, "hwnd": found_hwnd, "method": "found_hwnd"}
+
+    # 3. Guard against self-spawning or duplicate instance explosion:
+    # If this process is already frozen (VS_Database.exe) or UI is marked attached, NEVER spawn!
+    if getattr(sys, "frozen", False):
+        return {"ok": True, "already_running": True, "message": "VS_Database application is already running embedded."}
+
+    attached, _ = is_ui_attached_and_valid()
+    if attached or not auto_spawn:
+        return {"ok": False, "message": "Window not found or auto_spawn disabled"}
+
+    # 4. If running headless server without active UI, spawn VS_Database.exe cleanly
     try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        
-        found = []
-        class RECT(ctypes.Structure):
-            _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long), ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
-        
-        def enum_cb(hwnd, _):
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length > 0:
-                buff = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(hwnd, buff, length + 1)
-                val = buff.value
-                if "VS Database" in val:
-                    # Exclude browsers, IDEs, Explorer, command prompts
-                    if any(b in val for b in ("Visual Studio", "Code", "Google Chrome", "Edge", "Firefox", "Opera", "Brave", "Explorer", "Antigravity")):
-                        return True
-                    r = RECT()
-                    user32.GetWindowRect(hwnd, ctypes.byref(r))
-                    w = r.right - r.left
-                    h = r.bottom - r.top
-                    is_iconic = bool(user32.IsIconic(hwnd))
-                    is_visible = bool(user32.IsWindowVisible(hwnd))
-                    if is_iconic or (is_visible and (w > 200 and h > 150)) or val.strip() == "VS Database":
-                        found.append((hwnd, val, is_iconic))
-            return True
+        exe_target = (APP_ROOT / "VS_Database.exe").resolve()
+        if exe_target.exists() and exe_target.name.lower() == "vs_database.exe":
+            logging.info("Auto-spawning VS_Database.exe from %s", exe_target)
+            subprocess.Popen([str(exe_target), "--from-extension", "--skip-animation"])
+            return {"ok": True, "brought_to_front": True, "spawned": True, "binary": str(exe_target)}
+        else:
+            script_target = (APP_ROOT / "main_app.py").resolve()
+            if script_target.exists():
+                logging.info("Auto-spawning main_app.py with python from %s", script_target)
+                subprocess.Popen([sys.executable, str(script_target), "--from-extension", "--skip-animation"])
+                return {"ok": True, "brought_to_front": True, "spawned": True, "script": str(script_target)}
+    except Exception as spawn_err:
+        logging.exception("Failed to auto-spawn desktop app")
+        return {"ok": False, "error": f"Failed to spawn desktop app: {spawn_err}"}
 
-        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
-
-        # Fallback: direct FindWindowW
-        if not found:
-            direct_hwnd = user32.FindWindowW(None, "VS Database")
-            if direct_hwnd:
-                found.append((direct_hwnd, "VS Database", bool(user32.IsIconic(direct_hwnd))))
-
-        if found:
-            hwnd, title, is_iconic = found[0]
-            logging.info(f"bring_desktop_app_to_front found HWND {hwnd} with title: '{title}' (iconic={is_iconic})")
-            print(f"[bring_desktop_app_to_front] Found HWND {hwnd} with title: '{title}' (iconic={is_iconic})", flush=True)
-
-            if is_iconic or user32.IsIconic(hwnd):
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-            else:
-                user32.ShowWindow(hwnd, 5)  # SW_SHOW
-
-            try:
-                user32.BringWindowToTop(hwnd)
-                user32.SetForegroundWindow(hwnd)
-            except Exception:
-                pass
-
-            return {"ok": True, "brought_to_front": True, "found_title": title, "hwnd": hwnd}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-    return {"ok": False, "message": "Window not found"}
+    return {"ok": False, "message": "Window not found and executable unavailable"}
 
 
 _PENDING_BROWSER_RETURN = None
 _PENDING_BROWSER_RETURN_LOCK = threading.Lock()
 
 def bring_browser_to_front() -> dict:
-    """Brings the user's web browser (Chrome, Edge, Brave, etc.) back to the foreground."""
+    """Brings the user's web browser (Chrome, Edge, Brave, etc.) back to the foreground
+    WITHOUT minimizing or un-maximizing it (preserving maximized or normal window state)."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -1782,20 +2268,33 @@ def bring_browser_to_front() -> dict:
         found = []
         def enum_cb(hwnd, _):
             if user32.IsWindowVisible(hwnd):
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buff = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(hwnd, buff, length + 1)
-                    val = buff.value
-                    if any(b in val for b in ("Google Chrome", "Chrome", "Edge", "Brave", "Firefox", "Opera")):
-                        found.append((hwnd, val))
+                owner = user32.GetWindow(hwnd, 4)  # 4 = GW_OWNER
+                if owner == 0:
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buff = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buff, length + 1)
+                        val = buff.value
+                        if any(b in val for b in ("Google Chrome", "Chrome", "Edge", "Brave", "Firefox", "Opera")):
+                            found.append((hwnd, val))
             return True
         proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(enum_cb)
         user32.EnumWindows(proc, 0)
         if found:
             hwnd, title = found[0]
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            # Preserve window state: only restore if actually minimized (iconic).
+            # Never call SW_RESTORE (9) on a maximized window, as it un-maximizes it!
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE (unminimize)
+            elif user32.IsZoomed(hwnd):
+                user32.ShowWindow(hwnd, 3)  # SW_SHOWMAXIMIZED (keep maximized)
+            else:
+                user32.ShowWindow(hwnd, 5)  # SW_SHOW (keep normal)
+
             try:
+                if hasattr(user32, 'SwitchToThisWindow'):
+                    user32.SwitchToThisWindow(hwnd, True)
+
                 fore_hwnd = user32.GetForegroundWindow()
                 fore_thread = user32.GetWindowThreadProcessId(fore_hwnd, None)
                 app_thread = user32.GetWindowThreadProcessId(hwnd, None)
@@ -3042,6 +3541,7 @@ def block_portal(client, reason, custom_message=""):
         for item in portal_children(service, portal["folder_id"]):
             service.files().update(fileId=item["id"], addParents=archive["id"], removeParents=portal["folder_id"], fields="id").execute()
         notice_path = block_pdf(client, reason, custom_message)
+        from googleapiclient.http import MediaIoBaseUpload
         media = MediaIoBaseUpload(io.BytesIO(Path(notice_path).read_bytes()), mimetype="application/pdf", resumable=False)
         notice = service.files().create(body={"name":"Portal Access Notice.pdf", "parents":[portal["folder_id"]]}, media_body=media, fields="id").execute()
         with db() as con: con.execute("INSERT OR REPLACE INTO portal_blocks VALUES(?,?,?,?,?,?)", (client["file_no"],reason,custom_message,now(),notice["id"],archive["id"]))
@@ -4919,6 +5419,7 @@ def api_delete_client_pdf_password(client_file_no: str, payload: dict) -> dict:
 
 def inspect_pdf_bytes(pdf_bytes: bytes) -> dict:
     """Validates PDF structure and checks encryption state."""
+    import pypdf
     if not pdf_bytes or len(pdf_bytes) < 5:
         return {"is_pdf": False, "is_encrypted": False, "page_count": 0, "file_size": len(pdf_bytes or b"")}
     if not pdf_bytes[:1024].lstrip().startswith(b"%PDF-"):
@@ -4934,6 +5435,7 @@ def inspect_pdf_bytes(pdf_bytes: bytes) -> dict:
 
 def lock_pdf_bytes(pdf_bytes: bytes, password: str) -> bytes:
     """Encrypts a PDF using AES-256 with user/owner password."""
+    import pypdf
     if not password or not str(password).strip():
         raise ValueError("A non-empty password is required to lock the PDF.")
     reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
@@ -4955,7 +5457,9 @@ def lock_pdf_bytes(pdf_bytes: bytes, password: str) -> bytes:
 
 def unlock_pdf_bytes(pdf_bytes: bytes, password: str) -> bytes:
     """Decrypts a PDF using password and produces an unencrypted output."""
+    import pypdf
     reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+
     if not reader.is_encrypted:
         return pdf_bytes
     if not password:
@@ -5263,9 +5767,9 @@ def save_document(payload, actor="Host"):
 
     staged_file_id = payload.get("staged_file_id")
     staging_session_id = payload.get("staging_session_id")
-    if raw is None and staged_file_id and staging_session_id:
+    if raw is None and staged_file_id:
         try:
-            res_stg = staging_mgr.get_file_bytes(staging_session_id, staged_file_id)
+            res_stg = staging_mgr.find_file_bytes(staged_file_id, staging_session_id)
             if res_stg:
                 raw, _ = res_stg
         except Exception as exc:
@@ -5350,17 +5854,17 @@ def save_document(payload, actor="Host"):
                 target_dir = (d_root / office_name / c_folder_name / target_folder).resolve()
             else:
                 service_name = safe_name(payload.get("service") or "General")
-                if rule["order_name"] == "period-service":
+                if rule and rule["order_name"] == "period-service":
                     target_dir = d_root / office_name / c_folder_name / safe_name(canonical_period) / service_name
                 else:
                     target_dir = d_root / office_name / c_folder_name / service_name / safe_name(canonical_period)
 
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_file = target_dir / filename
-        target_file.write_bytes(raw)
-        destinations.append(("drive", str(target_file)))
-
         try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = target_dir / filename
+            target_file.write_bytes(raw)
+            destinations.append(("drive", str(target_file)))
+
             stat = target_file.stat()
             mod_time = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds")
             rel_file = str(target_file.relative_to(d_root / (client_name if is_shared else office_name) / c_folder_name)).replace("\\", "/")
@@ -5369,19 +5873,59 @@ def save_document(payload, actor="Host"):
                             (client["file_no"], "drive", rel_file, stat.st_size, mod_time, 1, now()))
                 if target_folder:
                     record_folder(client["file_no"], "drive", target_folder, "manual", con=con)
-        except Exception:
-            pass
+        except Exception as d_save_err:
+            logging.warning("Google Drive save write skipped/failed: %s", d_save_err)
 
-    # 2. Local Storage saving (if explicitly requested, saved under Office)
-    if settings.get("local_root") and payload.get("save_local", False):
+    # 2. Local Storage saving (if requested, or as fallback if Drive write was not completed)
+    save_local_req = bool(payload.get("save_local", False))
+    if (save_local_req or not destinations) and settings.get("local_root"):
         l_root = configured_root(settings["local_root"])
         office_name = settings.get("office_folder_name", "Office") or "Office"
         c_folder_name = storage_folder_name(client, "local")
-        target_dir = l_root / office_name / c_folder_name / safe_name(canonical_period)
+        if target_folder:
+            target_dir = (l_root / office_name / c_folder_name / target_folder).resolve()
+        else:
+            service_name = safe_name(payload.get("service") or "General")
+            if rule and rule["order_name"] == "period-service":
+                target_dir = (l_root / office_name / c_folder_name / safe_name(canonical_period) / service_name).resolve()
+            else:
+                target_dir = (l_root / office_name / c_folder_name / service_name / safe_name(canonical_period)).resolve()
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = target_dir / filename
+            target_file.write_bytes(raw)
+            destinations.append(("local", str(target_file)))
+
+            stat = target_file.stat()
+            mod_time = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds")
+            rel_file = str(target_file.relative_to(l_root / office_name / c_folder_name)).replace("\\", "/")
+            with db() as con:
+                con.execute("INSERT INTO file_inventory VALUES(?,?,?,?,?,?,?) ON CONFLICT(client_file_no,storage_kind,relative_path) DO UPDATE SET size_bytes=excluded.size_bytes,modified_at=excluded.modified_at,present=1,updated_at=excluded.updated_at",
+                            (client["file_no"], "local", rel_file, stat.st_size, mod_time, 1, now()))
+                if target_folder:
+                    record_folder(client["file_no"], "local", target_folder, "manual", con=con)
+        except Exception as l_save_err:
+            logging.warning("Local storage save error: %s", l_save_err)
+
+    # 3. Absolute Fallback: If still not saved anywhere, store into default local directory so zero data is lost
+    if not destinations:
+        l_root = (APP_ROOT / "storage" / "local").resolve()
+        office_name = "Office"
+        c_folder_name = storage_folder_name(client, "local")
+        target_dir = (l_root / office_name / c_folder_name / target_folder).resolve() if target_folder else (l_root / office_name / c_folder_name / safe_name(canonical_period)).resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
         target_file = target_dir / filename
         target_file.write_bytes(raw)
         destinations.append(("local", str(target_file)))
+        try:
+            stat = target_file.stat()
+            mod_time = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds")
+            rel_file = str(target_file.relative_to(l_root / office_name / c_folder_name)).replace("\\", "/")
+            with db() as con:
+                con.execute("INSERT INTO file_inventory VALUES(?,?,?,?,?,?,?) ON CONFLICT(client_file_no,storage_kind,relative_path) DO UPDATE SET size_bytes=excluded.size_bytes,modified_at=excluded.modified_at,present=1,updated_at=excluded.updated_at",
+                            (client["file_no"], "local", rel_file, stat.st_size, mod_time, 1, now()))
+        except Exception:
+            pass
 
     job_id = str(uuid.uuid4())
     local_path = next((p for label, p in destinations if label == "local"), None)
@@ -5429,6 +5973,7 @@ def bulk_save_documents(payload, actor="Host"):
 
     with db() as con:
         client = con.execute("SELECT * FROM clients WHERE file_no=?", (client_file_no,)).fetchone()
+        rule = con.execute("SELECT * FROM folder_rules WHERE id=1").fetchone()
     if not client:
         raise ValueError(f"Client '{client_file_no}' not found in database.")
 
@@ -5447,31 +5992,53 @@ def bulk_save_documents(payload, actor="Host"):
         save_local = True
 
     # Pre-resolve and create destination directories once:
+    office_name = settings.get("office_folder_name", "Office") or "Office"
+    client_name = settings.get("client_folder_name", "Client") or "Client"
+    drive_folder_root = client_name if batch_shared else office_name
+
     l_target_dir = None
-    if settings.get("local_root") and save_local:
+    if settings.get("local_root") and (save_local or not allow_drive):
         l_root = configured_root(settings["local_root"])
-        office_name = settings.get("office_folder_name", "Office") or "Office"
         c_folder_name = storage_folder_name(client, "local")
         if target_folder:
             l_target_dir = (l_root / office_name / c_folder_name / target_folder).resolve()
         else:
-            l_target_dir = l_root / office_name / c_folder_name / safe_name(canonical_period)
+            service_name = safe_name(service)
+            if rule and rule["order_name"] == "period-service":
+                l_target_dir = (l_root / office_name / c_folder_name / safe_name(canonical_period) / service_name).resolve()
+            else:
+                l_target_dir = (l_root / office_name / c_folder_name / service_name / safe_name(canonical_period)).resolve()
         l_target_dir.mkdir(parents=True, exist_ok=True)
 
     d_target_dir = None
-    if allow_drive and settings.get("drive_root"):
+    if allow_drive and settings.get("drive_root") and save_drive:
         try:
             d_root = configured_root(settings["drive_root"])
             if d_root and d_root.exists():
                 c_folder_name = storage_folder_name(client, "drive")
-                client_name = settings.get("client_folder_name", "Client") or "Client"
-                if target_folder and "client shared folder" not in target_folder.lower():
-                    d_target_dir = (d_root / client_name / c_folder_name / target_folder).resolve()
+                if target_folder:
+                    d_target_dir = (d_root / drive_folder_root / c_folder_name / target_folder).resolve()
                 else:
-                    d_target_dir = d_root / client_name / c_folder_name / safe_name(canonical_period)
+                    if batch_shared:
+                        d_target_dir = (d_root / drive_folder_root / c_folder_name / safe_name(canonical_period)).resolve()
+                    else:
+                        service_name = safe_name(service)
+                        if rule and rule["order_name"] == "period-service":
+                            d_target_dir = (d_root / drive_folder_root / c_folder_name / safe_name(canonical_period) / service_name).resolve()
+                        else:
+                            d_target_dir = (d_root / drive_folder_root / c_folder_name / service_name / safe_name(canonical_period)).resolve()
                 d_target_dir.mkdir(parents=True, exist_ok=True)
         except Exception as d_exc:
             logging.warning("Google Drive target directory preparation skipped: %s", d_exc)
+
+    if not l_target_dir and not d_target_dir:
+        l_root = configured_root(settings["local_root"]) if settings.get("local_root") else (APP_ROOT / "storage" / "local").resolve()
+        c_folder_name = storage_folder_name(client, "local")
+        if target_folder:
+            l_target_dir = (l_root / office_name / c_folder_name / target_folder).resolve()
+        else:
+            l_target_dir = (l_root / office_name / c_folder_name / safe_name(canonical_period)).resolve()
+        l_target_dir.mkdir(parents=True, exist_ok=True)
 
     saved_items = []
     inventory_rows = []
@@ -5495,9 +6062,9 @@ def bulk_save_documents(payload, actor="Host"):
 
         staged_file_id = item.get("staged_file_id")
         staging_session_id = payload.get("staging_session_id") or item.get("staging_session_id")
-        if raw is None and staged_file_id and staging_session_id:
+        if raw is None and staged_file_id:
             try:
-                res_stg = staging_mgr.get_file_bytes(staging_session_id, staged_file_id)
+                res_stg = staging_mgr.find_file_bytes(staged_file_id, staging_session_id)
                 if res_stg:
                     raw, _ = res_stg
             except Exception as exc:
@@ -5519,6 +6086,7 @@ def bulk_save_documents(payload, actor="Host"):
                 continue
 
         if raw is None or len(raw) == 0:
+            logging.warning("Bulk save skipping document '%s' (no bytes found)", doc_name)
             continue
 
         filename = safe_name(doc_name)
@@ -5547,7 +6115,7 @@ def bulk_save_documents(payload, actor="Host"):
                 destinations.append(("drive", str(d_file)))
                 d_stat = d_file.stat()
                 d_mtime = datetime.fromtimestamp(d_stat.st_mtime, timezone.utc).isoformat(timespec="seconds")
-                d_rel = str(d_file.relative_to(d_root / client_name / c_folder_name)).replace("\\", "/")
+                d_rel = str(d_file.relative_to(d_root / drive_folder_root / c_folder_name)).replace("\\", "/")
                 inventory_rows.append((client_file_no, "drive", d_rel, d_stat.st_size, d_mtime, 1, now_ts))
                 if target_folder:
                     folder_records.append((client_file_no, "drive", target_folder, "manual"))
@@ -6007,6 +6575,12 @@ class Handler(BaseHTTPRequestHandler):
         public_endpoints = {
             "/api/health",
             "/api/desktop/health",
+            "/api/desktop/state",
+            "/api/desktop/heartbeat",
+            "/api/desktop/ui-attach",
+            "/api/desktop/ui-detach",
+            "/api/desktop/shutdown",
+            "/api/desktop/navigate",
             "/api/desktop/bring_to_front",
             "/api/desktop/return_to_browser",
             "/api/desktop/pending_browser_return",
@@ -6061,6 +6635,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self.send_json({"ok": True, "server_time": now()})
+
+        if path.startswith("/api/ai/"):
+            return self.handle_ai_get(path)
 
         if path == "/api/staging/incoming":
             query = parse_qs(urlparse(self.path).query)
@@ -6519,6 +7096,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/desktop/health":
             return self.send_json(get_desktop_health())
 
+        if path == "/api/desktop/state":
+            return self.send_json(get_desktop_state())
+
+        if path == "/api/desktop/navigate":
+            global _PENDING_DESKTOP_ROUTE
+            with _PENDING_DESKTOP_ROUTE_LOCK:
+                ret_route = _PENDING_DESKTOP_ROUTE
+                _PENDING_DESKTOP_ROUTE = None
+            return self.send_json({"ok": True, "has_route": bool(ret_route), "route": ret_route})
+
         if path == "/api/desktop/pending_browser_return":
             global _PENDING_BROWSER_RETURN
             with _PENDING_BROWSER_RETURN_LOCK:
@@ -6625,6 +7212,9 @@ class Handler(BaseHTTPRequestHandler):
             path, payload = urlparse(self.path).path, self.read_json()
             if path.startswith("/api/") and not self.protect_api(path):
                 return
+
+            if path.startswith("/api/ai/"):
+                return self.handle_ai_post(path, payload)
 
             if path == "/api/auth/setup-host":
                 if has_host_user():
@@ -7677,6 +8267,84 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
                 return self.send_json({"ok": True, "action": "close"})
 
+            if path == "/api/desktop/heartbeat":
+                inst_id = payload.get("instance_id")
+                pid = payload.get("pid")
+                hwnd = payload.get("hwnd")
+                is_valid_hwnd = True
+                if hwnd and sys.platform == "win32":
+                    try:
+                        is_valid_hwnd = bool(ctypes.windll.user32.IsWindow(int(hwnd)))
+                    except Exception:
+                        is_valid_hwnd = False
+                with _DESKTOP_UI_LOCK:
+                    _DESKTOP_UI_INSTANCE["last_heartbeat"] = time.time()
+                    if inst_id:
+                        _DESKTOP_UI_INSTANCE["instance_id"] = inst_id
+                    if pid:
+                        _DESKTOP_UI_INSTANCE["pid"] = pid
+                    if hwnd:
+                        _DESKTOP_UI_INSTANCE["hwnd"] = hwnd if is_valid_hwnd else None
+                    _DESKTOP_UI_INSTANCE["attached"] = is_valid_hwnd
+                return self.send_json({
+                    "ok": True,
+                    "attached": _DESKTOP_UI_INSTANCE["attached"],
+                    "instance_id": _DESKTOP_UI_INSTANCE["instance_id"],
+                    "advertised_lan_ip": _ADVERTISED_LAN_IP
+                })
+
+            if path == "/api/desktop/navigate":
+                route = str(payload.get("route") or "#save").strip()
+                global _PENDING_DESKTOP_ROUTE
+                with _PENDING_DESKTOP_ROUTE_LOCK:
+                    _PENDING_DESKTOP_ROUTE = route
+                bring_res = bring_desktop_app_to_front(auto_spawn=False)
+                return self.send_json({"ok": True, "route": route, "window": bring_res})
+
+            if path == "/api/desktop/ui-attach":
+                inst_id = payload.get("instance_id") or uuid.uuid4().hex
+                pid = payload.get("pid")
+                hwnd = payload.get("hwnd")
+                force = payload.get("force", False)
+                with _DESKTOP_UI_LOCK:
+                    attached, cur_ui = is_ui_attached_and_valid()
+                    if attached and not force and cur_ui.get("instance_id") != inst_id:
+                        return self.send_json({
+                            "ok": False,
+                            "attached": True,
+                            "message": "Another UI instance is currently attached and active",
+                            "ui": cur_ui
+                        }, 409)
+                    _DESKTOP_UI_INSTANCE["instance_id"] = inst_id
+                    _DESKTOP_UI_INSTANCE["pid"] = pid
+                    _DESKTOP_UI_INSTANCE["hwnd"] = hwnd
+                    _DESKTOP_UI_INSTANCE["last_heartbeat"] = time.time()
+                    _DESKTOP_UI_INSTANCE["attached"] = True
+                return self.send_json({
+                    "ok": True,
+                    "attached": True,
+                    "ui": dict(_DESKTOP_UI_INSTANCE),
+                    "advertised_lan_ip": _ADVERTISED_LAN_IP
+                })
+
+            if path == "/api/desktop/ui-detach":
+                inst_id = payload.get("instance_id")
+                with _DESKTOP_UI_LOCK:
+                    if not inst_id or _DESKTOP_UI_INSTANCE.get("instance_id") == inst_id:
+                        _DESKTOP_UI_INSTANCE["attached"] = False
+                        _DESKTOP_UI_INSTANCE["instance_id"] = None
+                return self.send_json({"ok": True, "detached": True})
+
+            if path == "/api/desktop/shutdown":
+                inst_id = payload.get("instance_id")
+                force = payload.get("force", False)
+                with _DESKTOP_UI_LOCK:
+                    cur_id = _DESKTOP_UI_INSTANCE.get("instance_id")
+                if force or not cur_id or cur_id == inst_id or self.is_local_client():
+                    threading.Thread(target=lambda: (time.sleep(0.2), stop_server(), sys.exit(0) if getattr(sys, 'frozen', False) else None), daemon=True).start()
+                    return self.send_json({"ok": True, "action": "shutdown"})
+                return self.send_json({"ok": False, "error": "Not authorized to shut down backend"}, 403)
+
             if path == "/api/client-files/move":
                 fno = str(payload.get("client_file_no", "")).strip()
                 src_p = str(payload.get("source_relative_path", "")).strip()
@@ -8228,11 +8896,444 @@ class Handler(BaseHTTPRequestHandler):
             logging.exception("Unhandled request error")
             self.send_json({"error": "Unexpected server error. Check the server log for details."}, 500)
 
+    def handle_ai_get(self, path: str):
+        try:
+            if path == "/api/ai/health":
+                hw = vs_ai_engine.detect_system_hardware()
+                runtime_health = ai_engine.runtime.check_health()
+                return self.send_json({
+                    "ok": True,
+                    "runtime_online": runtime_health.get("online", False),
+                    "runtime_name": runtime_health.get("runtime", "Ollama"),
+                    "installed_models": runtime_health.get("installed_models", []),
+                    "hardware": hw,
+                    "recommended_model": vs_ai_engine.recommend_model_for_hardware(hw)
+                })
+
+            if path == "/api/ai/hardware":
+                return self.send_json({"ok": True, "hardware": vs_ai_engine.detect_system_hardware()})
+
+            if path == "/api/ai/models":
+                hw = vs_ai_engine.detect_system_hardware()
+                runtime_health = ai_engine.runtime.check_health()
+                with db() as con:
+                    db_models = [dict(r) for r in con.execute("SELECT * FROM ai_model_registry ORDER BY model_name ASC").fetchall()]
+                models_list = db_models if db_models else vs_ai_engine.DEFAULT_MODEL_REGISTRY
+                return self.send_json({
+                    "ok": True,
+                    "registry": models_list,
+                    "runtime": runtime_health,
+                    "recommended": vs_ai_engine.recommend_model_for_hardware(hw)
+                })
+
+            if path == "/api/ai/conversations":
+                with db() as con:
+                    convs = [dict(r) for r in con.execute("SELECT * FROM ai_conversations WHERE is_archived = 0 ORDER BY updated_at DESC").fetchall()]
+                    for cv in convs:
+                        last_msg = con.execute("SELECT content FROM ai_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1", (cv["id"],)).fetchone()
+                        cv["preview"] = last_msg["content"][:120] if last_msg else ""
+                        cv["msg_count"] = con.execute("SELECT count(*) as c FROM ai_messages WHERE conversation_id = ?", (cv["id"],)).fetchone()["c"]
+                return self.send_json({"ok": True, "conversations": convs})
+
+            if path.startswith("/api/ai/conversations/"):
+                parts = path.split("/")
+                conv_id = parts[4]
+                with db() as con:
+                    conv = con.execute("SELECT * FROM ai_conversations WHERE id = ?", (conv_id,)).fetchone()
+                    if not conv:
+                        return self.send_json({"error": "Conversation not found"}, 404)
+                    msgs = [dict(r) for r in con.execute("SELECT * FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC", (conv_id,)).fetchall()]
+                    for m in msgs:
+                        try:
+                            m["meta"] = json.loads(m["meta_json"]) if m.get("meta_json") else {}
+                        except Exception:
+                            m["meta"] = {}
+                return self.send_json({"ok": True, "conversation": dict(conv), "messages": msgs})
+
+            if path == "/api/ai/sources":
+                with db() as con:
+                    sources = [dict(r) for r in con.execute("SELECT * FROM ai_sources ORDER BY name ASC").fetchall()]
+                    for s in sources:
+                        v_row = con.execute("SELECT * FROM ai_source_versions WHERE source_id = ? ORDER BY created_at DESC LIMIT 1", (s["source_id"],)).fetchone()
+                        s["latest_version"] = dict(v_row) if v_row else None
+                        s["chunk_count"] = con.execute("SELECT count(*) as c FROM ai_source_chunks WHERE source_id = ?", (s["source_id"],)).fetchone()["c"]
+                return self.send_json({"ok": True, "sources": sources})
+
+            if path.startswith("/api/ai/sources/") and path.endswith("/chunks"):
+                parts = path.split("/")
+                src_id = parts[4]
+                with db() as con:
+                    src = con.execute("SELECT * FROM ai_sources WHERE source_id = ?", (src_id,)).fetchone()
+                    if not src:
+                        return self.send_json({"error": "Source not found"}, 404)
+                    chunks = [dict(r) for r in con.execute("SELECT * FROM ai_source_chunks WHERE source_id = ? ORDER BY page_number ASC LIMIT 100", (src_id,)).fetchall()]
+                return self.send_json({"ok": True, "source": dict(src), "chunks": chunks})
+
+            if path == "/api/ai/recent-files":
+                with db() as con:
+                    recs = [dict(r) for r in con.execute("SELECT * FROM ai_recent_operations ORDER BY created_at DESC LIMIT 25").fetchall()]
+                return self.send_json({"ok": True, "recent_files": recs})
+
+            if path == "/api/ai/diagnostics":
+                hw = vs_ai_engine.detect_system_hardware()
+                rh = ai_engine.runtime.check_health()
+                with db() as con:
+                    conv_c = con.execute("SELECT count(*) as c FROM ai_conversations").fetchone()["c"]
+                    msg_c = con.execute("SELECT count(*) as c FROM ai_messages").fetchone()["c"]
+                    src_c = con.execute("SELECT count(*) as c FROM ai_sources").fetchone()["c"]
+                    chk_c = con.execute("SELECT count(*) as c FROM ai_source_chunks").fetchone()["c"]
+                return self.send_json({
+                    "ok": True,
+                    "hardware": hw,
+                    "runtime": rh,
+                    "counts": {
+                        "conversations": conv_c,
+                        "messages": msg_c,
+                        "sources": src_c,
+                        "chunks": chk_c
+                    }
+                })
+
+            if path == "/api/ai/memory":
+                mems = ai_engine.memory.get_memories(limit=100)
+                return self.send_json({"ok": True, "memories": mems})
+
+            if path.startswith("/api/ai/memory/") and path.endswith("/history"):
+                mem_id = path.split("/")[4]
+                hist = ai_engine.memory.get_memory_history(mem_id)
+                return self.send_json({"ok": True, "history": hist, "memory_id": mem_id})
+
+            return self.send_json({"error": "Unknown AI GET endpoint"}, 404)
+        except Exception as e:
+            logging.exception("AI GET error")
+            return self.send_json({"error": str(e)}, 500)
+
+    def handle_ai_post(self, path: str, payload: dict):
+        try:
+            if path == "/api/ai/conversations":
+                cid = payload.get("id") or f"conv_{uuid.uuid4().hex[:10]}"
+                title = payload.get("title", "New Chat").strip() or "New Chat"
+                scope = payload.get("source_scope", "All Knowledge")
+                t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+                with db() as con:
+                    con.execute("""
+                        INSERT INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
+                        VALUES (?, ?, 'User', ?, 0, ?, ?)
+                    """, (cid, title, scope, t_now, t_now))
+                    con.commit()
+                return self.send_json({"ok": True, "conversation_id": cid, "title": title})
+
+            if path.startswith("/api/ai/conversations/") and path.endswith("/rename"):
+                parts = path.split("/")
+                cid = parts[4]
+                new_title = payload.get("title", "").strip()
+                if not new_title:
+                    return self.send_json({"error": "Title is required"}, 400)
+                with db() as con:
+                    con.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (new_title, time.strftime("%Y-%m-%d %H:%M:%S"), cid))
+                    con.commit()
+                return self.send_json({"ok": True, "title": new_title})
+
+            if path.startswith("/api/ai/conversations/") and path.endswith("/clear"):
+                parts = path.split("/")
+                cid = parts[4]
+                with db() as con:
+                    con.execute("DELETE FROM ai_messages WHERE conversation_id = ?", (cid,))
+                    con.commit()
+                return self.send_json({"ok": True, "message": "Conversation cleared"})
+
+            if path == "/api/ai/chat":
+                cid = (payload.get("conversation_id") or "").strip()
+                prompt = (payload.get("prompt") or "").strip()
+                scope = payload.get("scope", "All Knowledge")
+                source_only = bool(payload.get("source_only", False))
+                attachments = payload.get("attachments", [])
+                client_ctx = payload.get("client_context")
+
+                if not prompt:
+                    return self.send_json({"error": "Prompt cannot be empty"}, 400)
+
+                t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                with db() as con:
+                    if not cid:
+                        cid = f"conv_{uuid.uuid4().hex[:10]}"
+                        title = prompt[:30] + ("..." if len(prompt) > 30 else "")
+                        con.execute("""
+                            INSERT INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
+                            VALUES (?, ?, 'User', ?, 0, ?, ?)
+                        """, (cid, title, scope, t_now, t_now))
+                    else:
+                        con.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (t_now, cid))
+
+                    user_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only})
+                    con.execute("""
+                        INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
+                        VALUES (?, ?, 'user', ?, ?, ?)
+                    """, (user_msg_id, cid, prompt, user_meta, t_now))
+                    con.commit()
+
+                res = ai_engine.route_and_execute(
+                    prompt=prompt,
+                    conversation_id=cid,
+                    scope=scope,
+                    source_only=source_only,
+                    attachments=attachments,
+                    client_context=client_ctx
+                )
+
+                asst_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+                asst_meta = json.dumps({
+                    "citations": res.get("citations", []),
+                    "model_used": res.get("model_used", ""),
+                    "node": res.get("node", ""),
+                    "sources": res.get("sources", [])
+                })
+                with db() as con:
+                    con.execute("""
+                        INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
+                        VALUES (?, ?, 'assistant', ?, ?, ?)
+                    """, (asst_msg_id, cid, res.get("answer", ""), asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
+                    con.commit()
+
+                res["conversation_id"] = cid
+                res["message_id"] = asst_msg_id
+                return self.send_json(res)
+
+            if path == "/api/ai/models/install":
+                model_name = payload.get("model_name") or payload.get("ollama_tag")
+                if not model_name:
+                    return self.send_json({"error": "Model name is required"}, 400)
+                def pull_worker():
+                    try:
+                        ai_engine.runtime.pull_model(model_name)
+                    except Exception as err:
+                        logging.warning(f"Model pull failed: {err}")
+                threading.Thread(target=pull_worker, daemon=True).start()
+                return self.send_json({"ok": True, "message": f"Installation of {model_name} initiated in background."})
+
+            if path == "/api/ai/models/setup-defaults":
+                hw = vs_ai_engine.detect_system_hardware()
+                role = payload.get("role") or ("host" if hw.get("has_gpu") else "staff")
+                models_to_pull = vs_ai_engine.get_default_models_for_role(role, hw.get("has_gpu", False))
+
+                def batch_pull_worker():
+                    for m in models_to_pull:
+                        try:
+                            ai_engine.runtime.pull_model(m)
+                        except Exception as e:
+                            logging.warning(f"Failed pulling {m}: {e}")
+
+                threading.Thread(target=batch_pull_worker, daemon=True).start()
+                return self.send_json({
+                    "ok": True,
+                    "role": role,
+                    "models": models_to_pull,
+                    "message": f"Background installation started for {len(models_to_pull)} {role} models."
+                })
+
+            if path.startswith("/api/ai/tools/"):
+                tool = path.replace("/api/ai/tools/", "").strip()
+                return self.handle_ai_tool_call(tool, payload)
+
+            if path == "/api/ai/sources":
+                res = ai_engine.kb.add_source(payload, file_path=payload.get("file_path"))
+                return self.send_json(res)
+
+            if path == "/api/ai/browse-files":
+                results = []
+                with db() as con:
+                    clients = con.execute("SELECT file_no, name FROM clients LIMIT 50").fetchall()
+                    for cl in clients:
+                        files = con.execute("SELECT relative_path, size_bytes, modified_at FROM file_inventory WHERE client_file_no = ? AND present = 1 LIMIT 10", (cl["file_no"],)).fetchall()
+                        for f in files:
+                            results.append({
+                                "client_file_no": cl["file_no"],
+                                "client_name": cl["name"],
+                                "filename": Path(f["relative_path"]).name,
+                                "relative_path": f["relative_path"],
+                                "size_bytes": f["size_bytes"],
+                                "modified_at": f["modified_at"]
+                            })
+                return self.send_json({"ok": True, "files": results})
+
+            if path == "/api/ai/memory":
+                mem_id = payload.get("memory_id")
+                if mem_id:
+                    new_val = payload.get("value", "")
+                    reason = payload.get("reason", "Updated via VS AI interface")
+                    res = ai_engine.memory.update_memory(mem_id, new_val, reason=reason)
+                    return self.send_json(res)
+                else:
+                    res = ai_engine.memory.add_memory(
+                        scope=payload.get("scope", "Global"),
+                        key=payload.get("key", "").strip(),
+                        value=payload.get("value", "").strip(),
+                        client_file_no=payload.get("client_file_no"),
+                        category=payload.get("category", "preference"),
+                        source=payload.get("source", "user_explicit")
+                    )
+                    return self.send_json(res)
+
+            if path == "/api/ai/models/test":
+                mid = payload.get("model_id")
+                prompt = payload.get("test_prompt")
+                res = ai_engine.lifecycle.test_model(mid, prompt)
+                return self.send_json(res)
+
+            if path == "/api/ai/models/activate":
+                mid = payload.get("model_id")
+                res = ai_engine.lifecycle.activate_model(mid)
+                return self.send_json(res)
+
+            if path == "/api/ai/models/rollback":
+                res = ai_engine.lifecycle.rollback_model()
+                return self.send_json(res)
+
+            if path == "/api/ai/settings/vram-headroom":
+                headroom = int(payload.get("vram_safety_margin_mb", 768))
+                with db() as con:
+                    con.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('vram_safety_margin_mb', ?)", (str(headroom),))
+                return self.send_json({"ok": True, "vram_safety_margin_mb": headroom})
+
+            return self.send_json({"error": "Unknown AI POST endpoint"}, 404)
+        except Exception as e:
+            logging.exception("AI POST error")
+            return self.send_json({"error": str(e)}, 500)
+
+    def handle_ai_tool_call(self, tool: str, payload: dict):
+        file_path = payload.get("file_path", "")
+        text = payload.get("text", "")
+        tone = payload.get("tone", "formal")
+
+        if tool == "summarize-pdf":
+            if file_path and Path(file_path).exists():
+                ext_res = vs_ai_engine.DocumentExtractor.extract_pdf(file_path, max_pages=30)
+                if not ext_res.get("ok"):
+                    return self.send_json({"ok": False, "error": ext_res.get("error")})
+                fname = Path(file_path).name
+                total_p = ext_res.get("total_pages", 1)
+                first_pages = "\n\n".join([p["text"][:600] for p in ext_res.get("pages", [])[:5]])
+                summary_prompt = f"Provide a crisp, professional CA practice executive summary of this document ({fname}, {total_p} pages):\n\n{first_pages}"
+                res = ai_engine.route_and_execute(summary_prompt, conversation_id="tool_exec", attachments=[{"name": fname, "path": file_path, "type": "pdf"}])
+                return self.send_json({
+                    "ok": True,
+                    "filename": fname,
+                    "total_pages": total_p,
+                    "summary": res.get("answer"),
+                    "tables_found": len(ext_res.get("tables", []))
+                })
+            return self.send_json({"ok": False, "error": "Valid file_path is required for PDF summary"})
+
+        if tool == "extract-tables":
+            if file_path and Path(file_path).exists():
+                ext = Path(file_path).suffix.lower()
+                if ext == ".pdf":
+                    res = vs_ai_engine.DocumentExtractor.extract_pdf(file_path, max_pages=20)
+                    tables = res.get("tables", [])
+                    return self.send_json({"ok": True, "tables": tables, "count": len(tables), "filename": Path(file_path).name})
+                elif ext in (".xlsx", ".csv"):
+                    res = vs_ai_engine.DocumentExtractor.extract_excel(file_path)
+                    sheets = res.get("sheets", [])
+                    return self.send_json({"ok": True, "sheets": sheets, "count": len(sheets), "filename": Path(file_path).name})
+            return self.send_json({"ok": False, "error": "File not found or invalid format for table extraction"})
+
+        if tool == "draft-document":
+            doc_type = payload.get("doc_type", "Notice Reply")
+            subject = payload.get("subject", "Assessment Proceedings")
+            client_name = payload.get("client_name", "Client")
+            details = payload.get("details", "")
+            draft_prompt = (
+                f"Draft a formal CA office {doc_type} on behalf of '{client_name}' regarding '{subject}'. "
+                f"Particulars: {details}. Format formally with reference numbers, statutory citations, and polite closing."
+            )
+            res = ai_engine.route_and_execute(draft_prompt, conversation_id="tool_exec")
+            return self.send_json({"ok": True, "draft": res.get("answer"), "doc_type": doc_type})
+
+        if tool == "rewrite-text":
+            if not text:
+                return self.send_json({"ok": False, "error": "Text is required to rewrite"})
+            rewrite_prompt = f"Rewrite the following text in a professional, {tone} CA-practice tone without losing factual content:\n\n{text}"
+            res = ai_engine.route_and_execute(rewrite_prompt, conversation_id="tool_exec")
+            return self.send_json({"ok": True, "rewritten": res.get("answer"), "tone": tone})
+
+        if tool == "explain-concept":
+            concept = payload.get("concept", text)
+            if not concept:
+                return self.send_json({"ok": False, "error": "Concept name is required"})
+            res = ai_engine.route_and_execute(f"Explain {concept} for a Chartered Accountant practice in India.", conversation_id="tool_exec")
+            return self.send_json({"ok": True, "explanation": res.get("answer"), "citations": res.get("citations")})
+
+        if tool == "check-compliance":
+            data = payload.get("compliance_data", text)
+            res = ai_engine.route_and_execute(f"Review compliance requirements and applicable legal sections for: {data}", conversation_id="tool_exec", scope="All Knowledge")
+            return self.send_json({"ok": True, "compliance_report": res.get("answer"), "citations": res.get("citations")})
+
+        if tool == "reconcile-excel":
+            file_path = payload.get("file_path", "")
+            if file_path and Path(file_path).exists():
+                xl_res = vs_ai_engine.DocumentExtractor.extract_excel(file_path)
+                sheets = xl_res.get("sheets", [])
+                reconcile_prompt = (
+                    f"Perform a professional Chartered Accountant reconciliation and scrutiny of this Excel dataset ({Path(file_path).name}). "
+                    f"Check line items, detect any debit-credit or turnover mismatch, verify tax rates, and list any statutory reconciliation issues."
+                )
+                res = ai_engine.route_and_execute(reconcile_prompt, conversation_id="tool_exec", attachments=[{"name": Path(file_path).name, "path": file_path, "type": "excel"}])
+                return self.send_json({
+                    "ok": True,
+                    "filename": Path(file_path).name,
+                    "sheets_found": len(sheets),
+                    "reconciliation_report": res.get("answer")
+                })
+            return self.send_json({"ok": False, "error": "Valid Excel file_path is required for reconciliation"})
+
+        return self.send_json({"ok": False, "error": f"Unknown tool: {tool}"})
+
+    def handle_ai_delete(self, path: str):
+        try:
+            if path.startswith("/api/ai/memory/"):
+                mem_id = path.split("/")[4]
+                res = ai_engine.memory.soft_delete_memory(mem_id, reason="Soft deleted via VS AI interface")
+                return self.send_json(res)
+
+            if path.startswith("/api/ai/conversations/"):
+                cid = path.split("/")[4]
+                with db() as con:
+                    con.execute("DELETE FROM ai_messages WHERE conversation_id = ?", (cid,))
+                    con.execute("DELETE FROM ai_conversations WHERE id = ?", (cid,))
+                    con.commit()
+                return self.send_json({"ok": True, "message": "Conversation deleted"})
+
+            if path.startswith("/api/ai/sources/"):
+                sid = path.split("/")[4]
+                with db() as con:
+                    con.execute("DELETE FROM ai_source_chunks WHERE source_id = ?", (sid,))
+                    con.execute("DELETE FROM ai_source_versions WHERE source_id = ?", (sid,))
+                    con.execute("DELETE FROM ai_sources WHERE source_id = ?", (sid,))
+                    con.commit()
+                return self.send_json({"ok": True, "message": "Source deleted"})
+
+            if path.startswith("/api/ai/recent-files/"):
+                rf_id = path.split("/")[4]
+                with db() as con:
+                    con.execute("DELETE FROM ai_recent_operations WHERE id = ?", (rf_id,))
+                    con.commit()
+                return self.send_json({"ok": True, "message": "Recent operation removed"})
+
+            return self.send_json({"error": "Unknown AI DELETE endpoint"}, 404)
+        except Exception as e:
+            logging.exception("AI DELETE error")
+            return self.send_json({"error": str(e)}, 500)
+
     def do_DELETE(self):
         try:
             path = urlparse(self.path).path
             if path.startswith("/api/") and not self.protect_api(path):
                 return
+
+            if path.startswith("/api/ai/"):
+                return self.handle_ai_delete(path)
 
             if path.startswith("/api/client-folders/") and path.endswith("/override"):
                 fno = path.split("/")[3]
@@ -8269,22 +9370,56 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "Unexpected server error. Check the server log for details."}, 500)
 
 
+def stop_server():
+    """Gracefully shuts down the backend server instance and cancels background timers."""
+    global _SERVER_INSTANCE, _BACKGROUND_TIMERS, _BACKEND_STATE
+    _BACKEND_STATE = "STOPPING"
+    for timer in _BACKGROUND_TIMERS:
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+    _BACKGROUND_TIMERS.clear()
+    
+    if _SERVER_INSTANCE:
+        srv = _SERVER_INSTANCE
+        _SERVER_INSTANCE = None
+        def _shutdown():
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:
+                pass
+        threading.Thread(target=_shutdown, daemon=True).start()
+    _BACKEND_STATE = "STOPPED"
+
+
 def start_server_background(port: int = None, host: str = "0.0.0.0"):
     """Starts the VS Database backend server in background threads."""
-    global PORT
+    global PORT, _SERVER_INSTANCE, _BACKGROUND_TIMERS, _BACKEND_STATE
     if port:
         PORT = port
+    _BACKEND_STATE = "INITIALIZING"
     initialise()
     logging.basicConfig(filename=DATA_ROOT / "server.log", level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    start_async_lan_discovery()
     
-    # Defer non-critical background maintenance tasks so app startup and UI thread remain 100% free
-    t1 = threading.Timer(20.0, cleanup_stray_current_folders); t1.daemon = True; t1.start()
-    t2 = threading.Timer(25.0, clean_stale_temp_and_duplicate_portal_files); t2.daemon = True; t2.start()
-    t3 = threading.Timer(15.0, backup_scheduler_worker); t3.daemon = True; t3.start()
+    _BACKGROUND_TIMERS = [
+        threading.Timer(20.0, cleanup_stray_current_folders),
+        threading.Timer(25.0, clean_stale_temp_and_duplicate_portal_files),
+        threading.Timer(15.0, backup_scheduler_worker),
+    ]
+    for t in _BACKGROUND_TIMERS:
+        t.daemon = True
+        t.start()
     
     ThreadingHTTPServer.allow_reuse_address = True
-    main_server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    threading.Thread(target=main_server.serve_forever, daemon=True).start()
+    ThreadingHTTPServer.daemon_threads = True
+    main_server = ThreadingHTTPServer((host, PORT), Handler)
+    main_server.daemon_threads = True
+    _SERVER_INSTANCE = main_server
+    _BACKEND_STATE = "READY"
+    threading.Thread(target=main_server.serve_forever, daemon=True, name="BackendServer").start()
     print(f"VS Database in-process server started on port {PORT}")
     return main_server
 
@@ -8292,13 +9427,23 @@ def start_server_background(port: int = None, host: str = "0.0.0.0"):
 if __name__ == "__main__":
     initialise()
     logging.basicConfig(filename=DATA_ROOT / "server.log", level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    threading.Thread(target=cleanup_stray_current_folders, daemon=True).start()
-    threading.Thread(target=clean_stale_temp_and_duplicate_portal_files, daemon=True).start()
-    threading.Thread(target=backup_scheduler_worker, daemon=True).start()
+    start_async_lan_discovery()
+    _BACKGROUND_TIMERS = [
+        threading.Timer(20.0, cleanup_stray_current_folders),
+        threading.Timer(25.0, clean_stale_temp_and_duplicate_portal_files),
+        threading.Timer(15.0, backup_scheduler_worker),
+    ]
+    for t in _BACKGROUND_TIMERS:
+        t.daemon = True
+        t.start()
+    ThreadingHTTPServer.allow_reuse_address = True
+    ThreadingHTTPServer.daemon_threads = True
     main_server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    main_server.daemon_threads = True
+    _SERVER_INSTANCE = main_server
+    _BACKEND_STATE = "READY"
     print(f"VS Database Desktop running at http://127.0.0.1:{PORT} and http://{HOST}:{PORT}")
     try:
         main_server.serve_forever()
     finally:
-        try: main_server.server_close()
-        except Exception: pass
+        stop_server()

@@ -222,14 +222,10 @@ try {
 
 chrome.downloads.onChanged.addListener((delta) => {
   const dlId = Number(delta.id);
-  if (bulkInterceptedDownloadIds.has(dlId)) {
-    if (delta.state && delta.state.current === 'complete') {
-      cancelOrDeleteDownload(dlId);
-    }
-  }
+  // Bulk downloads remain on disk until OPEN_WEBSITE_FOR_BULK_SAVE completes staging
 });
 
-async function waitForDownloadComplete(downloadId, timeoutMs = 45000) {
+async function waitForDownloadComplete(downloadId, timeoutMs = 60000) {
   if (!downloadId) return null;
   const numId = Number(downloadId);
   if (isNaN(numId) || !Number.isInteger(numId) || numId <= 0) return null;
@@ -246,6 +242,7 @@ async function waitForDownloadComplete(downloadId, timeoutMs = 45000) {
 
     // 1. Check if already complete
     chrome.downloads.search(query, (items) => {
+      void chrome.runtime.lastError;
       if (items && items[0] && items[0].state === 'complete' && items[0].filename) {
         if (!resolved) {
           resolved = true;
@@ -261,6 +258,7 @@ async function waitForDownloadComplete(downloadId, timeoutMs = 45000) {
         cleanup();
         // One final search before timeout
         chrome.downloads.search(query, (items) => {
+          void chrome.runtime.lastError;
           resolve(items && items[0] && items[0].filename ? items[0].filename : null);
         });
       }
@@ -273,6 +271,7 @@ async function waitForDownloadComplete(downloadId, timeoutMs = 45000) {
             resolved = true;
             cleanup();
             chrome.downloads.search(query, (items) => {
+              void chrome.runtime.lastError;
               resolve(items && items[0] && items[0].filename ? items[0].filename : null);
             });
           }
@@ -489,34 +488,54 @@ function cancelOrDeleteDownload(downloadId) {
   const numId = Number(downloadId);
   const dlId = (!isNaN(numId) && Number.isInteger(numId) && numId > 0) ? numId : downloadId;
 
-  // 1. Immediate cancel to abort in-flight transfers instantly
   try {
-    chrome.downloads.cancel(dlId, () => {
-      chrome.downloads.erase({ id: dlId }, () => {});
-    });
-  } catch (_) {}
+    chrome.downloads.search({ id: dlId }, (items) => {
+      void chrome.runtime.lastError;
+      if (!items || !items[0]) {
+        return;
+      }
 
-  // 2. Query download state to remove from disk if already completed
-  chrome.downloads.search({ id: dlId }, (items) => {
-    if (items && items[0]) {
       const item = items[0];
       if (item.state === 'complete') {
+        // Complete download -> DO NOT call cancel! Call removeFile to remove from disk, then erase shelf history.
         try {
           chrome.downloads.removeFile(dlId, () => {
-            chrome.downloads.erase({ id: dlId }, () => {});
+            void chrome.runtime.lastError;
+            try {
+              chrome.downloads.erase({ id: dlId }, () => {
+                void chrome.runtime.lastError;
+              });
+            } catch (_) {}
           });
         } catch (_) {
-          chrome.downloads.erase({ id: dlId }, () => {});
+          try {
+            chrome.downloads.erase({ id: dlId }, () => {
+              void chrome.runtime.lastError;
+            });
+          } catch (_) {}
         }
-      } else {
+      } else if (item.state === 'in_progress') {
+        // Only call cancel when download is actively in_progress!
         try {
           chrome.downloads.cancel(dlId, () => {
-            chrome.downloads.erase({ id: dlId }, () => {});
+            void chrome.runtime.lastError;
+            try {
+              chrome.downloads.erase({ id: dlId }, () => {
+                void chrome.runtime.lastError;
+              });
+            } catch (_) {}
+          });
+        } catch (_) {}
+      } else {
+        // Interrupted, paused, or already cancelled -> only erase from shelf
+        try {
+          chrome.downloads.erase({ id: dlId }, () => {
+            void chrome.runtime.lastError;
           });
         } catch (_) {}
       }
-    }
-  });
+    });
+  } catch (_) {}
 }
 
 // ========================================================
@@ -723,31 +742,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (pending) {
           clearTimeout(pending.timeoutId);
           pendingDownloadDecisions.delete(downloadId);
+          if (pending.suggest) {
+            try { pending.suggest({ filename: filename || 'document.pdf', conflictAction: 'uniquify' }); } catch (_) {}
+          }
         }
         if (downloadId) {
           const numId = Number(downloadId);
           const dlId = (!isNaN(numId) && numId > 0) ? numId : downloadId;
           bulkInterceptedDownloadIds.add(dlId);
-          cancelOrDeleteDownload(dlId);
+          chrome.downloads.resume(dlId, () => {
+            void chrome.runtime.lastError;
+          });
         }
-        sendResponse({ ok: true, blocked: true });
+        sendResponse({ ok: true, queued: true });
         return;
       }
 
       if (decision === 'yes') {
-        // If file base64 is already available, cancel/block normal download immediately
         if (file_base64 && downloadId) {
-          try {
-            chrome.downloads.cancel(downloadId, () => {
-              chrome.downloads.erase({ id: downloadId }, () => {});
-            });
-          } catch (_) {}
+          cancelOrDeleteDownload(downloadId);
         } else if (downloadId) {
           // If waiting for disk buffer, let Chrome write to disk; it will be moved/deleted by server upon staging
           if (pending && pending.suggest) {
             try { pending.suggest({ filename: filename || 'document.pdf', conflictAction: 'uniquify' }); } catch (_) {}
           }
-          chrome.downloads.resume(downloadId).catch(() => {});
+          chrome.downloads.resume(downloadId, () => {
+            void chrome.runtime.lastError;
+          });
         }
 
         await chrome.storage.local.set({
@@ -928,7 +949,7 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
 
       // Only wait for Chrome disk write if we DO NOT already have in-memory base64
       if (!b64 && !sourceLocalPath && downloadId) {
-        sourceLocalPath = await waitForDownloadComplete(downloadId, 3500);
+        sourceLocalPath = await waitForDownloadComplete(downloadId, 60000);
       }
 
       const fileItem = {
@@ -1004,7 +1025,7 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
           }
           if (!b64 && !sourceLocalPath && dlId) {
             try {
-              sourceLocalPath = await waitForDownloadComplete(dlId, 2500);
+              sourceLocalPath = await waitForDownloadComplete(dlId, 60000);
             } catch (_) {}
           }
           return {
@@ -1093,6 +1114,13 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
       }
       sendResponse({ ok: true });
     })();
+    return true;
+  }
+
+  // 6b. Explicit Download Cleanup
+  if (message.type === 'CANCEL_OR_DELETE_DOWNLOAD') {
+    cancelOrDeleteDownload(message.downloadId);
+    sendResponse({ ok: true });
     return true;
   }
 

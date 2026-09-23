@@ -255,6 +255,44 @@ class StagingSessionManager:
         p = self._session_dir(session_id) / "files" / file_entry["disk_filename"]
         return p if p.exists() else None
 
+    def find_file_bytes(self, staged_file_id: str, session_id: Optional[str] = None) -> Optional[Tuple[bytes, Dict[str, Any]]]:
+        """Looks up a staged file by ID in the given session, or across all existing sessions."""
+        if session_id:
+            res = self.get_file_bytes(session_id, staged_file_id)
+            if res:
+                return res
+        try:
+            if self.staging_root.exists():
+                for sdir in self.staging_root.iterdir():
+                    if sdir.is_dir() and sdir.name != session_id:
+                        res = self.get_file_bytes(sdir.name, staged_file_id)
+                        if res:
+                            return res
+        except Exception:
+            pass
+        return None
+
+    def find_file_path(self, staged_file_id: str, session_id: Optional[str] = None) -> Optional[Tuple[Path, Dict[str, Any]]]:
+        """Looks up a staged file Path by ID in the given session, or across all existing sessions."""
+        if session_id:
+            p = self.get_file_path(session_id, staged_file_id)
+            if p:
+                manifest = self._load_manifest(session_id)
+                fe = next((f for f in manifest.get("files", []) if f["staged_file_id"] == staged_file_id), None) if manifest else None
+                return p, fe or {}
+        try:
+            if self.staging_root.exists():
+                for sdir in self.staging_root.iterdir():
+                    if sdir.is_dir() and sdir.name != session_id:
+                        p = self.get_file_path(sdir.name, staged_file_id)
+                        if p:
+                            manifest = self._load_manifest(sdir.name)
+                            fe = next((f for f in manifest.get("files", []) if f["staged_file_id"] == staged_file_id), None) if manifest else None
+                            return p, fe or {}
+        except Exception:
+            pass
+        return None
+
     def remove_file(self, session_id: str, staged_file_id: str) -> bool:
         """Removes a file from disk and manifest."""
         manifest = self._load_manifest(session_id)
