@@ -1,6 +1,6 @@
 /**
  * VS AI — Frontend Module (CA & Tax Practice Copilot)
- * Powered by Google Gemini 2.0 Flash + Statutory RAG + PDF Studio Engine
+ * Powered by VS AI Engine + Statutory RAG + PDF Studio Engine
  */
 (function () {
   'use strict';
@@ -9,7 +9,7 @@
   let activeScope = 'All Knowledge';
   let sourceOnly = false;
   let currentAttachments = [];
-  let geminiHealth = { online: false, active_model: 'gemini-3.6-flash' };
+  let vsAiHealth = { online: false, active_model: 'VS AI Fast Core' };
   let sidebarCollapsed = false;
 
   function initVSAI() {
@@ -25,7 +25,7 @@
             <div class="vs-ai-title-wrap">
               <h1 class="vs-ai-title">
                 <span>VS AI</span>
-                <span class="vs-ai-version-pill" id="vs-ai-model-pill">Gemini 3.6 Flash</span>
+                <span class="vs-ai-version-pill" id="vs-ai-model-pill">VS AI Fast Core</span>
               </h1>
               <p class="vs-ai-subtitle">Statutory Legal & Tax Copilot for Chartered Accountants</p>
             </div>
@@ -33,7 +33,7 @@
 
           <div class="vs-ai-header-actions">
             <button class="vs-ai-action-pill" id="vs-ai-btn-auto-rename" title="Intelligently rename tax & legal documents">
-              <span>⚡</span>
+              <span class="vs-ai-icon-anim">⚡</span>
               <span>Auto AI Rename</span>
             </button>
 
@@ -42,9 +42,9 @@
               <span>Sources Library</span>
             </button>
 
-            <div class="vs-ai-status-pill warning" id="vs-ai-status-badge" title="Click to configure Gemini API Key" style="cursor:pointer;">
+            <div class="vs-ai-status-pill warning" id="vs-ai-status-badge" title="Click to configure VS AI API Key" style="cursor:pointer;">
               <span class="vs-ai-status-dot"></span>
-              <span id="vs-ai-status-text">Checking Gemini...</span>
+              <span id="vs-ai-status-text">Checking VS AI...</span>
             </div>
           </div>
         </header>
@@ -102,11 +102,11 @@
               <div class="vs-ai-attachment-preview-bar" id="vs-ai-att-preview-bar" style="display:none;"></div>
 
               <div class="vs-ai-composer-box">
-                <textarea class="vs-ai-textarea" id="vs-ai-prompt-input" placeholder="Ask any Indian tax or statutory law question... (e.g. 'What are the conditions for ITC under Section 16 of CGST Act?')"></textarea>
+                <textarea class="vs-ai-textarea" id="vs-ai-prompt-input" rows="1" placeholder="Ask any Indian tax or statutory law question... (e.g. 'What are the conditions for ITC under Section 16 of CGST Act?')"></textarea>
                 <div class="vs-ai-composer-toolbar">
                   <div class="vs-ai-composer-left-tools">
                     <input type="file" id="vs-ai-file-picker" style="display:none;" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.docx,.txt">
-                    <button class="vs-ai-tool-btn" id="vs-ai-btn-attach-file" title="Attach Document or Image">
+                    <button class="vs-ai-tool-btn" id="vs-ai-btn-attach-file" title="Attach Document, Image, or Data Spreadsheet">
                       <span>📎 Attach</span>
                     </button>
                     <button class="vs-ai-tool-btn" id="vs-ai-btn-browse-client-docs" title="Select from Client Storage">
@@ -127,7 +127,7 @@
     `;
 
     bindEvents();
-    checkGeminiStatus();
+    checkVsAiStatus();
     loadConversations();
   }
 
@@ -168,7 +168,7 @@
     const promptInput = document.querySelector('#vs-ai-prompt-input');
     if (promptInput) {
       promptInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || !e.shiftKey)) {
+        if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           handleSendQuery();
         }
@@ -195,12 +195,35 @@
       attachBtn.addEventListener('click', () => filePicker.click());
       filePicker.addEventListener('change', handleFileSelected);
     }
+
+    const browseClientBtn = document.querySelector('#vs-ai-btn-browse-client-docs');
+    if (browseClientBtn) {
+      browseClientBtn.addEventListener('click', () => {
+        const input = document.querySelector('#vs-ai-prompt-input');
+        if (input) {
+          input.value += (input.value ? ' ' : '') + '[Referencing client vault] ';
+          input.focus();
+        }
+      });
+    }
+
+    const searchHistoryInput = document.querySelector('#vs-ai-search-history');
+    if (searchHistoryInput) {
+      searchHistoryInput.addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase().trim();
+        const items = document.querySelectorAll('.vs-ai-history-item');
+        items.forEach(it => {
+          const txt = it.textContent.toLowerCase();
+          it.style.display = txt.includes(q) ? 'flex' : 'none';
+        });
+      });
+    }
   }
 
   // ------------------------------------------------------------
-  // GEMINI STATUS & HEALTH
+  // STATUS & HEALTH CHECK
   // ------------------------------------------------------------
-  async function checkGeminiStatus() {
+  async function checkVsAiStatus() {
     const badge = document.querySelector('#vs-ai-status-badge');
     const text = document.querySelector('#vs-ai-status-text');
     const modelPill = document.querySelector('#vs-ai-model-pill');
@@ -209,25 +232,24 @@
     try {
       const resp = await fetch('/api/ai/health');
       const data = await resp.json();
-      geminiHealth = data;
+      vsAiHealth = data;
 
-      if (modelPill && data.active_model) {
-        const friendlyModel = data.active_model.replace('gemini-', 'Gemini ').replace('-flash', ' Flash');
-        modelPill.textContent = friendlyModel;
+      if (modelPill) {
+        modelPill.textContent = 'VS AI Fast Core';
       }
 
       if (data.has_api_key || data.has_oauth) {
         badge.className = 'vs-ai-status-pill';
-        text.textContent = '🟢 Gemini Active (' + (data.chunks_indexed || 0) + ' Sections)';
-        badge.title = (data.active_model || 'Gemini 3.6 Flash') + ' Connected. Grounded on ' + (data.sources_indexed || 0) + ' statutory acts.';
+        text.textContent = '🟢 VS AI Active (' + (data.chunks_indexed || 0) + ' Sections)';
+        badge.title = 'VS AI Core Connected. Grounded on ' + (data.sources_indexed || 0) + ' statutory acts.';
       } else {
         badge.className = 'vs-ai-status-pill warning';
-        text.textContent = '⚠️ Configure Gemini API Key';
-        badge.title = 'Click to configure your free Gemini API key in Settings.';
+        text.textContent = '⚠️ Configure VS AI Key';
+        badge.title = 'Click to configure your free VS AI API key in Settings.';
       }
     } catch (err) {
       badge.className = 'vs-ai-status-pill warning';
-      text.textContent = 'Gemini Offline';
+      text.textContent = 'VS AI Offline';
     }
   }
 
@@ -243,8 +265,8 @@
         <img src="VS%20AI%20Logo.png" alt="VS AI" class="vs-ai-hero-logo" onerror="this.src='vs_ai_logo.png'">
         <h2 class="vs-ai-hero-title">Welcome to VS AI Legal & Tax Copilot</h2>
         <p class="vs-ai-hero-desc">
-          Powered by Google Gemini Flash with live statutory RAG over the <strong>Income-tax Act 1961</strong>,
-          <strong>CGST Act & Rules</strong>, and <strong>AAAR Judicial Precedents</strong>.
+          Powered by VS AI Fast Core with live statutory RAG over the <strong>Income-tax Act 1961</strong>,
+          <strong>CGST Act & Rules</strong>, and <strong>Judicial Precedents</strong>.
         </p>
 
         <div class="vs-ai-quick-prompts-grid">
@@ -292,12 +314,19 @@
     if (!input || !sendBtn) return;
 
     const promptText = input.value.trim();
-    if (!promptText) return;
+    if (!promptText && currentAttachments.length === 0) return;
 
-    // Append User Message to UI
-    appendMessage('user', promptText);
+    // Capture attachments to send
+    const attachmentsToSend = [...currentAttachments];
+
+    // Append User Message to UI with attached pills
+    appendMessage('user', promptText || '(Attached document query)', null, null, attachmentsToSend, false);
     input.value = '';
     input.style.height = 'auto';
+
+    // Clear composer attachments
+    currentAttachments = [];
+    renderAttachmentPreviewBar();
 
     // Show Loading Skeleton Bubble
     const stream = document.querySelector('#vs-ai-chat-stream');
@@ -308,8 +337,8 @@
     loadingEl.innerHTML = `
       <div class="vs-ai-bubble-assistant">
         <div style="display:flex;align-items:center;gap:10px;color:#2563eb;font-weight:600;font-size:13px;">
-          <span style="animation:spin 1s linear infinite;display:inline-block;">⚡</span>
-          <span>Analyzing statutes & grounding response via Gemini...</span>
+          <span class="vs-ai-spin-icon">⚡</span>
+          <span>Analyzing statutes & grounding response via VS AI...</span>
         </div>
       </div>
     `;
@@ -327,7 +356,7 @@
           prompt: promptText,
           scope: activeScope,
           source_only: sourceOnly,
-          attachments: currentAttachments
+          attachments: attachmentsToSend
         })
       });
 
@@ -335,26 +364,75 @@
       loadingEl.remove();
 
       if (!data.ok) {
-        appendMessage('assistant', `⚠️ **Error:** ${data.error || 'Failed to generate response.'}`);
-        if (data.error && data.error.includes('API key')) {
+        appendMessage('assistant', `⚠️ **Error:** ${data.error || 'Failed to generate response.'}`, null, null, null, false);
+        if (data.error && data.error.toLowerCase().includes('key')) {
           showSettingsModal();
         }
       } else {
         currentConvId = data.conversation_id;
-        appendMessage('assistant', data.answer, data.citations, promptText);
+        // True typewriter streaming reveal for new responses
+        appendMessage('assistant', data.answer, data.citations, promptText, null, true);
         loadConversations();
       }
     } catch (err) {
       loadingEl.remove();
-      appendMessage('assistant', `⚠️ **Network Error:** Could not contact backend server.`);
+      appendMessage('assistant', `⚠️ **Network Error:** Could not contact backend server.`, null, null, null, false);
     } finally {
       sendBtn.disabled = false;
-      currentAttachments = [];
-      renderAttachmentPreviewBar();
     }
   }
 
-  function appendMessage(role, content, citations, promptTitle) {
+  // ------------------------------------------------------------
+  // STREAM TYPEWRITER EFFECT
+  // ------------------------------------------------------------
+  function streamTypewriter(container, fullText, onComplete) {
+    const stream = document.querySelector('#vs-ai-chat-stream');
+    
+    // Split into natural word/token units for fast, buttery smooth typing
+    const words = fullText.split(/(\s+)/);
+    let index = 0;
+    let accumulated = '';
+
+    const cursorSpan = document.createElement('span');
+    cursorSpan.className = 'vs-ai-type-cursor';
+    cursorSpan.textContent = '▌';
+
+    container.innerHTML = '';
+    container.appendChild(cursorSpan);
+
+    const stepInterval = 14; // ~14ms per burst for lightning fast feel
+    const wordsPerStep = 3;  // 3 words per burst (~150 words/sec)
+
+    const timer = setInterval(() => {
+      let chunk = '';
+      for (let k = 0; k < wordsPerStep && index < words.length; k++, index++) {
+        chunk += words[index];
+      }
+      accumulated += chunk;
+
+      // Render markdown progressively
+      container.innerHTML = renderMarkdown(accumulated);
+      container.appendChild(cursorSpan);
+
+      // Smooth auto-scroll while writing
+      if (stream) {
+        stream.scrollTop = stream.scrollHeight;
+      }
+
+      if (index >= words.length) {
+        clearInterval(timer);
+        cursorSpan.remove();
+        container.innerHTML = renderMarkdown(fullText);
+        if (onComplete) onComplete();
+        if (stream) stream.scrollTop = stream.scrollHeight;
+      }
+    }, stepInterval);
+  }
+
+  // ------------------------------------------------------------
+  // APPEND MESSAGE TO CHAT STREAM
+  // ------------------------------------------------------------
+  function appendMessage(role, content, citations, promptTitle, attachments, isNewResponse) {
     const stream = document.querySelector('#vs-ai-chat-stream');
     if (!stream) return;
 
@@ -362,15 +440,36 @@
     if (hero) hero.remove();
 
     const row = document.createElement('div');
-    row.className = `vs-ai-message-row ${role}`;
+    row.className = `vs-ai-message-row ${role} vs-ai-message-fade-in`;
 
     if (role === 'user') {
-      row.innerHTML = `<div class="vs-ai-bubble-user">${escapeHtml(content)}</div>`;
+      let attHtml = '';
+      if (attachments && attachments.length > 0) {
+        attHtml = `
+          <div class="vs-ai-user-attachments-row">
+            ${attachments.map(a => `
+              <span class="vs-ai-user-att-chip">
+                <span>📎</span>
+                <span>${escapeHtml(a.name)}</span>
+                <span class="vs-ai-att-size-sub">${formatFileSize(a.size)}</span>
+              </span>
+            `).join('')}
+          </div>
+        `;
+      }
+      row.innerHTML = `
+        <div class="vs-ai-bubble-user">
+          ${attHtml}
+          <div>${escapeHtml(content)}</div>
+        </div>
+      `;
+      stream.appendChild(row);
+      stream.scrollTop = stream.scrollHeight;
     } else {
       let citationsHtml = '';
       if (citations && citations.length > 0) {
         citationsHtml = `
-          <div class="vs-ai-citations-box">
+          <div class="vs-ai-citations-box" style="${isNewResponse ? 'display:none;' : ''}">
             <div class="vs-ai-citations-header">📜 Grounding Statutory Citations & Sections:</div>
             <div class="vs-ai-citation-badges">
               ${citations.map(c => `
@@ -384,13 +483,11 @@
         `;
       }
 
-      const parsedMarkdown = renderMarkdown(content);
-
       row.innerHTML = `
         <div class="vs-ai-bubble-assistant">
-          <div class="vs-ai-asst-body">${parsedMarkdown}</div>
+          <div class="vs-ai-asst-body"></div>
           ${citationsHtml}
-          <div class="vs-ai-msg-actions">
+          <div class="vs-ai-msg-actions" style="${isNewResponse ? 'display:none;' : ''}">
             <button class="vs-ai-msg-btn primary btn-export-pdf" title="Generate styled official PDF via PDF Studio Engine">
               <span>📄</span>
               <span>Export Branded PDF</span>
@@ -403,27 +500,49 @@
         </div>
       `;
 
-      // Bind Export PDF Button
-      const exportPdfBtn = row.querySelector('.btn-export-pdf');
-      if (exportPdfBtn) {
-        exportPdfBtn.addEventListener('click', () => {
-          handleExportPdf(promptTitle || 'Statutory Legal Opinion', content, citations);
-        });
-      }
+      stream.appendChild(row);
+      stream.scrollTop = stream.scrollHeight;
 
-      // Bind Copy Button
-      const copyBtn = row.querySelector('.btn-copy-text');
-      if (copyBtn) {
-        copyBtn.addEventListener('click', () => {
-          navigator.clipboard.writeText(content);
-          copyBtn.innerHTML = '<span>✓</span><span>Copied!</span>';
-          setTimeout(() => { copyBtn.innerHTML = '<span>📋</span><span>Copy</span>'; }, 2000);
-        });
+      const bodyEl = row.querySelector('.vs-ai-asst-body');
+      const citBox = row.querySelector('.vs-ai-citations-box');
+      const actBox = row.querySelector('.vs-ai-msg-actions');
+
+      const finishReveal = () => {
+        if (citBox) {
+          citBox.style.display = 'block';
+          citBox.classList.add('vs-ai-fade-in');
+        }
+        if (actBox) {
+          actBox.style.display = 'flex';
+          actBox.classList.add('vs-ai-fade-in');
+        }
+
+        // Bind Export PDF Button
+        const exportPdfBtn = row.querySelector('.btn-export-pdf');
+        if (exportPdfBtn) {
+          exportPdfBtn.addEventListener('click', () => {
+            handleExportPdf(promptTitle || 'Statutory Legal Opinion', content, citations);
+          });
+        }
+
+        // Bind Copy Button
+        const copyBtn = row.querySelector('.btn-copy-text');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(content);
+            copyBtn.innerHTML = '<span>✓</span><span>Copied!</span>';
+            setTimeout(() => { copyBtn.innerHTML = '<span>📋</span><span>Copy</span>'; }, 2000);
+          });
+        }
+      };
+
+      if (isNewResponse) {
+        streamTypewriter(bodyEl, content, finishReveal);
+      } else {
+        bodyEl.innerHTML = renderMarkdown(content);
+        finishReveal();
       }
     }
-
-    stream.appendChild(row);
-    stream.scrollTop = stream.scrollHeight;
   }
 
   // ------------------------------------------------------------
@@ -469,7 +588,7 @@
         </div>
         <div class="vs-ai-modal-body">
           <p style="font-size:13px;color:#475569;margin-top:0;">
-            Select any tax return, challan, notice, or scanned document. Our 2-tier engine inspects the document in <strong>10ms</strong> via digital regex or classifies it via <strong>Gemini Vision</strong>.
+            Select any tax return, challan, notice, or scanned document. Our 2-tier engine inspects the document in <strong>10ms</strong> via digital regex or classifies it via <strong>VS AI Vision</strong>.
           </p>
 
           <div style="border:2px dashed #cbd5e1;border-radius:12px;padding:24px;text-align:center;background:#f8fafc;cursor:pointer;" id="rename-dropzone">
@@ -503,85 +622,79 @@
       resultBox.style.display = 'block';
       resultBox.innerHTML = `
         <div style="color:#2563eb;font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px;">
-          <span style="animation:spin 1s linear infinite;">⚡</span>
+          <span class="vs-ai-spin-icon">⚡</span>
           <span>Analyzing document structure & extracting standard name...</span>
         </div>
       `;
 
-      // Read file data
-      const reader = new FileReader();
-      reader.onload = async () => {
-        // Upload temporary scratch file or trigger rename
-        try {
-          const resp = await fetch('/api/ai/doc/rename', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_path: file.name }) // backend handles local files
+      try {
+        const resp = await fetch('/api/ai/doc/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_path: file.name })
+        });
+        const res = await resp.json();
+        if (res.ok) {
+          resultBox.innerHTML = `
+            <div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:6px;">✓ Document Identified!</div>
+            <div style="font-size:12.5px;color:#334155;margin-bottom:4px;">Original: <code>${escapeHtml(file.name)}</code></div>
+            <div style="font-size:13.5px;font-weight:700;color:#0f172a;margin-bottom:8px;">Suggested Name: <span style="color:#2563eb;">${escapeHtml(res.suggested_filename)}</span></div>
+            <div style="font-size:11px;color:#64748b;margin-bottom:10px;">Method: <strong>${escapeHtml(res.method || 'Engine')}</strong> | Type: ${escapeHtml(res.doc_type || '-')}</div>
+            <button class="vs-ai-btn-primary" id="btn-copy-renamed">Copy Standard Name</button>
+          `;
+          resultBox.querySelector('#btn-copy-renamed').addEventListener('click', () => {
+            navigator.clipboard.writeText(res.suggested_filename);
+            alert('Copied to clipboard: ' + res.suggested_filename);
           });
-          const res = await resp.json();
-          if (res.ok) {
-            resultBox.innerHTML = `
-              <div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:6px;">✓ Document Identified!</div>
-              <div style="font-size:12.5px;color:#334155;margin-bottom:4px;">Original: <code>${escapeHtml(file.name)}</code></div>
-              <div style="font-size:13.5px;font-weight:700;color:#0f172a;margin-bottom:8px;">Suggested Name: <span style="color:#2563eb;">${escapeHtml(res.suggested_filename)}</span></div>
-              <div style="font-size:11px;color:#64748b;margin-bottom:10px;">Method: <strong>${escapeHtml(res.method || 'Engine')}</strong> | Type: ${escapeHtml(res.doc_type || '-')}</div>
-              <button class="vs-ai-btn-primary" id="btn-copy-renamed">Copy Standard Name</button>
-            `;
-            resultBox.querySelector('#btn-copy-renamed').addEventListener('click', () => {
-              navigator.clipboard.writeText(res.suggested_filename);
-              alert('Copied to clipboard: ' + res.suggested_filename);
-            });
-          } else {
-            resultBox.innerHTML = `<div style="color:#ef4444;font-size:13px;">⚠️ ${escapeHtml(res.error || 'Could not rename document')}</div>`;
-          }
-        } catch (err) {
-          resultBox.innerHTML = `<div style="color:#ef4444;font-size:13px;">Error: ${escapeHtml(err.message)}</div>`;
+        } else {
+          resultBox.innerHTML = `<div style="color:#ef4444;font-size:13px;">⚠️ ${escapeHtml(res.error || 'Could not rename document')}</div>`;
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        resultBox.innerHTML = `<div style="color:#ef4444;font-size:13px;">Error: ${escapeHtml(err.message)}</div>`;
+      }
     });
   }
 
   // ------------------------------------------------------------
-  // GEMINI SETTINGS MODAL
+  // VS AI SETTINGS MODAL
   // ------------------------------------------------------------
   function showSettingsModal() {
-    const existing = document.querySelector('#modal-gemini-settings');
+    const existing = document.querySelector('#modal-vs-ai-settings');
     if (existing) existing.remove();
 
     const overlay = document.createElement('div');
     overlay.className = 'vs-ai-modal-overlay';
-    overlay.id = 'modal-gemini-settings';
+    overlay.id = 'modal-vs-ai-settings';
     overlay.innerHTML = `
       <div class="vs-ai-modal-card">
         <div class="vs-ai-modal-header">
-          <h3 class="vs-ai-modal-title">⚙️ Google Gemini API Configuration</h3>
+          <h3 class="vs-ai-modal-title">⚙️ VS AI Engine Configuration</h3>
           <button class="vs-ai-modal-close">&times;</button>
         </div>
         <div class="vs-ai-modal-body">
           <p style="font-size:13px;color:#475569;margin-top:0;">
-            Enter your Google Gemini API key to enable high-speed statutory reasoning, large context (1M+ tokens), and native document vision.
+            Enter your VS AI Cloud API key to enable high-speed statutory reasoning, deep context retrieval, and native document vision.
           </p>
 
           <div style="padding:12px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
             <div>
-              <div style="font-size:12.5px;font-weight:700;color:#166534;">Get a 100% Free Gemini API Key</div>
-              <div style="font-size:11.5px;color:#15803d;">Free tier includes 15 queries/minute with 1M tokens/min.</div>
+              <div style="font-size:12.5px;font-weight:700;color:#166534;">Get a 100% Free API Key</div>
+              <div style="font-size:11.5px;color:#15803d;">Free tier includes generous quota with high-speed statutory processing.</div>
             </div>
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" style="padding:7px 12px;background:#16a34a;color:#ffffff;border-radius:8px;font-size:11.5px;font-weight:600;text-decoration:none;white-space:nowrap;">
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" style="padding:7px 12px;background:#16a34a;color:#ffffff;border-radius:8px;font-size:11.5px;font-weight:600;text-decoration:none;white-space:nowrap;box-shadow:0 2px 6px rgba(22,163,74,0.3);">
               🔑 Get Free Key ➔
             </a>
           </div>
 
           <div class="vs-ai-form-group">
-            <label class="vs-ai-label">Gemini API Key</label>
-            <input type="password" class="vs-ai-input" id="cfg-gemini-key" placeholder="AIzaSy..." value="">
+            <label class="vs-ai-label">VS AI API Key</label>
+            <input type="password" class="vs-ai-input" id="cfg-vs-ai-key" placeholder="AIzaSy..." value="">
             <div style="font-size:11px;color:#64748b;margin-top:4px;">Key is encrypted and stored locally in your private office database.</div>
           </div>
 
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
             <button class="vs-ai-tool-btn" id="btn-cancel-settings">Cancel</button>
-            <button class="vs-ai-btn-primary" id="btn-save-gemini-key">Save & Connect</button>
+            <button class="vs-ai-btn-primary" id="btn-save-vs-ai-key">Save & Connect</button>
           </div>
         </div>
       </div>
@@ -592,22 +705,22 @@
     overlay.querySelector('.vs-ai-modal-close').addEventListener('click', () => overlay.remove());
     overlay.querySelector('#btn-cancel-settings').addEventListener('click', () => overlay.remove());
 
-    overlay.querySelector('#btn-save-gemini-key').addEventListener('click', async () => {
-      const keyVal = overlay.querySelector('#cfg-gemini-key').value.trim();
+    overlay.querySelector('#btn-save-vs-ai-key').addEventListener('click', async () => {
+      const keyVal = overlay.querySelector('#cfg-vs-ai-key').value.trim();
       if (!keyVal) {
-        alert('Please enter a valid Gemini API Key.');
+        alert('Please enter a valid API Key.');
         return;
       }
       try {
         const resp = await fetch('/api/ai/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gemini_api_key: keyVal })
+          body: JSON.stringify({ api_key: keyVal, gemini_api_key: keyVal })
         });
         const res = await resp.json();
         if (res.ok) {
           overlay.remove();
-          checkGeminiStatus();
+          checkVsAiStatus();
         } else {
           alert('Error saving settings: ' + (res.error || 'Failed'));
         }
@@ -728,7 +841,7 @@
 
       if (data.messages && data.messages.length > 0) {
         data.messages.forEach(m => {
-          appendMessage(m.role, m.content, m.meta ? m.meta.citations : null);
+          appendMessage(m.role, m.content, m.meta ? m.meta.citations : null, null, null, false);
         });
       } else {
         renderWelcomeHero();
@@ -750,18 +863,60 @@
   }
 
   // ------------------------------------------------------------
-  // ATTACHMENT HANDLING
+  // ATTACHMENT HANDLING WITH FILEREADER
   // ------------------------------------------------------------
-  function handleFileSelected(e) {
+  async function handleFileSelected(e) {
     const files = Array.from(e.target.files);
-    files.forEach(f => {
-      currentAttachments.push({
-        name: f.name,
-        size: f.size,
-        mime_type: f.type || 'application/octet-stream'
-      });
-    });
+    if (!files.length) return;
+
+    for (const file of files) {
+      try {
+        const attObj = await readFileAsAttachment(file);
+        currentAttachments.push(attObj);
+      } catch (err) {
+        console.error('Failed to read file:', file.name, err);
+      }
+    }
+
+    // Reset input value so re-selecting same file triggers change
+    e.target.value = '';
     renderAttachmentPreviewBar();
+  }
+
+  function readFileAsAttachment(file) {
+    return new Promise((resolve, reject) => {
+      const isText = file.type.startsWith('text/') || file.name.endsWith('.csv') || file.name.endsWith('.txt');
+      const reader = new FileReader();
+
+      reader.onerror = () => reject(reader.error);
+
+      if (isText) {
+        reader.onload = () => {
+          resolve({
+            name: file.name,
+            size: file.size,
+            mime_type: file.type || 'text/plain',
+            text_data: reader.result
+          });
+        };
+        reader.readAsText(file);
+      } else {
+        reader.onload = () => {
+          // Data URL format: "data:mime;base64,xxxx"
+          const dataUrl = reader.result;
+          const base64Idx = dataUrl.indexOf(';base64,');
+          const base64 = base64Idx !== -1 ? dataUrl.substring(base64Idx + 8) : '';
+
+          resolve({
+            name: file.name,
+            size: file.size,
+            mime_type: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
+            base64_data: base64
+          });
+        };
+        reader.readAsDataURL(file);
+      }
+    });
   }
 
   function renderAttachmentPreviewBar() {
@@ -777,16 +932,21 @@
     bar.style.display = 'flex';
     bar.innerHTML = currentAttachments.map((att, idx) => `
       <div class="vs-ai-att-pill">
-        <span>📎 ${escapeHtml(att.name)}</span>
-        <span class="vs-ai-att-remove" data-idx="${idx}">&times;</span>
+        <span class="vs-ai-att-pill-icon">📎</span>
+        <span class="vs-ai-att-pill-name" title="${escapeHtml(att.name)}">${escapeHtml(att.name)}</span>
+        <span class="vs-ai-att-size-sub">${formatFileSize(att.size)}</span>
+        <span class="vs-ai-att-remove" data-idx="${idx}" title="Remove file">&times;</span>
       </div>
     `).join('');
 
     bar.querySelectorAll('.vs-ai-att-remove').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const idx = parseInt(e.target.getAttribute('data-idx'));
-        currentAttachments.splice(idx, 1);
-        renderAttachmentPreviewBar();
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-idx'));
+        if (!isNaN(idx)) {
+          currentAttachments.splice(idx, 1);
+          renderAttachmentPreviewBar();
+        }
       });
     });
   }
@@ -794,6 +954,14 @@
   // ------------------------------------------------------------
   // HELPERS
   // ------------------------------------------------------------
+  function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+  }
+
   function escapeHtml(str) {
     if (!str) return '';
     return String(str)
@@ -824,8 +992,8 @@
     html = html.replace(/(<li>.*<\/li>)/gim, '<ul>$1</ul>');
 
     // Code blocks & inline code
-    html = html.replace(/```([\s\S]*?)```/gim, '<pre style="background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;overflow-x:auto;"><code>$1</code></pre>');
-    html = html.replace(/`([^`]+)`/gim, '<code style="background:#f1f5f9;padding:2px 5px;border-radius:4px;color:#2563eb;">$1</code>');
+    html = html.replace(/```([\s\S]*?)```/gim, '<pre class="vs-ai-code-block"><code>$1</code></pre>');
+    html = html.replace(/`([^`]+)`/gim, '<code class="vs-ai-inline-code">$1</code>');
 
     // Line breaks
     html = html.replace(/\n/gim, '<br/>');

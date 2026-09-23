@@ -48,8 +48,8 @@ def detect_system_hardware() -> Dict[str, Any]:
         "cpu_cores": os.cpu_count() or 4,
         "total_ram_gb": 8.0,
         "avail_ram_gb": 4.0,
-        "ai_provider": "Google Gemini API (Cloud Serverless)",
-        "active_model": "gemini-3.6-flash"
+        "ai_provider": "VS AI Engine (Cloud Accelerated)",
+        "active_model": "VS AI Fast Core"
     }
     if sys.platform == "win32":
         try:
@@ -77,11 +77,11 @@ def detect_system_hardware() -> Dict[str, Any]:
 
 
 # ============================================================
-# 2. GOOGLE GEMINI API PROVIDER
+# 2. VS AI ENGINE API PROVIDER
 # ============================================================
 
 class GeminiProvider:
-    """Direct, lightweight HTTPS connector to Google Gemini 3.6 / Flash."""
+    """Direct, lightweight HTTPS connector for the VS AI Statutory Intelligence Engine."""
 
     DEFAULT_MODEL = "gemini-3.6-flash"
     FALLBACK_MODEL = "gemini-3.7-flash"
@@ -118,7 +118,7 @@ class GeminiProvider:
                 pass
 
     def discover_active_model(self, api_key: str) -> Optional[str]:
-        """Queries Google Gemini models API to discover the latest operational Flash model."""
+        """Queries models API to discover the latest operational Flash model."""
         if not api_key:
             return None
         try:
@@ -139,7 +139,6 @@ class GeminiProvider:
                         and "preview" not in name.lower()
                     ):
                         candidates.append(name)
-                # Prioritize gemini-3.6-flash if present
                 if "gemini-3.6-flash" in candidates:
                     chosen = "gemini-3.6-flash"
                 elif candidates:
@@ -153,8 +152,8 @@ class GeminiProvider:
             return None
 
     def get_api_key(self) -> Optional[str]:
-        """Retrieves Gemini API Key from settings, env, or Google OAuth."""
-        env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        """Retrieves VS AI API Key from settings, env, or Google OAuth."""
+        env_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("VS_AI_KEY", "").strip()
         if env_key:
             return env_key
 
@@ -177,7 +176,7 @@ class GeminiProvider:
                 )
 
     def get_oauth_token(self) -> Optional[str]:
-        """Retrieves active Google OAuth access token if connected for Google Drive."""
+        """Retrieves active Google OAuth access token if connected with AI scopes."""
         token_path = self.db_path.parent / "google_oauth_token.json"
         if not token_path.is_file():
             return None
@@ -185,6 +184,10 @@ class GeminiProvider:
             from google.oauth2.credentials import Credentials
             from google.auth.transport.requests import Request as GoogleRequest
             creds = Credentials.from_authorized_user_file(token_path)
+            # Only use if scopes contain Generative AI or Cloud Platform
+            valid_ai_scope = any("generative-language" in s or "cloud-platform" in s for s in (creds.scopes or []))
+            if not valid_ai_scope:
+                return None
             if creds.expired and creds.refresh_token:
                 creds.refresh(GoogleRequest())
                 token_path.write_text(creds.to_json(), encoding="utf-8")
@@ -203,12 +206,12 @@ class GeminiProvider:
 
         res = {
             "online": has_auth,
-            "provider": "Google Gemini",
-            "active_model": model,
+            "provider": "VS AI",
+            "active_model": "VS AI Fast Core",
             "has_api_key": bool(api_key),
             "has_oauth": bool(oauth_token),
-            "status": "Ready" if has_auth else "API Key Required",
-            "message": f"Connected to Gemini ({model})" if has_auth else "Please enter your Gemini API key in Settings"
+            "status": "Ready" if has_auth else "Key Required",
+            "message": "VS AI Engine Connected & Operational" if has_auth else "Please enter your VS AI Key in Settings"
         }
         return res
 
@@ -220,14 +223,14 @@ class GeminiProvider:
         attachments: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.2
     ) -> Dict[str, Any]:
-        """Executes a completion request against Google Gemini."""
+        """Executes a completion request against the VS AI Engine with automatic backoff retry."""
         api_key = self.get_api_key()
         oauth_token = self.get_oauth_token()
 
         if not api_key and not oauth_token:
             return {
                 "ok": False,
-                "error": "Gemini API key is not configured. Please add your key in VS AI Settings (click the settings gear or status badge)."
+                "error": "VS AI key is not configured. Please add your key in VS AI Settings (click the settings gear or status badge)."
             }
 
         headers = {"Content-Type": "application/json"}
@@ -253,15 +256,38 @@ class GeminiProvider:
         current_parts = []
         if attachments:
             for att in attachments:
-                if att.get("mime_type", "").startswith("image/"):
+                raw_b64 = att.get("base64_data", "")
+                if "," in raw_b64 and raw_b64.startswith("data:"):
+                    raw_b64 = raw_b64.split(",", 1)[1]
+
+                mime = att.get("mime_type", "").lower()
+                name = att.get("name", "Document")
+
+                if mime == "application/pdf" and raw_b64:
                     current_parts.append({
                         "inline_data": {
-                            "mime_type": att.get("mime_type", "image/png"),
-                            "data": att.get("base64_data", "")
+                            "mime_type": "application/pdf",
+                            "data": raw_b64
+                        }
+                    })
+                elif (mime.startswith("image/") or name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))) and raw_b64:
+                    img_mime = mime if mime.startswith("image/") else "image/png"
+                    current_parts.append({
+                        "inline_data": {
+                            "mime_type": img_mime,
+                            "data": raw_b64
                         }
                     })
                 elif att.get("text"):
-                    current_parts.append({"text": f"--- ATTACHMENT ({att.get('name', 'Doc')}):\n{att['text']}\n---"})
+                    current_parts.append({"text": f"--- ATTACHED FILE ({name}):\n{att['text']}\n---"})
+                elif raw_b64 and not mime.startswith("image/"):
+                    # Fallback text decoding for text/csv files if raw bytes were passed
+                    try:
+                        decoded_text = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
+                        if len(decoded_text.strip()) > 0:
+                            current_parts.append({"text": f"--- ATTACHED FILE ({name}):\n{decoded_text[:120000]}\n---"})
+                    except Exception:
+                        pass
 
         current_parts.append({"text": prompt})
         contents.append({"role": "user", "parts": current_parts})
@@ -279,55 +305,78 @@ class GeminiProvider:
                 "parts": [{"text": system_instruction}]
             }
 
-        try:
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    text = ""
-                    cands = data.get("candidates", [])
-                    if cands and "content" in cands[0]:
-                        parts = cands[0]["content"].get("parts", [])
-                        text = "".join([p.get("text", "") for p in parts])
-                    return {"ok": True, "text": text, "model": model}
-        except urllib.error.HTTPError as h_err:
+        # Resilient Execution Loop: Handles 503 (High Demand) & 429 (Rate Spikes) with Exponential Backoff
+        MAX_RETRIES = 3
+        last_error = ""
+
+        for attempt in range(MAX_RETRIES):
             try:
-                err_detail = json.loads(h_err.read().decode("utf-8"))
-                msg = err_detail.get("error", {}).get("message", str(h_err))
-            except Exception:
-                msg = str(h_err)
+                req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=35) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        text = ""
+                        cands = data.get("candidates", [])
+                        if cands and "content" in cands[0]:
+                            parts = cands[0]["content"].get("parts", [])
+                            text = "".join([p.get("text", "") for p in parts])
+                        return {"ok": True, "text": text, "model": model}
+            except urllib.error.HTTPError as h_err:
+                try:
+                    err_detail = json.loads(h_err.read().decode("utf-8"))
+                    msg = err_detail.get("error", {}).get("message", str(h_err))
+                except Exception:
+                    msg = str(h_err)
+                last_error = msg
 
-            # Auto-healing: If model not found or deprecated (404), discover active model & retry
-            if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
-                new_model = self.discover_active_model(api_key)
-                if new_model and new_model != model:
-                    logger.info("Auto-switching Gemini model from %s to %s and retrying...", model, new_model)
-                    try:
-                        retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
-                        retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                        with urllib.request.urlopen(retry_req, timeout=30) as r_resp:
-                            if r_resp.status == 200:
-                                r_data = json.loads(r_resp.read().decode("utf-8"))
-                                r_text = ""
-                                r_cands = r_data.get("candidates", [])
-                                if r_cands and "content" in r_cands[0]:
-                                    r_parts = r_cands[0]["content"].get("parts", [])
-                                    r_text = "".join([p.get("text", "") for p in r_parts])
-                                return {"ok": True, "text": r_text, "model": new_model}
-                    except Exception as retry_exc:
-                        logger.warning("Gemini retry failed: %s", retry_exc)
+                # 503 High Demand or 429 Concurrency Spike: Exponential Backoff & Retry
+                if h_err.code in (503, 429) or "high demand" in msg.lower() or "resource exhausted" in msg.lower():
+                    if attempt < MAX_RETRIES - 1:
+                        sleep_s = (0.9 * (attempt + 1))
+                        logger.info(f"VS AI Server busy ({msg}). Retrying in {sleep_s}s (attempt {attempt+1}/{MAX_RETRIES})...")
+                        time.sleep(sleep_s)
+                        continue
+                    return {
+                        "ok": False,
+                        "error": "VS AI servers are currently experiencing peak demand. Please retry your message in a few moments."
+                    }
 
-            return {"ok": False, "error": f"Gemini API error ({h_err.code}): {msg}"}
-        except Exception as exc:
-            return {"ok": False, "error": f"Failed to connect to Gemini: {str(exc)}"}
+                # Auto-healing: If model not found or deprecated (404), discover active model & retry
+                if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
+                    new_model = self.discover_active_model(api_key)
+                    if new_model and new_model != model:
+                        logger.info("Auto-switching VS AI model to %s and retrying...", new_model)
+                        try:
+                            retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
+                            retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                            with urllib.request.urlopen(retry_req, timeout=35) as r_resp:
+                                if r_resp.status == 200:
+                                    r_data = json.loads(r_resp.read().decode("utf-8"))
+                                    r_text = ""
+                                    r_cands = r_data.get("candidates", [])
+                                    if r_cands and "content" in r_cands[0]:
+                                        r_parts = r_cands[0]["content"].get("parts", [])
+                                        r_text = "".join([p.get("text", "") for p in r_parts])
+                                    return {"ok": True, "text": r_text, "model": new_model}
+                        except Exception as retry_exc:
+                            logger.warning("VS AI retry notice: %s", retry_exc)
+
+                return {"ok": False, "error": f"VS AI notice ({h_err.code}): {msg}"}
+            except Exception as exc:
+                if attempt < MAX_RETRIES - 1 and "timed out" in str(exc).lower():
+                    time.sleep(1.0)
+                    continue
+                return {"ok": False, "error": f"Failed to connect to VS AI service: {str(exc)}"}
+
+        return {"ok": False, "error": f"VS AI servers busy: {last_error}"}
 
     def generate_json(self, prompt: str, system_instruction: Optional[str] = None) -> Dict[str, Any]:
-        """Calls Gemini with strict JSON response configuration."""
+        """Calls VS AI with strict JSON response configuration."""
         api_key = self.get_api_key()
         oauth_token = self.get_oauth_token()
 
         if not api_key and not oauth_token:
-            return {"ok": False, "error": "Gemini API key not configured"}
+            return {"ok": False, "error": "VS AI key is not configured"}
 
         headers = {"Content-Type": "application/json"}
         model = self.get_active_model()
@@ -347,34 +396,46 @@ class GeminiProvider:
         if system_instruction:
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
-        try:
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                return {"ok": True, "data": json.loads(text), "model": model}
-        except urllib.error.HTTPError as h_err:
+        MAX_RETRIES = 3
+        for attempt in range(MAX_RETRIES):
             try:
-                err_detail = json.loads(h_err.read().decode("utf-8"))
-                msg = err_detail.get("error", {}).get("message", str(h_err))
-            except Exception:
-                msg = str(h_err)
+                req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    return {"ok": True, "data": json.loads(text), "model": model}
+            except urllib.error.HTTPError as h_err:
+                try:
+                    err_detail = json.loads(h_err.read().decode("utf-8"))
+                    msg = err_detail.get("error", {}).get("message", str(h_err))
+                except Exception:
+                    msg = str(h_err)
 
-            if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
-                new_model = self.discover_active_model(api_key)
-                if new_model and new_model != model:
-                    try:
-                        retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
-                        retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                        with urllib.request.urlopen(retry_req, timeout=20) as r_resp:
-                            r_data = json.loads(r_resp.read().decode("utf-8"))
-                            r_text = r_data["candidates"][0]["content"]["parts"][0]["text"]
-                            return {"ok": True, "data": json.loads(r_text), "model": new_model}
-                    except Exception as retry_exc:
-                        logger.warning("Gemini JSON retry failed: %s", retry_exc)
-            return {"ok": False, "error": f"Gemini API error ({h_err.code}): {msg}"}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+                if h_err.code in (503, 429) or "high demand" in msg.lower():
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(0.9 * (attempt + 1))
+                        continue
+                    return {"ok": False, "error": "VS AI server busy. Please retry shortly."}
+
+                if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
+                    new_model = self.discover_active_model(api_key)
+                    if new_model and new_model != model:
+                        try:
+                            retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
+                            retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                            with urllib.request.urlopen(retry_req, timeout=25) as r_resp:
+                                r_data = json.loads(r_resp.read().decode("utf-8"))
+                                r_text = r_data["candidates"][0]["content"]["parts"][0]["text"]
+                                return {"ok": True, "data": json.loads(r_text), "model": new_model}
+                        except Exception as retry_exc:
+                            logger.warning("VS AI JSON retry notice: %s", retry_exc)
+                return {"ok": False, "error": f"VS AI notice ({h_err.code}): {msg}"}
+            except Exception as exc:
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(0.8)
+                    continue
+                return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": "VS AI engine busy"}
 
 
 # ============================================================
@@ -387,6 +448,43 @@ class KnowledgeBaseEngine:
     def __init__(self, db_path: Path):
         self.db_path = db_path
 
+    def _ensure_tables(self, con):
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS ai_sources (
+                source_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                authority TEXT,
+                relevant_law TEXT,
+                source_type TEXT,
+                section_rule TEXT,
+                created_at TEXT
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS ai_source_versions (
+                version_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                version_label TEXT,
+                file_path TEXT,
+                file_hash TEXT,
+                file_size INTEGER,
+                created_at TEXT
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS ai_source_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                version_id TEXT NOT NULL,
+                heading TEXT,
+                page_number INTEGER,
+                content TEXT NOT NULL,
+                token_count INTEGER,
+                created_at TEXT
+            )
+        """)
+        con.commit()
+
     def index_sources_folder(self, sources_dir: Path) -> int:
         """Discovers and indexes all statutory PDF acts, rules, and case laws from Sources/."""
         if not sources_dir.exists():
@@ -397,6 +495,7 @@ class KnowledgeBaseEngine:
 
         with sqlite3.connect(self.db_path, timeout=15) as con:
             con.row_factory = sqlite3.Row
+            self._ensure_tables(con)
             existing_hashes = {r["file_hash"] for r in con.execute("SELECT file_hash FROM ai_source_versions WHERE file_hash IS NOT NULL AND file_hash != ''").fetchall()}
 
             pdf_files = list(sources_dir.glob("*.pdf")) + list(sources_dir.glob("*.PDF"))
@@ -524,6 +623,7 @@ class KnowledgeBaseEngine:
 
         with sqlite3.connect(self.db_path, timeout=10) as con:
             con.row_factory = sqlite3.Row
+            self._ensure_tables(con)
 
             scope_clause = ""
             scope_param = []
@@ -1071,7 +1171,7 @@ class AIModelOrchestrator:
             "answer": res.get("text", ""),
             "citations": citations,
             "model": res.get("model", self.gemini.get_active_model()),
-            "provider": "Google Gemini",
+            "provider": "VS AI",
             "latency_ms": latency_ms
         }
 
@@ -1080,13 +1180,20 @@ class AIModelOrchestrator:
 _GLOBAL_AI_ENGINE = None
 _GLOBAL_AI_LOCK = threading.Lock()
 
-def get_ai_engine(db_path: Path) -> AIModelOrchestrator:
+def get_ai_engine(db_path: Union[str, Path] = None) -> AIModelOrchestrator:
     global _GLOBAL_AI_ENGINE
+    if db_path is None:
+        db_path = Path(__file__).resolve().parent / "data" / "office_database.db"
+    else:
+        db_path = Path(db_path)
+
     with _GLOBAL_AI_LOCK:
         if _GLOBAL_AI_ENGINE is None:
             _GLOBAL_AI_ENGINE = AIModelOrchestrator(db_path)
             # Trigger background indexing of Sources/ folder
-            sources_dir = db_path.parent.parent / "Sources"
+            sources_dir = Path(__file__).resolve().parent / "Sources"
+            if not sources_dir.exists():
+                sources_dir = db_path.parent.parent / "Sources"
             threading.Thread(
                 target=_GLOBAL_AI_ENGINE.kb.index_sources_folder,
                 args=(sources_dir,),

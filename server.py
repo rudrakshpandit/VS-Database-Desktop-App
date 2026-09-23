@@ -9050,8 +9050,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({
                     "ok": True,
                     "runtime_online": gemini_health.get("online", False),
-                    "runtime_name": "Google Gemini",
-                    "active_model": gemini_health.get("active_model", "gemini-3.6-flash"),
+                    "runtime_name": "VS AI",
+                    "active_model": "VS AI Fast Core",
                     "has_api_key": gemini_health.get("has_api_key", False),
                     "has_oauth": gemini_health.get("has_oauth", False),
                     "status_message": gemini_health.get("message", ""),
@@ -9069,8 +9069,8 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "has_api_key": gemini_health.get("has_api_key", False),
                     "has_oauth": gemini_health.get("has_oauth", False),
-                    "active_model": gemini_health.get("active_model", "gemini-3.6-flash"),
-                    "status": gemini_health.get("status", "API Key Required"),
+                    "active_model": "VS AI Fast Core",
+                    "status": gemini_health.get("status", "Key Required"),
                     "message": gemini_health.get("message", "")
                 })
 
@@ -9150,7 +9150,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_ai_post(self, path: str, payload: dict):
         try:
             if path == "/api/ai/settings":
-                api_key = payload.get("gemini_api_key", "").strip()
+                api_key = payload.get("gemini_api_key", "").strip() or payload.get("api_key", "").strip() or payload.get("vs_ai_key", "").strip()
                 if api_key:
                     ai_engine.gemini.set_api_key(api_key)
                 health = ai_engine.gemini.check_health()
@@ -9257,8 +9257,8 @@ class Handler(BaseHTTPRequestHandler):
                     asst_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
                     asst_meta = json.dumps({
                         "citations": res.get("citations", []),
-                        "model": res.get("model", "gemini-3.6-flash"),
-                        "provider": "Google Gemini"
+                        "model": res.get("model", "VS AI Fast Core"),
+                        "provider": "VS AI"
                     })
                     with db() as con:
                         con.execute("""
