@@ -116,6 +116,57 @@ GOOGLE_SCOPE = [
 ]
 GOOGLE_CLIENT_FILE = DATA_ROOT / "google_oauth_client.json"
 GOOGLE_TOKEN_FILE = DATA_ROOT / "google_oauth_token.json"
+
+try:
+    from google_auth_oauthlib.flow import Flow
+except ImportError:
+    Flow = None
+
+_AUX_OAUTH_SERVER = None
+_AUX_OAUTH_LOCK = threading.Lock()
+
+def get_effective_google_redirect_uri() -> str:
+    """Finds the authorized redirect URI registered in credentials JSON or localhost:{PORT}."""
+    default_uri = f"http://localhost:{PORT}/api/google/callback"
+    if not GOOGLE_CLIENT_FILE.is_file():
+        return default_uri
+    try:
+        raw = json.loads(GOOGLE_CLIENT_FILE.read_text(encoding="utf-8"))
+        cfg = raw.get("web") or raw.get("installed") or {}
+        registered = cfg.get("redirect_uris", [])
+        if not registered:
+            return default_uri
+        if default_uri in registered:
+            return default_uri
+        ip_uri = f"http://127.0.0.1:{PORT}/api/google/callback"
+        if ip_uri in registered:
+            return ip_uri
+        for r_uri in registered:
+            if "/api/google/callback" in r_uri:
+                return r_uri
+        return registered[0]
+    except Exception:
+        return default_uri
+
+def ensure_oauth_callback_bridge(target_port: int):
+    """Ensures an auxiliary HTTP listener is active on target_port to capture Google OAuth callbacks."""
+    global _AUX_OAUTH_SERVER
+    if not target_port or target_port == PORT:
+        return
+    with _AUX_OAUTH_LOCK:
+        if _AUX_OAUTH_SERVER is not None:
+            return
+        try:
+            ThreadingHTTPServer.allow_reuse_address = True
+            server = ThreadingHTTPServer(("127.0.0.1", target_port), Handler)
+            server.daemon_threads = True
+            _AUX_OAUTH_SERVER = server
+            threading.Thread(target=server.serve_forever, daemon=True, name="OAuthCallbackBridge").start()
+            logging.info("Started Google OAuth auxiliary callback listener on port %s", target_port)
+            print(f"Started Google OAuth auxiliary callback bridge on port {target_port}")
+        except Exception as exc:
+            logging.warning("Could not bind auxiliary OAuth listener on port %s: %s", target_port, exc)
+
 GOOGLE_REDIRECT_URI = f"http://localhost:{PORT}/api/google/callback"
 HINDI_FONT = "NirmalaUI"
 
@@ -1341,10 +1392,11 @@ def perform_fresh_start_wipe_api():
 
 
 def google_status():
+    effective_uri = get_effective_google_redirect_uri()
     return {
         "credentials_uploaded": GOOGLE_CLIENT_FILE.is_file(),
         "connected": GOOGLE_TOKEN_FILE.is_file(),
-        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "redirect_uri": effective_uri,
         "portal_root_id": get_setting("google_portal_root_id"),
         "google_drive_mode": get_setting("google_drive_mode", "backup_and_client"),
     }
@@ -1357,17 +1409,25 @@ def google_service():
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request as GoogleRequest
         from googleapiclient.discovery import build
+        from google.auth.exceptions import RefreshError
         credentials = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, GOOGLE_SCOPE)
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(GoogleRequest())
             GOOGLE_TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
         if not credentials.valid:
-            GOOGLE_TOKEN_FILE.unlink(missing_ok=True)
-            raise ValueError("Google Drive permission has expired. Reconnect it from Drive Sharing.")
+            raise ValueError("Google Drive permission has expired. Please click 'Connect Google Drive' from Drive Sharing.")
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
+    except RefreshError as r_err:
+        logging.warning("Google Drive refresh token revoked or expired: %s", r_err)
+        bak = GOOGLE_TOKEN_FILE.with_suffix(".json.bak")
+        try:
+            GOOGLE_TOKEN_FILE.replace(bak)
+        except Exception:
+            pass
+        raise ValueError("Google Drive access was revoked or expired. Please click 'Connect Google Drive' from Drive Sharing to reconnect.") from r_err
     except Exception as exc:
-        GOOGLE_TOKEN_FILE.unlink(missing_ok=True)
-        raise ValueError("Google Drive permission has expired or was revoked. Reconnect it from Drive Sharing.") from exc
+        logging.error("Google Drive connection error: %s", exc)
+        raise ValueError(f"Could not reach Google Drive: {exc}. Please verify your internet connection.") from exc
 
 
 def drive_folder(service, name, parent_id=None):
@@ -6839,20 +6899,83 @@ class Handler(BaseHTTPRequestHandler):
                 verifier = get_setting("google_oauth_code_verifier")
                 if not verifier:
                     raise ValueError("The Google connection session expired. Start the connection again.")
-                flow = Flow.from_client_secrets_file(GOOGLE_CLIENT_FILE, scopes=GOOGLE_SCOPE, state=state, redirect_uri=GOOGLE_REDIRECT_URI, code_verifier=verifier, autogenerate_code_verifier=False)
-                flow.fetch_token(authorization_response=f"http://localhost:{PORT}{self.path}")
+                effective_redirect_uri = get_effective_google_redirect_uri()
+                from google_auth_oauthlib.flow import Flow
+                flow = Flow.from_client_secrets_file(
+                    GOOGLE_CLIENT_FILE,
+                    scopes=GOOGLE_SCOPE,
+                    state=state,
+                    redirect_uri=effective_redirect_uri,
+                    code_verifier=verifier,
+                    autogenerate_code_verifier=False
+                )
+                auth_resp = f"{effective_redirect_uri.split('/api/google/callback')[0]}{self.path}"
+                flow.fetch_token(authorization_response=auth_resp)
                 GOOGLE_TOKEN_FILE.write_text(flow.credentials.to_json(), encoding="utf-8")
                 with db() as con:
                     con.execute("INSERT INTO settings(key,value) VALUES('google_oauth_code_verifier','') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-                html = b"<html><body style='font-family:Segoe UI;padding:40px'><h2>Google Drive connected successfully.</h2><p>You can close this tab and return to VS Database.</p></body></html>"
+                html = b"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Drive Connected</title>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f8fafc; color: #0f172a; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 40px; max-width: 480px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); }
+        .icon { font-size: 52px; margin-bottom: 16px; }
+        h2 { margin: 0 0 8px 0; font-size: 22px; color: #16a34a; }
+        p { margin: 0 0 20px 0; color: #64748b; font-size: 14px; line-height: 1.5; }
+        .btn { display: inline-block; background: #2563eb; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 14px; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">&#x2705;</div>
+        <h2>Google Drive Connected Successfully!</h2>
+        <p>Your Google Drive account has been verified and authenticated. You can now close this tab and return to VS Database.</p>
+        <button class="btn" onclick="window.close()">Close Window</button>
+    </div>
+    <script>
+        try {
+            if (window.opener) {
+                window.opener.postMessage({ type: 'GOOGLE_DRIVE_CONNECTED' }, '*');
+            }
+        } catch(e) {}
+        setTimeout(() => { window.close(); }, 3500);
+    </script>
+</body>
+</html>"""
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", len(html))
                 self.end_headers()
                 return self.wfile.write(html)
-            except Exception:
+            except Exception as c_exc:
                 logging.exception("Google Drive callback failed")
-                html = b"<html><body style='font-family:Segoe UI;padding:40px'><h2>Google Drive connection failed</h2><p>Please return to VS Database and check the server log.</p></body></html>"
+                err_text = str(c_exc)
+                html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Drive Connection Failed</title>
+    <style>
+        body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #fef2f2; color: #991b1b; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+        .card {{ background: white; border: 1px solid #fecaca; border-radius: 16px; padding: 40px; max-width: 500px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); }}
+        .icon {{ font-size: 52px; margin-bottom: 16px; }}
+        h2 {{ margin: 0 0 8px 0; font-size: 22px; color: #dc2626; }}
+        p {{ margin: 0 0 16px 0; color: #64748b; font-size: 14px; line-height: 1.5; }}
+        .err {{ background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; color: #b91c1c; text-align: left; word-break: break-all; margin-bottom: 20px; }}
+        .btn {{ display: inline-block; background: #475569; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 14px; cursor: pointer; border: none; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">&#x26A0;&#xFE0F;</div>
+        <h2>Connection Failed</h2>
+        <p>Google authentication could not be completed.</p>
+        <div class="err">{html_escape(err_text)}</div>
+        <button class="btn" onclick="window.close()">Close Window</button>
+    </div>
+</body>
+</html>""".encode("utf-8")
                 self.send_response(400)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", len(html))
@@ -7488,13 +7611,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(google_status())
 
             if path == "/api/google/connect":
-                if not GOOGLE_CLIENT_FILE.is_file(): raise ValueError("Upload the Google OAuth credentials JSON file first.")
-                flow = Flow.from_client_secrets_file(GOOGLE_CLIENT_FILE, scopes=GOOGLE_SCOPE, redirect_uri=GOOGLE_REDIRECT_URI, autogenerate_code_verifier=True)
+                if not GOOGLE_CLIENT_FILE.is_file():
+                    raise ValueError("Upload the Google OAuth credentials JSON file first.")
+                try:
+                    from google_auth_oauthlib.flow import Flow
+                except ImportError as ie:
+                    raise ValueError(f"Google OAuth library is missing: {ie}")
+
+                effective_redirect_uri = get_effective_google_redirect_uri()
+                # Parse port from effective redirect URI and bridge if different from PORT
+                try:
+                    p_port = urlparse(effective_redirect_uri).port
+                    if p_port and p_port != PORT:
+                        ensure_oauth_callback_bridge(p_port)
+                except Exception as p_err:
+                    logging.warning("Could not parse or bridge redirect port: %s", p_err)
+
+                flow = Flow.from_client_secrets_file(
+                    GOOGLE_CLIENT_FILE,
+                    scopes=GOOGLE_SCOPE,
+                    redirect_uri=effective_redirect_uri,
+                    autogenerate_code_verifier=True
+                )
                 url, state = flow.authorization_url(access_type="offline", prompt="consent", include_granted_scopes="true")
                 with db() as con:
                     con.execute("INSERT INTO settings(key,value) VALUES('google_oauth_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (state,))
                     con.execute("INSERT INTO settings(key,value) VALUES('google_oauth_code_verifier',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (flow.code_verifier,))
-                return self.send_json({"authorization_url": url, "redirect_uri": GOOGLE_REDIRECT_URI})
+                return self.send_json({"authorization_url": url, "redirect_uri": effective_redirect_uri})
 
             if path == "/api/google/create-client-portals":
                 with db() as con: clients = [dict(c) for c in con.execute("SELECT * FROM clients ORDER BY name").fetchall()]
@@ -8908,7 +9051,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "runtime_online": gemini_health.get("online", False),
                     "runtime_name": "Google Gemini",
-                    "active_model": gemini_health.get("active_model", "gemini-2.0-flash"),
+                    "active_model": gemini_health.get("active_model", "gemini-3.6-flash"),
                     "has_api_key": gemini_health.get("has_api_key", False),
                     "has_oauth": gemini_health.get("has_oauth", False),
                     "status_message": gemini_health.get("message", ""),
@@ -8926,7 +9069,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "has_api_key": gemini_health.get("has_api_key", False),
                     "has_oauth": gemini_health.get("has_oauth", False),
-                    "active_model": gemini_health.get("active_model", "gemini-2.0-flash"),
+                    "active_model": gemini_health.get("active_model", "gemini-3.6-flash"),
                     "status": gemini_health.get("status", "API Key Required"),
                     "message": gemini_health.get("message", "")
                 })
@@ -9114,7 +9257,7 @@ class Handler(BaseHTTPRequestHandler):
                     asst_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
                     asst_meta = json.dumps({
                         "citations": res.get("citations", []),
-                        "model": res.get("model", "gemini-2.0-flash"),
+                        "model": res.get("model", "gemini-3.6-flash"),
                         "provider": "Google Gemini"
                     })
                     with db() as con:
@@ -9375,6 +9518,13 @@ def start_server_background(port: int = None, host: str = "0.0.0.0"):
     _BACKEND_STATE = "READY"
     threading.Thread(target=main_server.serve_forever, daemon=True, name="BackendServer").start()
     print(f"VS Database in-process server started on port {PORT}")
+    try:
+        eff_uri = get_effective_google_redirect_uri()
+        p_port = urlparse(eff_uri).port
+        if p_port and p_port != PORT:
+            ensure_oauth_callback_bridge(p_port)
+    except Exception:
+        pass
     return main_server
 
 
@@ -9397,6 +9547,13 @@ if __name__ == "__main__":
     _SERVER_INSTANCE = main_server
     _BACKEND_STATE = "READY"
     print(f"VS Database Desktop running at http://127.0.0.1:{PORT} and http://{HOST}:{PORT}")
+    try:
+        eff_uri = get_effective_google_redirect_uri()
+        p_port = urlparse(eff_uri).port
+        if p_port and p_port != PORT:
+            ensure_oauth_callback_bridge(p_port)
+    except Exception:
+        pass
     try:
         main_server.serve_forever()
     finally:

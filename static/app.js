@@ -3800,7 +3800,14 @@ async function drive() {
     try {
       const r = await api('/api/google/connect', { method: 'POST', body: '{}' });
       window.open(r.authorization_url, '_blank');
-      result.innerHTML = message('Google authorization opened in a new tab. Complete it, then refresh this page.');
+      result.innerHTML = message('Google authorization opened in a new tab. Complete sign-in, and this page will update automatically.');
+      const onMsg = async (ev) => {
+        if (ev.data && ev.data.type === 'GOOGLE_DRIVE_CONNECTED') {
+          window.removeEventListener('message', onMsg);
+          await drive();
+        }
+      };
+      window.addEventListener('message', onMsg);
     } catch (e) { result.innerHTML = message(e.message, true); }
   };
   field('create-portals').onclick = async () => {

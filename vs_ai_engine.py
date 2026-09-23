@@ -49,7 +49,7 @@ def detect_system_hardware() -> Dict[str, Any]:
         "total_ram_gb": 8.0,
         "avail_ram_gb": 4.0,
         "ai_provider": "Google Gemini API (Cloud Serverless)",
-        "active_model": "gemini-2.0-flash"
+        "active_model": "gemini-3.6-flash"
     }
     if sys.platform == "win32":
         try:
@@ -81,16 +81,76 @@ def detect_system_hardware() -> Dict[str, Any]:
 # ============================================================
 
 class GeminiProvider:
-    """Direct, lightweight HTTPS connector to Google Gemini 2.0 / 1.5 Flash."""
+    """Direct, lightweight HTTPS connector to Google Gemini 3.6 / Flash."""
 
-    DEFAULT_MODEL = "gemini-2.0-flash"
-    FALLBACK_MODEL = "gemini-1.5-flash"
+    DEFAULT_MODEL = "gemini-3.6-flash"
+    FALLBACK_MODEL = "gemini-3.7-flash"
     API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self._cached_key = None
         self._key_lock = threading.Lock()
+        self._active_model = self.DEFAULT_MODEL
+
+    def get_active_model(self) -> str:
+        """Returns the configured or discovered active Gemini model."""
+        with self._key_lock:
+            try:
+                with sqlite3.connect(self.db_path, timeout=5) as con:
+                    row = con.execute("SELECT value FROM settings WHERE key='gemini_model'").fetchone()
+                    if row and row[0] and row[0].strip():
+                        return row[0].strip()
+            except Exception:
+                pass
+        return self._active_model or self.DEFAULT_MODEL
+
+    def set_active_model(self, model: str):
+        self._active_model = model.strip()
+        with self._key_lock:
+            try:
+                with sqlite3.connect(self.db_path, timeout=5) as con:
+                    con.execute(
+                        "INSERT INTO settings(key, value) VALUES('gemini_model', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (model.strip(),)
+                    )
+            except Exception:
+                pass
+
+    def discover_active_model(self, api_key: str) -> Optional[str]:
+        """Queries Google Gemini models API to discover the latest operational Flash model."""
+        if not api_key:
+            return None
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                candidates = []
+                for m in data.get("models", []):
+                    name = m.get("name", "").replace("models/", "")
+                    methods = m.get("supportedGenerationMethods", [])
+                    if (
+                        "generateContent" in methods
+                        and "flash" in name.lower()
+                        and "image" not in name.lower()
+                        and "tts" not in name.lower()
+                        and "transcribe" not in name.lower()
+                        and "preview" not in name.lower()
+                    ):
+                        candidates.append(name)
+                # Prioritize gemini-3.6-flash if present
+                if "gemini-3.6-flash" in candidates:
+                    chosen = "gemini-3.6-flash"
+                elif candidates:
+                    chosen = candidates[0]
+                else:
+                    chosen = self.DEFAULT_MODEL
+                self.set_active_model(chosen)
+                return chosen
+        except Exception as exc:
+            logger.debug(f"Dynamic model discovery notice: {exc}")
+            return None
 
     def get_api_key(self) -> Optional[str]:
         """Retrieves Gemini API Key from settings, env, or Google OAuth."""
@@ -139,15 +199,16 @@ class GeminiProvider:
         api_key = self.get_api_key()
         oauth_token = self.get_oauth_token()
         has_auth = bool(api_key or oauth_token)
+        model = self.get_active_model()
 
         res = {
             "online": has_auth,
             "provider": "Google Gemini",
-            "active_model": self.DEFAULT_MODEL,
+            "active_model": model,
             "has_api_key": bool(api_key),
             "has_oauth": bool(oauth_token),
             "status": "Ready" if has_auth else "API Key Required",
-            "message": "Connected to Gemini 2.0 Flash" if has_auth else "Please enter your Gemini API key in Settings"
+            "message": f"Connected to Gemini ({model})" if has_auth else "Please enter your Gemini API key in Settings"
         }
         return res
 
@@ -170,10 +231,11 @@ class GeminiProvider:
             }
 
         headers = {"Content-Type": "application/json"}
+        model = self.get_active_model()
         if api_key:
-            url = f"{self.API_BASE}/{self.DEFAULT_MODEL}:generateContent?key={api_key}"
+            url = f"{self.API_BASE}/{model}:generateContent?key={api_key}"
         else:
-            url = f"{self.API_BASE}/{self.DEFAULT_MODEL}:generateContent"
+            url = f"{self.API_BASE}/{model}:generateContent"
             headers["Authorization"] = f"Bearer {oauth_token}"
 
         contents = []
@@ -227,13 +289,34 @@ class GeminiProvider:
                     if cands and "content" in cands[0]:
                         parts = cands[0]["content"].get("parts", [])
                         text = "".join([p.get("text", "") for p in parts])
-                    return {"ok": True, "text": text, "model": self.DEFAULT_MODEL}
+                    return {"ok": True, "text": text, "model": model}
         except urllib.error.HTTPError as h_err:
             try:
                 err_detail = json.loads(h_err.read().decode("utf-8"))
                 msg = err_detail.get("error", {}).get("message", str(h_err))
             except Exception:
                 msg = str(h_err)
+
+            # Auto-healing: If model not found or deprecated (404), discover active model & retry
+            if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
+                new_model = self.discover_active_model(api_key)
+                if new_model and new_model != model:
+                    logger.info("Auto-switching Gemini model from %s to %s and retrying...", model, new_model)
+                    try:
+                        retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
+                        retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                        with urllib.request.urlopen(retry_req, timeout=30) as r_resp:
+                            if r_resp.status == 200:
+                                r_data = json.loads(r_resp.read().decode("utf-8"))
+                                r_text = ""
+                                r_cands = r_data.get("candidates", [])
+                                if r_cands and "content" in r_cands[0]:
+                                    r_parts = r_cands[0]["content"].get("parts", [])
+                                    r_text = "".join([p.get("text", "") for p in r_parts])
+                                return {"ok": True, "text": r_text, "model": new_model}
+                    except Exception as retry_exc:
+                        logger.warning("Gemini retry failed: %s", retry_exc)
+
             return {"ok": False, "error": f"Gemini API error ({h_err.code}): {msg}"}
         except Exception as exc:
             return {"ok": False, "error": f"Failed to connect to Gemini: {str(exc)}"}
@@ -247,10 +330,11 @@ class GeminiProvider:
             return {"ok": False, "error": "Gemini API key not configured"}
 
         headers = {"Content-Type": "application/json"}
+        model = self.get_active_model()
         if api_key:
-            url = f"{self.API_BASE}/{self.DEFAULT_MODEL}:generateContent?key={api_key}"
+            url = f"{self.API_BASE}/{model}:generateContent?key={api_key}"
         else:
-            url = f"{self.API_BASE}/{self.DEFAULT_MODEL}:generateContent"
+            url = f"{self.API_BASE}/{model}:generateContent"
             headers["Authorization"] = f"Bearer {oauth_token}"
 
         payload = {
@@ -268,7 +352,27 @@ class GeminiProvider:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 text = data["candidates"][0]["content"]["parts"][0]["text"]
-                return {"ok": True, "data": json.loads(text)}
+                return {"ok": True, "data": json.loads(text), "model": model}
+        except urllib.error.HTTPError as h_err:
+            try:
+                err_detail = json.loads(h_err.read().decode("utf-8"))
+                msg = err_detail.get("error", {}).get("message", str(h_err))
+            except Exception:
+                msg = str(h_err)
+
+            if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
+                new_model = self.discover_active_model(api_key)
+                if new_model and new_model != model:
+                    try:
+                        retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
+                        retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                        with urllib.request.urlopen(retry_req, timeout=20) as r_resp:
+                            r_data = json.loads(r_resp.read().decode("utf-8"))
+                            r_text = r_data["candidates"][0]["content"]["parts"][0]["text"]
+                            return {"ok": True, "data": json.loads(r_text), "model": new_model}
+                    except Exception as retry_exc:
+                        logger.warning("Gemini JSON retry failed: %s", retry_exc)
+            return {"ok": False, "error": f"Gemini API error ({h_err.code}): {msg}"}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -966,7 +1070,7 @@ class AIModelOrchestrator:
             "ok": True,
             "answer": res.get("text", ""),
             "citations": citations,
-            "model": res.get("model", "gemini-2.0-flash"),
+            "model": res.get("model", self.gemini.get_active_model()),
             "provider": "Google Gemini",
             "latency_ms": latency_ms
         }

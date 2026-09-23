@@ -9,7 +9,7 @@
   let activeScope = 'All Knowledge';
   let sourceOnly = false;
   let currentAttachments = [];
-  let geminiHealth = { online: false, active_model: 'gemini-2.0-flash' };
+  let geminiHealth = { online: false, active_model: 'gemini-3.6-flash' };
   let sidebarCollapsed = false;
 
   function initVSAI() {
@@ -25,7 +25,7 @@
             <div class="vs-ai-title-wrap">
               <h1 class="vs-ai-title">
                 <span>VS AI</span>
-                <span class="vs-ai-version-pill">Gemini 2.0 Flash</span>
+                <span class="vs-ai-version-pill" id="vs-ai-model-pill">Gemini 3.6 Flash</span>
               </h1>
               <p class="vs-ai-subtitle">Statutory Legal & Tax Copilot for Chartered Accountants</p>
             </div>
@@ -203,6 +203,7 @@
   async function checkGeminiStatus() {
     const badge = document.querySelector('#vs-ai-status-badge');
     const text = document.querySelector('#vs-ai-status-text');
+    const modelPill = document.querySelector('#vs-ai-model-pill');
     if (!badge || !text) return;
 
     try {
@@ -210,10 +211,15 @@
       const data = await resp.json();
       geminiHealth = data;
 
+      if (modelPill && data.active_model) {
+        const friendlyModel = data.active_model.replace('gemini-', 'Gemini ').replace('-flash', ' Flash');
+        modelPill.textContent = friendlyModel;
+      }
+
       if (data.has_api_key || data.has_oauth) {
         badge.className = 'vs-ai-status-pill';
         text.textContent = '🟢 Gemini Active (' + (data.chunks_indexed || 0) + ' Sections)';
-        badge.title = 'Gemini 2.0 Flash Connected. Grounded on ' + (data.sources_indexed || 0) + ' statutory acts.';
+        badge.title = (data.active_model || 'Gemini 3.6 Flash') + ' Connected. Grounded on ' + (data.sources_indexed || 0) + ' statutory acts.';
       } else {
         badge.className = 'vs-ai-status-pill warning';
         text.textContent = '⚠️ Configure Gemini API Key';
