@@ -29,10 +29,12 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PIL._avif', '_avif', 'avif', 'tkinter'],
     noarchive=False,
     optimize=0,
 )
+# Filter out PIL._avif binary which causes decompression failure on Windows Python 3.14
+a.binaries = [x for x in a.binaries if '_avif' not in x[0].lower()]
 pyz = PYZ(a.pure)
 
 exe = EXE(
