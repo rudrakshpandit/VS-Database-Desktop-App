@@ -83,8 +83,14 @@ def detect_system_hardware() -> Dict[str, Any]:
 class GeminiProvider:
     """Direct, lightweight HTTPS connector for the VS AI Statutory Intelligence Engine."""
 
-    DEFAULT_MODEL = "gemini-3.6-flash"
-    FALLBACK_MODEL = "gemini-3.7-flash"
+    DEFAULT_MODEL = "gemini-flash-latest"
+    FALLBACK_MODELS = [
+        "gemini-flash-latest",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3.6-flash"
+    ]
     API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self, db_path: Path):
@@ -124,32 +130,24 @@ class GeminiProvider:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
             req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                candidates = []
+                available = []
                 for m in data.get("models", []):
                     name = m.get("name", "").replace("models/", "")
                     methods = m.get("supportedGenerationMethods", [])
-                    if (
-                        "generateContent" in methods
-                        and "flash" in name.lower()
-                        and "image" not in name.lower()
-                        and "tts" not in name.lower()
-                        and "transcribe" not in name.lower()
-                        and "preview" not in name.lower()
-                    ):
-                        candidates.append(name)
-                if "gemini-3.6-flash" in candidates:
-                    chosen = "gemini-3.6-flash"
-                elif candidates:
-                    chosen = candidates[0]
-                else:
-                    chosen = self.DEFAULT_MODEL
-                self.set_active_model(chosen)
-                return chosen
+                    if "generateContent" in methods:
+                        available.append(name)
+                for pref in self.FALLBACK_MODELS:
+                    if pref in available:
+                        self.set_active_model(pref)
+                        return pref
+                if available:
+                    self.set_active_model(available[0])
+                    return available[0]
         except Exception as exc:
             logger.debug(f"Dynamic model discovery notice: {exc}")
-            return None
+        return self.DEFAULT_MODEL
 
     def get_api_key(self) -> Optional[str]:
         """Retrieves VS AI API Key from settings, env, or Google OAuth."""
@@ -305,73 +303,66 @@ class GeminiProvider:
                 "parts": [{"text": system_instruction}]
             }
 
-        # Resilient Execution Loop: Handles 503 (High Demand) & 429 (Rate Spikes) with Exponential Backoff
-        MAX_RETRIES = 3
+        active_model = self.get_active_model()
+        candidates = [active_model]
+        for fb in self.FALLBACK_MODELS:
+            if fb not in candidates:
+                candidates.append(fb)
+
         last_error = ""
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=35) as resp:
-                    if resp.status == 200:
-                        data = json.loads(resp.read().decode("utf-8"))
-                        text = ""
-                        cands = data.get("candidates", [])
-                        if cands and "content" in cands[0]:
-                            parts = cands[0]["content"].get("parts", [])
-                            text = "".join([p.get("text", "") for p in parts])
-                        return {"ok": True, "text": text, "model": model}
-            except urllib.error.HTTPError as h_err:
+        for candidate in candidates:
+            if api_key:
+                model_url = f"{self.API_BASE}/{candidate}:generateContent?key={api_key}"
+            else:
+                model_url = f"{self.API_BASE}/{candidate}:generateContent"
+
+            for attempt in range(2):
                 try:
-                    err_detail = json.loads(h_err.read().decode("utf-8"))
-                    msg = err_detail.get("error", {}).get("message", str(h_err))
-                except Exception:
-                    msg = str(h_err)
-                last_error = msg
+                    req = urllib.request.Request(model_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=35) as resp:
+                        if resp.status == 200:
+                            data = json.loads(resp.read().decode("utf-8"))
+                            text = ""
+                            cands = data.get("candidates", [])
+                            if cands and "content" in cands[0]:
+                                parts = cands[0]["content"].get("parts", [])
+                                text = "".join([p.get("text", "") for p in parts])
+                            if candidate != active_model:
+                                self.set_active_model(candidate)
+                            return {"ok": True, "text": text, "model": candidate}
+                except urllib.error.HTTPError as h_err:
+                    try:
+                        err_detail = json.loads(h_err.read().decode("utf-8"))
+                        msg = err_detail.get("error", {}).get("message", str(h_err))
+                    except Exception:
+                        msg = str(h_err)
+                    last_error = msg
 
-                # 503 High Demand or 429 Concurrency Spike: Exponential Backoff & Retry
-                if h_err.code in (503, 429) or "high demand" in msg.lower() or "resource exhausted" in msg.lower():
-                    if attempt < MAX_RETRIES - 1:
-                        sleep_s = (0.9 * (attempt + 1))
-                        logger.info(f"VS AI Server busy ({msg}). Retrying in {sleep_s}s (attempt {attempt+1}/{MAX_RETRIES})...")
-                        time.sleep(sleep_s)
-                        continue
-                    return {
-                        "ok": False,
-                        "error": "VS AI servers are currently experiencing peak demand. Please retry your message in a few moments."
-                    }
+                    if h_err.code in (503, 429, 404) or "demand" in msg.lower() or "exhausted" in msg.lower() or "rate" in msg.lower():
+                        logger.info(f"Model {candidate} busy/throttled ({h_err.code}: {msg}). Trying next candidate...")
+                        if attempt == 0:
+                            time.sleep(0.5)
+                            continue
+                        break
 
-                # Auto-healing: If model not found or deprecated (404), discover active model & retry
-                if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
-                    new_model = self.discover_active_model(api_key)
-                    if new_model and new_model != model:
-                        logger.info("Auto-switching VS AI model to %s and retrying...", new_model)
-                        try:
-                            retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
-                            retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                            with urllib.request.urlopen(retry_req, timeout=35) as r_resp:
-                                if r_resp.status == 200:
-                                    r_data = json.loads(r_resp.read().decode("utf-8"))
-                                    r_text = ""
-                                    r_cands = r_data.get("candidates", [])
-                                    if r_cands and "content" in r_cands[0]:
-                                        r_parts = r_cands[0]["content"].get("parts", [])
-                                        r_text = "".join([p.get("text", "") for p in r_parts])
-                                    return {"ok": True, "text": r_text, "model": new_model}
-                        except Exception as retry_exc:
-                            logger.warning("VS AI retry notice: %s", retry_exc)
+                    return {"ok": False, "error": f"VS AI notice ({h_err.code}): {msg}"}
+                except Exception as exc:
+                    last_error = str(exc)
+                    if "timed out" in str(exc).lower():
+                        if attempt == 0:
+                            time.sleep(0.6)
+                            continue
+                        break
+                    return {"ok": False, "error": f"Failed to connect to VS AI service: {str(exc)}"}
 
-                return {"ok": False, "error": f"VS AI notice ({h_err.code}): {msg}"}
-            except Exception as exc:
-                if attempt < MAX_RETRIES - 1 and "timed out" in str(exc).lower():
-                    time.sleep(1.0)
-                    continue
-                return {"ok": False, "error": f"Failed to connect to VS AI service: {str(exc)}"}
-
-        return {"ok": False, "error": f"VS AI servers busy: {last_error}"}
+        return {
+            "ok": False,
+            "error": "VS AI servers are currently experiencing peak demand across model pools. Please click 'Retry Query' below to resend."
+        }
 
     def generate_json(self, prompt: str, system_instruction: Optional[str] = None) -> Dict[str, Any]:
-        """Calls VS AI with strict JSON response configuration."""
+        """Calls VS AI with strict JSON response configuration across fallback models."""
         api_key = self.get_api_key()
         oauth_token = self.get_oauth_token()
 
@@ -379,13 +370,6 @@ class GeminiProvider:
             return {"ok": False, "error": "VS AI key is not configured"}
 
         headers = {"Content-Type": "application/json"}
-        model = self.get_active_model()
-        if api_key:
-            url = f"{self.API_BASE}/{model}:generateContent?key={api_key}"
-        else:
-            url = f"{self.API_BASE}/{model}:generateContent"
-            headers["Authorization"] = f"Bearer {oauth_token}"
-
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -396,46 +380,51 @@ class GeminiProvider:
         if system_instruction:
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
-        MAX_RETRIES = 3
-        for attempt in range(MAX_RETRIES):
-            try:
-                req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    return {"ok": True, "data": json.loads(text), "model": model}
-            except urllib.error.HTTPError as h_err:
+        active_model = self.get_active_model()
+        candidates = [active_model]
+        for fb in self.FALLBACK_MODELS:
+            if fb not in candidates:
+                candidates.append(fb)
+
+        last_error = ""
+
+        for candidate in candidates:
+            if api_key:
+                model_url = f"{self.API_BASE}/{candidate}:generateContent?key={api_key}"
+            else:
+                model_url = f"{self.API_BASE}/{candidate}:generateContent"
+
+            for attempt in range(2):
                 try:
-                    err_detail = json.loads(h_err.read().decode("utf-8"))
-                    msg = err_detail.get("error", {}).get("message", str(h_err))
-                except Exception:
-                    msg = str(h_err)
+                    req = urllib.request.Request(model_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=25) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        text = data["candidates"][0]["content"]["parts"][0]["text"]
+                        if candidate != active_model:
+                            self.set_active_model(candidate)
+                        return {"ok": True, "data": json.loads(text), "model": candidate}
+                except urllib.error.HTTPError as h_err:
+                    try:
+                        err_detail = json.loads(h_err.read().decode("utf-8"))
+                        msg = err_detail.get("error", {}).get("message", str(h_err))
+                    except Exception:
+                        msg = str(h_err)
+                    last_error = msg
 
-                if h_err.code in (503, 429) or "high demand" in msg.lower():
-                    if attempt < MAX_RETRIES - 1:
-                        time.sleep(0.9 * (attempt + 1))
+                    if h_err.code in (503, 429, 404) or "demand" in msg.lower() or "exhausted" in msg.lower():
+                        if attempt == 0:
+                            time.sleep(0.5)
+                            continue
+                        break
+                    return {"ok": False, "error": f"VS AI notice ({h_err.code}): {msg}"}
+                except Exception as exc:
+                    last_error = str(exc)
+                    if attempt == 0:
+                        time.sleep(0.5)
                         continue
-                    return {"ok": False, "error": "VS AI server busy. Please retry shortly."}
+                    break
 
-                if (h_err.code == 404 or "no longer available" in msg.lower() or "not found" in msg.lower()) and api_key:
-                    new_model = self.discover_active_model(api_key)
-                    if new_model and new_model != model:
-                        try:
-                            retry_url = f"{self.API_BASE}/{new_model}:generateContent?key={api_key}"
-                            retry_req = urllib.request.Request(retry_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                            with urllib.request.urlopen(retry_req, timeout=25) as r_resp:
-                                r_data = json.loads(r_resp.read().decode("utf-8"))
-                                r_text = r_data["candidates"][0]["content"]["parts"][0]["text"]
-                                return {"ok": True, "data": json.loads(r_text), "model": new_model}
-                        except Exception as retry_exc:
-                            logger.warning("VS AI JSON retry notice: %s", retry_exc)
-                return {"ok": False, "error": f"VS AI notice ({h_err.code}): {msg}"}
-            except Exception as exc:
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(0.8)
-                    continue
-                return {"ok": False, "error": str(exc)}
-        return {"ok": False, "error": "VS AI engine busy"}
+        return {"ok": False, "error": f"VS AI engine busy: {last_error}"}
 
 
 # ============================================================

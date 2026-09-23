@@ -11,6 +11,8 @@
   let currentAttachments = [];
   let vsAiHealth = { online: false, active_model: 'VS AI Fast Core' };
   let sidebarCollapsed = false;
+  let lastSentPrompt = '';
+  let lastSentAttachments = [];
 
   function initVSAI() {
     const content = document.querySelector('#content');
@@ -318,9 +320,11 @@
 
     // Capture attachments to send
     const attachmentsToSend = [...currentAttachments];
+    lastSentPrompt = promptText;
+    lastSentAttachments = [...attachmentsToSend];
 
     // Append User Message to UI with attached pills
-    appendMessage('user', promptText || '(Attached document query)', null, null, attachmentsToSend, false);
+    appendMessage('user', promptText || '(Attached document query)', null, null, attachmentsToSend, false, false);
     input.value = '';
     input.style.height = 'auto';
 
@@ -364,19 +368,19 @@
       loadingEl.remove();
 
       if (!data.ok) {
-        appendMessage('assistant', `⚠️ **Error:** ${data.error || 'Failed to generate response.'}`, null, null, null, false);
+        appendMessage('assistant', `⚠️ **Error:** ${data.error || 'Failed to generate response.'}`, null, null, null, false, true);
         if (data.error && data.error.toLowerCase().includes('key')) {
           showSettingsModal();
         }
       } else {
         currentConvId = data.conversation_id;
         // True typewriter streaming reveal for new responses
-        appendMessage('assistant', data.answer, data.citations, promptText, null, true);
+        appendMessage('assistant', data.answer, data.citations, promptText, null, true, false);
         loadConversations();
       }
     } catch (err) {
       loadingEl.remove();
-      appendMessage('assistant', `⚠️ **Network Error:** Could not contact backend server.`, null, null, null, false);
+      appendMessage('assistant', `⚠️ **Network Error:** Could not contact backend server.`, null, null, null, false, true);
     } finally {
       sendBtn.disabled = false;
     }
@@ -432,7 +436,7 @@
   // ------------------------------------------------------------
   // APPEND MESSAGE TO CHAT STREAM
   // ------------------------------------------------------------
-  function appendMessage(role, content, citations, promptTitle, attachments, isNewResponse) {
+  function appendMessage(role, content, citations, promptTitle, attachments, isNewResponse, isError) {
     const stream = document.querySelector('#vs-ai-chat-stream');
     if (!stream) return;
 
@@ -466,6 +470,41 @@
       stream.appendChild(row);
       stream.scrollTop = stream.scrollHeight;
     } else {
+      const isActuallyError = isError || (content && (content.startsWith('⚠️') || content.includes('Error:')));
+
+      if (isActuallyError) {
+        row.innerHTML = `
+          <div class="vs-ai-bubble-assistant" style="border-left:4px solid #f59e0b;background:#fffbeb;">
+            <div class="vs-ai-asst-body" style="color:#92400e;">${renderMarkdown(content)}</div>
+            <div class="vs-ai-msg-actions" style="border-top:1px solid #fde68a;">
+              <button class="vs-ai-msg-btn primary btn-retry-query" style="background:#fef3c7;border-color:#fcd34d;color:#92400e;font-weight:700;" title="Click to resend your query immediately">
+                <span>🔄</span>
+                <span>Retry Query</span>
+              </button>
+            </div>
+          </div>
+        `;
+        stream.appendChild(row);
+        stream.scrollTop = stream.scrollHeight;
+
+        const retryBtn = row.querySelector('.btn-retry-query');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', () => {
+            row.remove();
+            const input = document.querySelector('#vs-ai-prompt-input');
+            if (input && lastSentPrompt) {
+              input.value = lastSentPrompt;
+            }
+            if (lastSentAttachments && lastSentAttachments.length > 0) {
+              currentAttachments = [...lastSentAttachments];
+              renderAttachmentPreviewBar();
+            }
+            handleSendQuery();
+          });
+        }
+        return;
+      }
+
       let citationsHtml = '';
       if (citations && citations.length > 0) {
         citationsHtml = `
