@@ -5045,7 +5045,10 @@ async function render() {
   else if (current === 'backup') await backupPage();
   else if (current === 'users') await usersPage();
   else if (current === 'pdf-studio') { if (typeof pdfStudioPage === 'function') await pdfStudioPage(); }
-  else if (current === 'vs-ai' || current === 'ai') { if (typeof renderVsAi === 'function') await renderVsAi(); }
+  else if (current === 'vs-ai' || current === 'ai') {
+    if (typeof renderVsAi === 'function') await renderVsAi();
+    else if (typeof render_page_vs_ai === 'function') await render_page_vs_ai();
+  }
   else await activity();
 }
 

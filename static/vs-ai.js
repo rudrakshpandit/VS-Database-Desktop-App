@@ -828,11 +828,19 @@
 
   // Register page renderer on window
   window.render_page_vs_ai = initVSAI;
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      if (location.hash === '#vs-ai') initVSAI();
-    });
-  } else {
-    if (location.hash === '#vs-ai') initVSAI();
+  window.renderVsAi = initVSAI;
+
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        if (typeof window !== 'undefined' && window.location && (window.location.hash === '#vs-ai' || window.location.hash === '#ai')) {
+          initVSAI();
+        }
+      });
+    } else {
+      if (typeof window !== 'undefined' && window.location && (window.location.hash === '#vs-ai' || window.location.hash === '#ai')) {
+        initVSAI();
+      }
+    }
   }
 })();
