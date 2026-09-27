@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>VS Database – Redesign</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{--tx:#0f172a;--tx2:#475569;--glass:rgba(255,255,255,.62);--glass2:rgba(255,255,255,.8);--bd:rgba(255,255,255,.75);--line:rgba(15,23,42,.1);--pri:linear-gradient(135deg,#2563eb,#7c3aed);--pc:#4338ca;--ok:#047857;--okb:rgba(16,185,129,.15);--wn:#92400e;--wnb:rgba(245,158,11,.2);--er:#b91c1c;--erb:rgba(239,68,68,.13);--sh:0 10px 40px rgba(49,46,129,.14);--bgA:#c7d2fe;--bgB:#e9d5ff;--bgC:#bae6fd;--bgD:#eef2ff}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{font:14.5px/1.5 "Plus Jakarta Sans",system-ui,sans-serif;color:var(--tx);background:var(--bgD);overflow:hidden}
+.orbs{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.orbs i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.75}
+.orbs i:nth-child(1){width:520px;height:520px;background:var(--bgA);top:-140px;left:-100px}
+.orbs i:nth-child(2){width:460px;height:460px;background:var(--bgB);right:-120px;top:20%}
+.orbs i:nth-child(3){width:420px;height:420px;background:var(--bgC);bottom:-160px;left:35%}
+.app{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:248px minmax(0,1fr);gap:20px;padding:max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom))}
+.glass{background:var(--glass);border:1px solid var(--bd);border-radius:22px;box-shadow:var(--sh),inset 0 1px 0 rgba(255,255,255,.5);backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%)}
+@supports not (backdrop-filter:blur(1px)){.glass{background:var(--glass2)}}
+@media (prefers-reduced-transparency:reduce){.glass{backdrop-filter:none;background:var(--glass2)}}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button,select,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
+/* sidebar */
+.side{display:flex;flex-direction:column;padding:18px 14px;min-height:0}
+.brand{display:flex;align-items:center;gap:10px;padding:2px 8px 18px}
+.mono{width:38px;height:38px;border-radius:12px;background:var(--pri);color:#fff;display:grid;place-items:center;font:600 17px Fraunces,serif;box-shadow:0 6px 18px rgba(99,102,241,.45)}
+.brand b{font:600 18px Fraunces,serif;letter-spacing:-.01em;display:block;line-height:1.1}
+.brand small{color:var(--tx2);font-size:11.5px}
+nav{display:flex;flex-direction:column;gap:2px;overflow:auto;flex:1}
+nav button{display:flex;align-items:center;gap:12px;min-height:42px;padding:0 12px;border:0;border-radius:13px;background:none;color:var(--tx2);font-weight:600;cursor:pointer;text-align:left;transition:background .15s,color .15s}
+nav button:hover{background:var(--glass2);color:var(--tx)}
+nav button[aria-current=page]{background:var(--pri);color:#fff;box-shadow:0 8px 22px rgba(99,102,241,.4)}
+.side footer{font-size:12px;color:var(--tx2);padding:12px 8px 0;border-top:1px solid var(--line)}
+/* main */
+.main{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0}
+.top{display:flex;align-items:center;gap:12px;padding:10px 14px 10px 22px;flex-wrap:wrap}
+.top h1{font:600 24px Fraunces,serif;letter-spacing:-.01em;line-height:1.2}
+.top p{color:var(--tx2);font-size:13px}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 14px;border-radius:999px;background:var(--glass2);border:1px solid var(--line);font-weight:600;font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 0 4px var(--okb)}
+.dot.w{background:#f59e0b;box-shadow:0 0 0 4px var(--wnb)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:13px;border:1px solid var(--line);background:var(--glass2);font-weight:600;cursor:pointer;transition:transform .12s,box-shadow .15s}
+.btn:hover{box-shadow:0 6px 18px rgba(49,46,129,.15)}
+.btn:active{transform:scale(.97)}
+.btn.p{background:var(--pri);color:#fff;border-color:transparent;box-shadow:0 8px 22px rgba(99,102,241,.4)}
+.btn.d{color:var(--er);background:var(--erb);border-color:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
+.ib{width:38px;height:38px;padding:0;min-height:0;border-radius:11px}
+.view{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding-bottom:4px}
+.card{padding:20px 22px}
+.card h2{font-size:15.5px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.grid5{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}
+.stat{padding:16px 18px}
+.stat span{color:var(--tx2);font-size:13px;font-weight:600}
+.stat b{display:block;font:600 30px Fraunces,serif;margin-top:2px}
+.two{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
+.field{display:flex;align-items:center;gap:10px;min-height:46px;padding:0 16px;border-radius:15px;border:1px solid var(--line);background:var(--glass2)}
+.field input{flex:1;border:0;background:none;outline:0;min-width:0}
+.list{list-style:none;padding:0;display:flex;flex-direction:column}
+.list li{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.list li:last-child{border:0}
+.list small,.muted{color:var(--tx2);font-size:12.5px}
+.bar{height:10px;border-radius:9px;background:var(--line);overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,#f59e0b,#ef4444)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;background:var(--okb);color:var(--ok)}
+.chip.w{background:var(--wnb);color:var(--wn)}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th{text-align:left;font-size:12.5px;color:var(--tx2);font-weight:600;padding:8px 12px}
+td{padding:11px 12px;border-top:1px solid var(--line)}
+tr:hover td{background:var(--glass2)}
+.acts{display:flex;gap:6px;justify-content:flex-end}
+.banner{display:flex;gap:12px;align-items:center;padding:14px 18px;border-radius:16px;background:var(--okb);color:var(--ok);font-weight:600}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.row .sp{flex:1}
+select.btn{padding-right:10px}
+/* AI */
+.ai{flex:1;min-height:0;display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px}
+.hist{display:flex;flex-direction:column;padding:14px;gap:10px;min-height:0}
+.hist ul{list-style:none;padding:0;overflow:auto;flex:1}
+.hist h3{font-size:12px;color:var(--tx2);font-weight:700;padding:10px 8px 4px}
+.hist li button{width:100%;text-align:left;border:0;background:none;padding:8px 10px;border-radius:11px;cursor:pointer;display:block}
+.hist li button:hover,.hist li button.on{background:var(--glass2)}
+.hist li button.on{box-shadow:inset 3px 0 0 #6366f1}
+.hist li span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.hist li small{color:var(--tx2);font-size:11.5px}
+.chat{display:flex;flex-direction:column;min-height:0}
+.bar2{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.sw{display:inline-flex;align-items:center;gap:10px;background:none;border:0;cursor:pointer;font-weight:600;white-space:nowrap}
+.sw i{width:40px;height:23px;border-radius:99px;background:var(--line);position:relative;transition:background .2s}
+.sw i:after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3);transition:transform .2s}
+.sw[aria-checked=true] i{background:#6366f1}
+.sw[aria-checked=true] i:after{transform:translateX(17px)}
+.log{flex:1;overflow:auto;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
+.msg{display:flex;gap:10px;max-width:min(680px,80%)}
+.msg.u{align-self:flex-end;flex-direction:row-reverse}
+.av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;background:var(--pri);flex:none}
+.bub{padding:11px 15px;border-radius:18px;background:var(--glass2);border:1px solid var(--line)}
+.msg.u .bub{background:var(--pri);color:#fff;border-color:transparent;border-bottom-right-radius:5px}
+.msg:not(.u) .bub{border-top-left-radius:5px}
+.bub small{display:block;opacity:.7;font-size:11.5px;margin-top:4px}
+.err{border-radius:18px;padding:16px 18px;background:var(--wnb);border:1px solid rgba(245,158,11,.4);color:var(--tx);max-width:min(560px,90%);align-self:flex-start}
+.err b{display:flex;gap:8px;align-items:center;color:var(--wn);margin-bottom:2px}
+.src{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.typing{display:flex;gap:4px;padding:6px 2px}
+.typing i{width:7px;height:7px;border-radius:50%;background:var(--tx2);animation:b 1s infinite}
+.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes b{50%{transform:translateY(-4px);opacity:.4}}
+.empty{margin:auto;text-align:center;max-width:460px}
+.empty h2{font:600 24px Fraunces,serif;margin:8px 0}
+.chips{display:flex;gap:8px;flex-wrap:wrap;padding:0 22px 10px}
+.chips button{min-height:36px;padding:0 14px;border-radius:99px;border:1px solid var(--line);background:var(--glass2);cursor:pointer;font-weight:600;font-size:13px}
+.chips button:hover{border-color:#6366f1}
+.comp{margin:0 18px 18px;padding:12px 14px;border-radius:20px;background:var(--glass2);border:1px solid var(--line)}
+.comp textarea{width:100%;border:0;background:none;outline:0;resize:none;max-height:140px;padding:4px 2px}
+.comp .row{margin-top:6px}
+.comp small{color:var(--tx2)}
+dialog{border:1px solid var(--bd);border-radius:22px;padding:24px;max-width:400px;background:var(--glass2);color:var(--tx);backdrop-filter:blur(24px);box-shadow:var(--sh)}
+dialog::backdrop{background:rgba(15,23,42,.4)}
+.tip{position:relative}
+.tip:hover:after,.tip:focus-visible:after{content:attr(data-t);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;font-size:12px;padding:5px 9px;border-radius:8px;white-space:nowrap;z-index:9}
+@media (max-width:1100px){.ai{grid-template-columns:1fr}.hist{display:none}.two{grid-template-columns:1fr}}
+@media (max-width:820px){body{overflow:auto}.app{grid-template-columns:1fr;height:auto}.side{position:static}nav{flex-direction:row;overflow:auto}nav button span{display:none}.side footer,.brand small{display:none}.view{overflow:visible}.ai{height:80vh}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="dashboard" viewBox="0 0 24 24"><path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/></symbol>
+<symbol id="clients" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.5a3.5 3.5 0 010 7M18 14.5c2 .6 3.5 2.4 3.5 5.5"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+<symbol id="upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></symbol>
+<symbol id="studio" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+<symbol id="ai" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
+<symbol id="drive" viewBox="0 0 24 24"><path d="M7 18a4 4 0 01-.6-7.95A6 6 0 0118 9.5 4.3 4.3 0 0117.5 18z"/></symbol>
+<symbol id="backup" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
+<symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+<symbol id="setup" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+<symbol id="users" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+<symbol id="refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></symbol>
+<symbol id="clip" viewBox="0 0 24 24"><path d="M20 11l-8.5 8.5a5 5 0 01-7-7L13 4a3.3 3.3 0 014.7 4.7L9.5 17a1.7 1.7 0 01-2.4-2.4L14 7.7"/></symbol>
+<symbol id="send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+<symbol id="alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4M12 17h0"/></symbol>
+<symbol id="dl" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+<symbol id="edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></symbol>
+<symbol id="moon" viewBox="0 0 24 24"><path d="M20 14A8 8 0 019.5 4 8 8 0 1020 14z"/></symbol>
+<symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h0"/></symbol>
+</defs></svg>
+<div class="orbs" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="app">
+  <aside class="glass side">
+    <div class="brand"><div class="mono">VS</div><div><b>Database</b><small>CA office, made simple</small></div></div>
+    <nav id="nav" aria-label="Main"></nav>
+    <footer>v1.0.0 · Designed by Rudraksh Sikhwal</footer>
+  </aside>
+  <div class="main">
+    <header class="glass top">
+      <div><h1 id="title"></h1><p id="sub"></p></div>
+      <span class="sp"></span>
+      <span class="pill tip" data-t="Server online · Drive connected" tabindex="0"><span class="dot"></span>All systems normal</span>
+      <span class="pill">Rudra_Dev (Host)</span>
+      <button class="btn">Log out</button>
+    </header>
+    <main class="view" id="view"></main>
+  </div>
+</div>
+<dialog id="dlg"><h2 id="dt" style="font-size:18px"></h2><p id="dp" class="muted" style="margin:8px 0 18px"></p>
+<form method="dialog" class="row" style="justify-content:flex-end"><button class="btn" value="x">Cancel</button><button class="btn p" id="dok" value="ok"></button></form></dialog>
+<script>
+const $=s=>document.querySelector(s),ic=n=>`<svg class="i" aria-hidden="true"><use href="#${n}"/></svg>`;
+const tabs=[["dashboard","Dashboard","dashboard","Overview of your practice"],["clients","Clients","clients","Manage clients and import from Practive"],["folder","Folder Structure","folder","Templates that build client folders"],["upload","Save Files","upload","Upload documents to client folders"],["studio","PDF Studio","studio","Merge, split, protect and edit PDFs"],["ai","VS AI","ai","Statutory legal and tax copilot for Chartered Accountants"],["drive","Drive Sharing","drive","Client portals on Google Drive"],["backup","Backup & Restore","backup","Protect your database, clients and settings"],["activity","Activity","activity","Recent filings you can revert"],["setup","Setup","setup","Storage and integration"],["users","Users & Devices","users","Staff accounts and approved PCs"]];
+$("#nav").innerHTML=tabs.map(t=>`<button data-k="${t[0]}">${ic(t[2])}<span>${t[1]}</span></button>`).join("");
+const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function confirmBox(t,p,ok,fn){$("#dt").textContent=t;$("#dp").textContent=p;$("#dok").textContent=ok;const d=$("#dlg");d.onclose=()=>{if(d.returnValue==="ok")fn&&fn()};d.showModal()}
+const V={
+dashboard:()=>`<label class="field">${ic("search")}<input placeholder="Search client, file number, folder or file" aria-label="Search"></label>
+<div class="grid5">${[["Clients",2],["Folders",38],["Files",133],["Cloud files",0],["Needs attention",0]].map(s=>`<div class="glass stat"><span>${s[0]}</span><b>${s[1]}</b></div>`).join("")}</div>
+<div class="row"><button class="btn p">${ic("plus")}Add client</button><button class="btn">${ic("upload")}Save file</button><button class="btn">${ic("folder")}Open explorer</button><button class="btn">${ic("refresh")}Reconcile folders</button></div>
+<div class="two"><section class="glass card"><h2>Recent activity</h2><ul class="list">
+<li><span>Saved 3 files to GST / AY 2025-26 / Returns<br><small>Client V-0002</small></span><small>11:45 PM</small></li>
+<li><span>Daily backup completed and verified<br><small>1.5 MB</small></span><small>11:04 PM</small></li>
+<li><span>Deleted old backup (retention limit)</span><small>11:04 PM</small></li>
+<li><span>Firm type "LLP" deleted</span><small>4:57 PM</small></li></ul></section>
+<section class="glass card"><h2>Storage</h2><div class="row"><b>Local disk</b><span class="sp"></span><span class="chip w">92.6% used</span></div><div class="bar" role="progressbar" aria-valuenow="92.6" aria-valuemin="0" aria-valuemax="100"><i style="width:92.6%"></i></div>
+<p class="muted">65.7 GB free of 886.4 GB. Backups share this disk. <a href="#" style="color:var(--pc);font-weight:600">Move backups to Drive</a></p>
+<div class="row" style="margin-top:16px"><b>Google Drive</b><span class="sp"></span><span class="chip">Connected</span></div><div class="bar"><i style="width:1%;background:#10b981"></i></div><p class="muted">45.6 GB of 5 TB used</p></section></div>`,
+clients:()=>`<div class="row"><label class="field" style="flex:1;min-width:240px">${ic("search")}<input placeholder="Search by name, file no., mobile, firm type or group" aria-label="Search clients"></label><button class="btn">${ic("upload")}Import</button><button class="btn">${ic("dl")}Export</button><button class="btn p">${ic("plus")}Add client</button></div>
+<section class="glass card"><h2>2 registered clients</h2><div class="tw"><table><thead><tr><th>Reference</th><th>Name</th><th>Mobile</th><th>Firm type</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+${[["V-0001","Trail","Individual"],["V-0002","Trial-2","Company"]].map(c=>`<tr><td>${c[0]}</td><td><b>${c[1]}</b></td><td>0000000000</td><td>${c[2]}</td><td><span class="chip">Active</span></td><td><div class="acts"><button class="btn ib tip" data-t="Edit" aria-label="Edit">${ic("edit")}</button><button class="btn ib tip" data-t="Open folders" aria-label="Open folders">${ic("folder")}</button><button class="btn ib d tip" data-t="Delete" aria-label="Delete ${c[1]}" data-del="${c[1]}">${ic("trash")}</button></div></td></tr>`).join("")}</tbody></table></div></section>`,
+backup:()=>`<div class="banner">${ic("backup")}Last backup 9/23/2026, 11:04 PM · all 10 archives verified (SHA-256)<span style="flex:1"></span><button class="btn p">${ic("plus")}Create backup</button></div>
+<section class="glass card"><h2>Schedule and retention</h2><div class="row"><select class="btn" aria-label="Schedule"><option>Daily (recommended)</option><option>Weekly</option></select><label class="muted">Keep last <input class="field" style="width:70px;min-height:38px" value="10"> backups</label><label class="muted">for <input class="field" style="width:70px;min-height:38px" value="60"> days</label><span class="sp"></span><button class="btn">Save schedule</button></div>
+<p class="chip w" style="margin-top:14px">${ic("alert")}Backups are stored on the same disk as your data (92.6% full). Add a Drive copy.</p></section>
+<section class="glass card"><h2>Backup history <span class="muted">10 archives · 3.9 MB</span></h2><div class="tw"><table><thead><tr><th>Date</th><th>File</th><th>Size</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+${[["9/23/2026, 11:04 PM","2026-09-23_23-04-22","1.5 MB"],["9/22/2026, 11:01 PM","2026-09-22_23-01-43","795 KB"],["9/20/2026, 11:31 PM","2026-09-20_23-31-18","790 KB"],["9/18/2026, 12:44 PM","2026-09-18_12-44-16","23.9 KB"]].map(b=>`<tr><td>${b[0]}</td><td><code>VSDatabase_Backup_${b[1]}.vsbackup</code></td><td>${b[2]}${b[2].includes("23.9")?' <span class="chip w">Unusually small</span>':""}</td><td><div class="acts"><button class="btn" data-rest="${b[1]}">Restore</button><button class="btn ib tip" data-t="Download" aria-label="Download">${ic("dl")}</button><button class="btn ib d tip" data-t="Delete" aria-label="Delete backup" data-delb="${b[1]}">${ic("trash")}</button></div></td></tr>`).join("")}</tbody></table></div></section>`,
+users:()=>`<section class="glass card"><h2>Approved devices</h2><div class="tw"><table><thead><tr><th>Device</th><th>User</th><th>Last active</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody><tr><td><b>Main Server PC</b><br><small class="muted">127.0.0.1</small></td><td>Rudra_Dev</td><td>9/24/2026, 12:55 PM</td><td><span class="chip">Approved</span></td><td><div class="acts"><button class="btn">Disable</button><button class="btn d" data-rev>Revoke</button></div></td></tr></tbody></table></div></section>
+<section class="glass card"><h2>User accounts</h2><div class="tw"><table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Created</th><th style="text-align:right">Actions</th></tr></thead><tbody><tr><td><b>Rudra_Dev</b></td><td>Host admin</td><td><span class="chip">Active</span></td><td>9/16/2026</td><td><div class="acts"><button class="btn">Reset password</button></div></td></tr></tbody></table></div><p class="muted" style="margin-top:10px">Passwords are never shown. Reset sends a one-time link.</p></section>`,
+ai:()=>`<div class="ai"><aside class="glass hist"><button class="btn p" id="newc">${ic("plus")}New chat</button><label class="field" style="min-height:40px">${ic("search")}<input id="hs" placeholder="Search chats" aria-label="Search chats"></label><ul id="hl"></ul></aside>
+<section class="glass chat"><div class="bar2"><select class="btn" aria-label="Scope"><option>Scope: All statutory knowledge</option><option>Income-tax Act</option><option>CGST Act</option></select>
+<button class="sw" role="switch" aria-checked="true" id="sw"><i></i>Strict statutory grounding</button><span class="tip" data-t="Answers only from indexed statutes and cases" tabindex="0">${ic("info")}</span><span class="sp" style="flex:1"></span><span class="chip">${ic("ai")}2,506 sections indexed</span></div>
+<div class="log" id="log" aria-live="polite"></div><div class="chips" id="chips"></div>
+<div class="comp"><textarea id="ta" rows="1" placeholder="Ask any Indian tax or statutory law question…" aria-label="Message"></textarea><div class="row"><button class="btn">${ic("clip")}Attach</button><button class="btn">${ic("folder")}Client files</button><span class="sp"></span><small>Enter to send · Shift+Enter for new line</small><button class="btn p" id="go" disabled>Send${ic("send")}</button></div></div></section></div>`
+};
+const HIST=[["Today",[["Explain Section 43B(h) for MSME","12:29 PM"],["Contractor TDS requirements","12:42 AM"],["Draft a formal reply to GST notice","12:13 AM"]]],["Yesterday",[["Last date of filing tax audit report","11:39 PM"],["What is Section 194C TDS rate?","11:33 PM"]]],["Previous 7 days",[["Summarize audit report","Sep 20"],["Explain Ind AS 116","Sep 19"]]]];
+function histRender(q=""){$("#hl").innerHTML=HIST.map(g=>{const it=g[1].filter(x=>x[0].toLowerCase().includes(q.toLowerCase()));return it.length?`<h3>${g[0]}</h3>`+it.map((x,i)=>`<li><button title="${x[0]}"${g[0]==="Today"&&i===0&&!q?' class="on"':""}><span>${x[0]}</span><small>${x[1]}</small></button></li>`).join(""):""}).join("")||'<li class="muted" style="padding:10px">No chats match.</li>'}
+function aiInit(){
+ const log=$("#log"),ta=$("#ta"),go=$("#go");let failed=false;
+ const time=()=>new Date().toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+ const empty=()=>{log.innerHTML=`<div class="empty"><div class="mono" style="margin:auto">VS</div><h2>What do you need to check today?</h2><p class="muted">Answers cite the Income-tax Act 2025, CGST Act and judicial precedents.</p></div>`;$("#chips").style.display=""};
+ $("#chips").innerHTML=["Draft GST notice reply","Section 43B(h) explained","ITR due dates","ITC conditions under Sec 16"].map(c=>`<button>${c}</button>`).join("");
+ const scroll=()=>{if(log.scrollHeight-log.scrollTop-log.clientHeight<160)log.scrollTop=log.scrollHeight};
+ const ai=t=>{const d=document.createElement("div");d.className="msg";d.innerHTML=`<div class="av">VS</div><div class="bub">${t}<div class="src"><span class="chip">Income-tax Act, s.43B(h)</span><span class="chip">MSMED Act, s.15</span></div><div class="row" style="margin-top:8px"><button class="btn ib tip" data-t="Copy" aria-label="Copy">${ic("copy")}</button><button class="btn ib tip" data-t="Regenerate" aria-label="Regenerate">${ic("refresh")}</button></div></div>`;return d};
+ function run(q,n){const ty=document.createElement("div");ty.className="msg";ty.innerHTML='<div class="av">VS</div><div class="bub"><div class="typing"><i></i><i></i><i></i></div></div>';log.append(ty);log.scrollTop=log.scrollHeight;go.disabled=true;
+  setTimeout(()=>{if(!failed){failed=true;const e=document.createElement("div");e.className="err";let s=10,tm;
+   e.innerHTML=`<b>${ic("alert")}High demand right now</b><p>VS AI servers are busy. Your question is saved, nothing was lost.</p><div class="row" style="margin-top:12px"><button class="btn p" data-r>${ic("refresh")}Retry query</button><button class="btn" data-c>Cancel</button><small class="muted" data-s>Retrying in 10s</small></div>`;
+   ty.replaceWith(e);const retry=()=>{clearInterval(tm);const t2=document.createElement("div");e.replaceWith(t2);t2.replaceWith(ty);run(q,n+1)};
+   tm=setInterval(()=>{s--;e.querySelector("[data-s]").textContent=s?`Retrying in ${s}s`:"Retrying…";if(!s)retry()},1000);
+   e.querySelector("[data-r]").onclick=retry;e.querySelector("[data-c]").onclick=()=>{clearInterval(tm);e.querySelector("[data-s]").textContent="Auto-retry cancelled"};scroll()}
+  else{ty.replaceWith(ai("Under Section 43B(h), payments to micro and small enterprises are deductible only when paid within the agreed period, capped at 45 days (15 days if no written agreement). Unpaid amounts are disallowed for the year and become deductible in the year of payment."));go.disabled=!ta.value.trim();scroll()}},900)}
+ function send(t){t=t.trim();if(!t)return;$("#chips").style.display="none";if(log.querySelector(".empty"))log.innerHTML="";const m=document.createElement("div");m.className="msg u";m.innerHTML=`<div class="av">R</div><div class="bub">${esc(t)}<small>${time()}</small></div>`;log.append(m);ta.value="";ta.style.height="";failed=false;run(t,0)}
+ ta.oninput=()=>{go.disabled=!ta.value.trim();ta.style.height="auto";ta.style.height=ta.scrollHeight+"px"};
+ ta.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();if(!go.disabled)send(ta.value)}};
+ go.onclick=()=>send(ta.value);
+ $("#chips").onclick=e=>{if(e.target.tagName==="BUTTON"){ta.value=e.target.textContent;ta.oninput();ta.focus()}};
+ $("#sw").onclick=e=>{const b=e.currentTarget;b.setAttribute("aria-checked",b.getAttribute("aria-checked")!=="true")};
+ $("#newc").onclick=empty;$("#hs").oninput=e=>histRender(e.target.value);histRender();empty();
+}
+function show(k){
+ const t=tabs.find(x=>x[0]===k);document.querySelectorAll("#nav button").forEach(b=>b.toggleAttribute("aria-current",b.dataset.k===k)||b.removeAttribute("aria-current"));
+ document.querySelectorAll("#nav button").forEach(b=>{if(b.dataset.k===k)b.setAttribute("aria-current","page")});
+ $("#title").textContent=t[1];$("#sub").textContent=t[3];
+ $("#view").innerHTML=V[k]?V[k]():`<section class="glass card" style="text-align:center;padding:60px 20px"><div class="mono" style="margin:auto">${ic(t[2])}</div><h2 style="justify-content:center;margin-top:14px">${t[1]}</h2><p class="muted">Uses the same shell, buttons, tables and cards as the tabs above.</p></section>`;
+ if(k==="ai")aiInit();
+ $("#view").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>confirmBox("Delete client?",`This removes ${b.dataset.del} and unlinks their folders. Files on disk stay untouched.`,"Delete client"));
+ $("#view").querySelectorAll("[data-delb]").forEach(b=>b.onclick=()=>confirmBox("Delete this backup?","Deleted backups cannot be recovered.","Delete backup"));
+ $("#view").querySelectorAll("[data-rest]").forEach(b=>b.onclick=()=>confirmBox("Restore this backup?","Current data will be replaced. A safety backup is created first.","Restore"));
+ $("#view").querySelectorAll("[data-rev]").forEach(b=>b.onclick=()=>confirmBox("Revoke device?","This PC will lose access immediately.","Revoke"));
+}
+$("#nav").onclick=e=>{const b=e.target.closest("button");if(b)show(b.dataset.k)};
+show("ai");
+</script>
+</body>
+</html>

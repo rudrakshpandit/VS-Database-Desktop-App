@@ -427,6 +427,13 @@ class PDFToolRegistry:
                 "delete_page": "delete_pages",
                 "insert": "insert_pages",
                 "insert_page": "insert_pages",
+                "page_numbers": "add_page_numbers",
+                "add_page_numbers": "add_page_numbers",
+                "extract_pages": "split_pdf",
+                "reorder_pages": "rearrange_pages",
+                "convert_images": "convert_to_images",
+                "convert_to_images": "convert_to_images",
+                "pdf_to_images": "convert_to_images",
             }
             if tool_id in aliases:
                 handler = self._handlers.get(aliases[tool_id])
@@ -629,6 +636,39 @@ class PDFToolRegistry:
                 "required": ["level"]
             },
             handler=self._handle_compress_pdf
+        )
+
+        # 11. ADD PAGE NUMBERS
+        self.register(
+            tool_id="add_page_numbers",
+            name="Add Page Numbers",
+            description="Insert customizable page numbers onto document pages.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "position": {"type": "string", "enum": ["bottom_right", "bottom_center", "bottom_left", "top_right", "top_center", "top_left"], "description": "Number placement."},
+                    "format": {"type": "string", "description": "Format string, e.g. 'Page {n} of {total}' or '{n}'."},
+                    "start_number": {"type": "integer", "description": "Starting page number (default 1)."},
+                    "font_size": {"type": "integer", "description": "Font size (default 10)."},
+                    "color": {"type": "string", "description": "Hex color (default '#475569')."}
+                }
+            },
+            handler=self._handle_add_page_numbers
+        )
+
+        # 12. CONVERT TO IMAGES
+        self.register(
+            tool_id="convert_to_images",
+            name="Convert to Images",
+            description="Render and export document pages as PNG or JPEG images.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "format": {"type": "string", "enum": ["png", "jpeg", "jpg"], "description": "Image format."},
+                    "dpi": {"type": "integer", "description": "Render resolution DPI (default 150)."}
+                }
+            },
+            handler=self._handle_convert_to_images
         )
 
     # =========================================================================
@@ -1107,6 +1147,109 @@ class PDFToolRegistry:
             "after_size": after_size,
             "saved_bytes": saved_bytes,
             "saved_percent": pct
+        }
+
+    def _handle_add_page_numbers(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        position = str(params.get("position", "bottom_right")).lower()
+        fmt = str(params.get("format", "Page {n} of {total}"))
+        start_n = int(params.get("start_number", 1))
+        font_size = int(params.get("font_size", 10))
+        color_hex = str(params.get("color", "#475569"))
+        color_rgb = hex_to_rgb_float(color_hex)
+        margin = int(params.get("margin", 30))
+        target_pages = params.get("pages", "all")
+
+        doc = session.open_working_doc()
+        total_pages = len(doc)
+
+        if target_pages == "all":
+            indices = list(range(total_pages))
+        elif isinstance(target_pages, list):
+            indices = [p - 1 for p in target_pages if 1 <= p <= total_pages]
+        else:
+            indices = list(range(total_pages))
+
+        if not indices:
+            doc.close()
+            raise ValueError("No valid pages selected for page numbering.")
+
+        for idx in indices:
+            page = doc[idx]
+            n = start_n + idx
+            text = fmt.replace("{n}", str(n)).replace("{total}", str(total_pages)).replace("{p}", str(n))
+            rect = page.rect
+            w = rect.width
+            h = rect.height
+            text_len = pymupdf.get_text_length(text, fontname="helv", fontsize=font_size)
+
+            if position == "bottom_right":
+                p = pymupdf.Point(w - margin - text_len, h - margin)
+            elif position == "bottom_left":
+                p = pymupdf.Point(margin, h - margin)
+            elif position == "bottom_center":
+                p = pymupdf.Point((w - text_len) / 2, h - margin)
+            elif position == "top_right":
+                p = pymupdf.Point(w - margin - text_len, margin + font_size)
+            elif position == "top_left":
+                p = pymupdf.Point(margin, margin + font_size)
+            elif position == "top_center":
+                p = pymupdf.Point((w - text_len) / 2, margin + font_size)
+            else:
+                p = pymupdf.Point(w - margin - text_len, h - margin)
+
+            page.insert_text(p, text, fontname="helv", fontsize=font_size, color=color_rgb)
+
+        num_bytes = doc.tobytes()
+        doc.close()
+
+        session.update_working_pdf(num_bytes, "add_page_numbers", "Added Page Numbers", f"Numbered {len(indices)} page(s) ({position}).")
+        return {"ok": True, "message": f"Added page numbers to {len(indices)} page(s)."}
+
+    def _handle_convert_to_images(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        fmt = str(params.get("format", "png")).lower()
+        if fmt not in ("png", "jpeg", "jpg"):
+            fmt = "png"
+        ext = "jpg" if fmt in ("jpeg", "jpg") else "png"
+        dpi = int(params.get("dpi", 150))
+        target_pages = params.get("pages", "all")
+
+        doc = session.open_working_doc()
+        total_pages = len(doc)
+
+        if target_pages == "all":
+            indices = list(range(total_pages))
+        elif isinstance(target_pages, list):
+            indices = [p - 1 for p in target_pages if 1 <= p <= total_pages]
+        else:
+            indices = list(range(total_pages))
+
+        if not indices:
+            doc.close()
+            raise ValueError("No valid pages selected for image conversion.")
+
+        images_info = []
+        for idx in indices:
+            page_num = idx + 1
+            page = doc[idx]
+            pix = page.get_pixmap(dpi=dpi)
+            img_bytes = pix.tobytes(ext)
+            b64_data = base64.b64encode(img_bytes).decode("ascii")
+            data_url = f"data:image/{ext};base64,{b64_data}"
+            images_info.append({
+                "page": page_num,
+                "width": pix.width,
+                "height": pix.height,
+                "format": ext,
+                "data_url": data_url
+            })
+        doc.close()
+
+        return {
+            "ok": True,
+            "message": f"Successfully converted {len(images_info)} page(s) to {ext.upper()} images.",
+            "count": len(images_info),
+            "format": ext,
+            "images": images_info
         }
 
 

@@ -4,8 +4,8 @@
   "description": "CA Office Automation & Client Document Database Management System",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#2563eb",
+  "background_color": "#eef2ff",
+  "theme_color": "#eef2ff",
   "icons": [
     {
       "src": "/icon-192.png",

@@ -203,32 +203,71 @@ def find_available_port(start_port: int = 8767, max_port: int = 8799) -> int:
 class DesktopBridge:
     """Native Python APIs directly exposed to the JavaScript window (window.pywebview.api)."""
     def __init__(self):
-        self.window = None
+        self._window = None
         self._is_maximized = False
+        self._force_close = False
+        self._get_hwnd_fn = None
 
-    def set_window(self, window):
-        self.window = window
+    def set_window(self, window, get_hwnd_fn=None):
+        self._window = window
+        self._get_hwnd_fn = get_hwnd_fn
 
     def minimize_window(self):
-        if self.window:
-            self.window.minimize()
+        if self._window:
+            self._window.minimize()
             return {"ok": True}
         return {"ok": False}
 
     def maximize_window(self):
-        if self.window:
+        if self._window:
             if self._is_maximized:
-                self.window.restore()
+                self._window.restore()
                 self._is_maximized = False
             else:
-                self.window.maximize()
+                self._window.maximize()
                 self._is_maximized = True
             return {"ok": True, "maximized": self._is_maximized}
         return {"ok": False}
 
+    def is_maximized(self):
+        return {"ok": True, "maximized": self._is_maximized}
+
+    def start_drag(self):
+        try:
+            hwnd = self._get_hwnd_fn() if self._get_hwnd_fn else None
+            if hwnd:
+                WM_NCLBUTTONDOWN = 0xA1
+                HTCAPTION = 0x2
+                ctypes.windll.user32.ReleaseCapture()
+                ctypes.windll.user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
+                return {"ok": True}
+        except Exception as e:
+            print(f"[DesktopBridge] Drag error: {e}", flush=True)
+        return {"ok": False}
+
     def close_window(self):
-        if self.window:
-            self.window.destroy()
+        """Request close dialog from UI."""
+        if self._window:
+            def trigger():
+                try:
+                    self._window.evaluate_js("if (window.showExitConfirmModal) window.showExitConfirmModal();")
+                except Exception:
+                    pass
+            threading.Thread(target=trigger, daemon=True).start()
+            return {"ok": True}
+        return {"ok": False}
+
+    def confirm_close(self):
+        """User confirmed closing the app in the exit confirmation modal."""
+        self._force_close = True
+        if self._window:
+            def do_destroy():
+                time.sleep(0.05)
+                try:
+                    self._window.destroy()
+                except Exception:
+                    pass
+            threading.Thread(target=do_destroy, daemon=True).start()
             return {"ok": True}
         return {"ok": False}
 
@@ -237,6 +276,64 @@ class DesktopBridge:
             return {"ok": True, "path": server.open_in_file_manager(folder_path)}
         except Exception as exc:
             return {"error": str(exc)}
+
+    def save_file_to_location(self, source_filename: str, default_name: str = None):
+        """Opens native Windows Save File / Folder Dialog and saves the exported PDF."""
+        if not self._window:
+            return {"ok": False, "error": "Window not initialized"}
+        try:
+            import shutil
+            source_path = os.path.join(APP_DIR, "data", "ai_exports", source_filename)
+            if not os.path.exists(source_path):
+                source_path = os.path.join(BUNDLE_DIR, "data", "ai_exports", source_filename)
+            if not os.path.exists(source_path):
+                return {"ok": False, "error": f"Source file not found: {source_filename}"}
+
+            target_filename = default_name or source_filename
+            if not target_filename.lower().endswith(".pdf"):
+                target_filename += ".pdf"
+
+            file_types = ("PDF Files (*.pdf)", "All Files (*.*)")
+            res = self._window.create_file_dialog(
+                webview.FileDialog.SAVE,
+                save_filename=target_filename,
+                file_types=file_types
+            )
+            if not res or len(res) == 0:
+                return {"ok": False, "cancelled": True}
+
+            dest_path = res[0]
+            shutil.copy2(source_path, dest_path)
+            return {"ok": True, "path": dest_path, "filename": os.path.basename(dest_path)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def select_folder_and_save(self, source_filename: str, default_name: str = None):
+        """Opens native Windows Folder picker and saves the file into that directory."""
+        if not self._window:
+            return {"ok": False, "error": "Window not initialized"}
+        try:
+            import shutil
+            source_path = os.path.join(APP_DIR, "data", "ai_exports", source_filename)
+            if not os.path.exists(source_path):
+                source_path = os.path.join(BUNDLE_DIR, "data", "ai_exports", source_filename)
+            if not os.path.exists(source_path):
+                return {"ok": False, "error": f"Source file not found: {source_filename}"}
+
+            target_filename = default_name or source_filename
+            if not target_filename.lower().endswith(".pdf"):
+                target_filename += ".pdf"
+
+            res = self._window.create_file_dialog(webview.FileDialog.FOLDER)
+            if not res or len(res) == 0:
+                return {"ok": False, "cancelled": True}
+
+            folder_dir = res[0]
+            dest_path = os.path.join(folder_dir, target_filename)
+            shutil.copy2(source_path, dest_path)
+            return {"ok": True, "path": dest_path, "filename": target_filename}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def check_updates(self):
         try:
@@ -428,16 +525,17 @@ def main():
     window = webview.create_window(
         title="VS Database",
         url=target_url,
-        js_api=None,
+        js_api=bridge,
         width=1360,
         height=860,
         min_size=(1080, 700),
         background_color="#eef2ff",
-        frameless=False,
+        frameless=True,
+        easy_drag=False,
+        shadow=True,
         text_select=True,
         zoomable=True
     )
-    bridge.set_window(window)
 
     # Track window HWND for heartbeat & bring_to_front
     cached_hwnd = [None]
@@ -469,6 +567,8 @@ def main():
             pass
         return None
 
+    bridge.set_window(window, get_hwnd_fn=get_active_hwnd)
+
     # Start Heartbeat Worker
     stop_heartbeat = threading.Event()
     def heartbeat_worker():
@@ -491,11 +591,62 @@ def main():
         if h:
             attach_ui(DESKTOP_PORT, ui_instance_id, os.getpid(), hwnd=h, force=True)
             send_heartbeat(DESKTOP_PORT, ui_instance_id, os.getpid(), h)
+            try:
+                # Force remove any OS caption bar (black bar)
+                GWL_STYLE = -16
+                WS_CAPTION = 0x00C00000
+                style = ctypes.windll.user32.GetWindowLongW(h, GWL_STYLE)
+                if style & WS_CAPTION:
+                    style &= ~WS_CAPTION
+                    ctypes.windll.user32.SetWindowLongW(h, GWL_STYLE, style)
+                # Force DWM Light Mode & theme-matched caption color
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                DWMWA_CAPTION_COLOR = 35
+                val_false = ctypes.c_int(0)
+                color_bg = ctypes.c_int(0x00FFF2EE)  # #eef2ff
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(h, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(val_false), 4)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, ctypes.byref(color_bg), 4)
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_NOZORDER = 0x0004
+                SWP_FRAMECHANGED = 0x0020
+                ctypes.windll.user32.SetWindowPos(h, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+            except Exception as e:
+                print(f"[Main] Window style override error: {e}", flush=True)
 
     def on_loaded():
         t_loaded[0] = round((time.perf_counter() - launch_start_time) * 1000, 2)
         print(f"[Main Telemetry] Dashboard loaded & usable: {t_loaded[0]} ms", flush=True)
         record_startup_telemetry(launch_mode, t_first_win[0] or 0.0, t_loaded[0] or 0.0)
+
+    def on_closing():
+        if not bridge._force_close:
+            def trigger_modal():
+                try:
+                    window.evaluate_js("if (window.showExitConfirmModal) window.showExitConfirmModal();")
+                except Exception:
+                    pass
+            threading.Thread(target=trigger_modal, daemon=True).start()
+            return False  # Cancels the OS close!
+        return True
+
+    def on_maximized():
+        bridge._is_maximized = True
+        def notify_max():
+            try:
+                window.evaluate_js("if (window.onWindowMaximizedState) window.onWindowMaximizedState(true);")
+            except Exception:
+                pass
+        threading.Thread(target=notify_max, daemon=True).start()
+
+    def on_restored():
+        bridge._is_maximized = False
+        def notify_restore():
+            try:
+                window.evaluate_js("if (window.onWindowMaximizedState) window.onWindowMaximizedState(false);")
+            except Exception:
+                pass
+        threading.Thread(target=notify_restore, daemon=True).start()
 
     closed_handled = [False]
     def on_closed():
@@ -505,25 +656,32 @@ def main():
         print("[Main] Window close event triggered.", flush=True)
         stop_heartbeat.set()
         detach_ui(DESKTOP_PORT, ui_instance_id)
-        if is_backend_owner:
-            print("[Main] Shutting down owned backend server...", flush=True)
+
+        def cleanup_and_exit():
+            if is_backend_owner:
+                print("[Main] Shutting down owned backend server...", flush=True)
+                try:
+                    server.stop_server()
+                except Exception:
+                    pass
+            else:
+                print("[Main] Preserving external/pre-existing backend for LAN clients.", flush=True)
             try:
-                server.stop_server()
+                sys.stdout.flush()
+                sys.stderr.flush()
             except Exception:
                 pass
-        else:
-            print("[Main] Preserving external/pre-existing backend for LAN clients.", flush=True)
-        try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except Exception:
-            pass
-        time.sleep(0.1)
-        os._exit(0)
+            time.sleep(0.15)
+            os._exit(0)
+
+        threading.Thread(target=cleanup_and_exit, daemon=True).start()
 
     window.events.shown += on_shown
     window.events.loaded += on_loaded
+    window.events.closing += on_closing
     window.events.closed += on_closed
+    window.events.maximized += on_maximized
+    window.events.restored += on_restored
 
     # 7. Launch native Microsoft WebView2 container with isolated profile
     profile_dir = os.path.join(APP_DIR, "data", "webview_profile")

@@ -1,9 +1,10 @@
 <!doctype html>
-<html>
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+    <meta name="color-scheme" content="light">
     <title>VS Database</title>
     
     <!-- Mobile PWA & Home Screen App Meta -->
@@ -11,7 +12,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="VS Database">
-    <meta name="theme-color" content="#2563eb">
+    <meta name="theme-color" content="#eef2ff">
     <meta name="application-name" content="VS Database">
 
     <!-- High-Resolution Home Screen Icons -->
@@ -20,15 +21,59 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20260822">
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=20260822">
     <link rel="manifest" href="/manifest.json?v=20260822">
-    <link rel="stylesheet" href="app.css?v=20260821_storage_levels">
-    <link rel="stylesheet" href="vs-ai.css?v=20260923_vsai_typewriter">
+    
+    <!-- Fonts: Plus Jakarta Sans, Fraunces, and Source Serif 4 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap">
+
+    <!-- Design Tokens & Stylesheets -->
+    <link rel="stylesheet" href="tokens.css?v=20260924_unified">
+    <link rel="stylesheet" href="app.css?v=20260924_unified">
+    <link rel="stylesheet" href="vs-ai.css?v=20260924_unified">
+    <link rel="stylesheet" href="studio.css?v=20260924_unified">
 </head>
 
 <body>
 
+<!-- Inline SVG Symbol Sprite (Unified 1.6px Stroke Line-Icon Set) -->
+<svg width="0" height="0" style="position:absolute;display:none;" aria-hidden="true">
+  <defs>
+    <symbol id="dashboard" viewBox="0 0 24 24"><path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/></symbol>
+    <symbol id="clients" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.5a3.5 3.5 0 010 7M18 14.5c2 .6 3.5 2.4 3.5 5.5"/></symbol>
+    <symbol id="folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+    <symbol id="upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></symbol>
+    <symbol id="studio" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+    <symbol id="ai" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
+    <symbol id="drive" viewBox="0 0 24 24"><path d="M7 18a4 4 0 01-.6-7.95A6 6 0 0118 9.5 4.3 4.3 0 0117.5 18z"/></symbol>
+    <symbol id="backup" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
+    <symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+    <symbol id="setup" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="users" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></symbol>
+    <symbol id="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></symbol>
+    <symbol id="clip" viewBox="0 0 24 24"><path d="M20 11l-8.5 8.5a5 5 0 01-7-7L13 4a3.3 3.3 0 014.7 4.7L9.5 17a1.7 1.7 0 01-2.4-2.4L14 7.7"/></symbol>
+    <symbol id="send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4M12 17h0"/></symbol>
+    <symbol id="dl" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
+    <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></symbol>
+    <symbol id="moon" viewBox="0 0 24 24"><path d="M20 14A8 8 0 019.5 4 8 8 0 1020 14z"/></symbol>
+    <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h0"/></symbol>
+    <symbol id="logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+    <symbol id="close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+  </defs>
+</svg>
+
+<!-- Three Ambient Glassmorphic Orbs -->
+<div class="orbs" aria-hidden="true"><i></i><i></i><i></i></div>
+
 <!-- Universal Desktop Drag & Drop Overlay -->
 <div id="vs-global-drop-overlay" class="vs-global-drop-overlay">
-    <div class="vs-global-drop-card">
+    <div class="vs-global-drop-card glass">
         <div style="font-size: 48px; margin-bottom: 12px; filter: drop-shadow(0 4px 12px rgba(59,130,246,0.3));">📥</div>
         <h2 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em;">Drop Files to Import</h2>
         <p style="margin: 0; font-size: 13px; color: #64748b; font-weight: 500;">Release to import files directly into VS Database</p>
@@ -37,19 +82,20 @@
 
 <!-- 4K Startup Intro Glassmorphic Splash Screen -->
 <div id="vs-daily-startup-splash" class="startup-splash-overlay" style="display:none;">
-    <div class="startup-frosted-glass-card">
+    <div class="startup-frosted-glass-card glass">
         <div class="startup-glass-reflection"></div>
         <video id="vs-startup-video" src="Startup.mp4?v=20260827_smooth_fade_v2" playsinline muted autoplay preload="auto"></video>
     </div>
 </div>
 
-<div id="app-startup-splash" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg, rgba(238,242,255,0.98), rgba(248,250,252,0.98));z-index:999999;flex-direction:column;align-items:center;justify-content:center;font-family:Inter,system-ui,-apple-system,sans-serif;transition:opacity 0.35s ease, visibility 0.35s ease;">
-    <div style="background:rgba(255,255,255,0.85);backdrop-filter:blur(16px);border:1px solid rgba(226,232,240,0.9);border-radius:24px;padding:36px 44px;display:flex;flex-direction:column;align-items:center;box-shadow:0 20px 50px rgba(10,31,68,0.12);max-width:380px;width:90%;text-align:center;">
-        <img src="monogram.png" alt="VS Database" style="width:72px;height:72px;object-fit:contain;margin-bottom:14px;filter:drop-shadow(0 6px 16px rgba(37,99,235,0.2));">
-        <h2 style="margin:0 0 4px;font-size:20px;font-weight:800;color:#0A1F44;letter-spacing:-0.03em;">VS DATABASE</h2>
-        <p style="margin:0 0 20px;font-size:12px;color:#64748b;font-weight:500;">Office Filing & Client Vault</p>
+<!-- Application Startup Splash Fallback -->
+<div id="app-startup-splash" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg, rgba(238,242,255,0.98), rgba(248,250,252,0.98));z-index:999999;flex-direction:column;align-items:center;justify-content:center;font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;transition:opacity 0.35s ease, visibility 0.35s ease;">
+    <div class="glass" style="padding:36px 44px;display:flex;flex-direction:column;align-items:center;max-width:380px;width:90%;text-align:center;">
+        <img src="logo Monogram.png" alt="VS Database" style="width:72px;height:72px;object-fit:contain;margin-bottom:14px;filter:drop-shadow(0 6px 16px rgba(37,99,235,0.2));">
+        <h2 style="margin:0 0 4px;font-size:20px;font-weight:800;color:var(--tx);letter-spacing:-0.03em;">VS DATABASE</h2>
+        <p style="margin:0 0 20px;font-size:12px;color:var(--tx2);font-weight:500;">Office Filing & Client Vault</p>
         
-        <div style="width:100%;background:#f1f5f9;border-radius:12px;padding:12px 16px;margin-bottom:16px;text-align:left;font-size:12px;display:flex;flex-direction:column;gap:8px;">
+        <div style="width:100%;background:rgba(241,245,249,0.7);border-radius:12px;padding:12px 16px;margin-bottom:16px;text-align:left;font-size:12px;display:flex;flex-direction:column;gap:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <span style="color:#475569;font-weight:600;">Database Engine</span>
                 <span id="splash-step-db" style="color:#16a34a;font-weight:700;">✓ Ready</span>
@@ -71,68 +117,133 @@
     </div>
 </div>
 
-<header class="app-header">
-    <div class="header-drag-zone">
-        <div class="brand">
-            <img src="logo.png" alt="VS Database" height="120">
+<!-- Custom Frameless Title Bar (Theme-Merged Glass) -->
+<header id="app-titlebar" class="app-titlebar pywebview-drag-region">
+    <div class="titlebar-drag-area">
+        <div class="titlebar-brand">
+            <img src="logo Monogram.png" alt="VS" class="titlebar-icon">
+            <span class="titlebar-title">VS Database</span>
+            <span class="titlebar-badge">Enterprise Vault</span>
         </div>
     </div>
-
-    <div class="header-status-group">
-        <div class="server-status">
-            <span class="online-dot"></span>
-            <span id="health">Checking server...</span>
-        </div>
-        <div class="server-status" id="drive-status">Drive status checking...</div>
-        <div class="user-profile-badge" id="user-status" style="display:none">
-            <span class="user-avatar-icon">👤</span>
-            <span id="current-user-badge">User</span>
-            <button id="logout-btn" class="btn-logout" title="Sign out of VS Database">
-                <span>Logout</span>
-                <span style="font-size:11px;">🚪</span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Desktop Window Controls (Minimize, Maximize, Close) -->
-    <div class="window-controls" id="desktop-window-controls" style="display:none;">
-        <button class="win-btn win-min" id="btn-win-min" title="Minimize">🗕</button>
-        <button class="win-btn win-max" id="btn-win-max" title="Maximize / Restore">🗖</button>
-        <button class="win-btn win-close" id="btn-win-close" title="Close">✕</button>
+    <div class="titlebar-actions no-drag">
+        <button id="titlebar-min" class="titlebar-btn" title="Minimize" aria-label="Minimize">
+            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none">
+                <line x1="4" y1="12" x2="20" y2="12"></line>
+            </svg>
+        </button>
+        <button id="titlebar-max" class="titlebar-btn" title="Maximize" aria-label="Maximize">
+            <svg id="titlebar-icon-max" viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                <rect x="3.5" y="3.5" width="17" height="17" rx="2.5"></rect>
+            </svg>
+            <svg id="titlebar-icon-restore" viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none" style="display:none;">
+                <rect x="7" y="3" width="14" height="14" rx="2"></rect>
+                <path d="M3 7v12a2 2 0 0 0 2 2h12"></path>
+            </svg>
+        </button>
+        <button id="titlebar-close" class="titlebar-btn titlebar-btn-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none">
+                <line x1="5" y1="5" x2="19" y2="19"></line>
+                <line x1="19" y1="5" x2="5" y2="19"></line>
+            </svg>
+        </button>
     </div>
 </header>
 
-<main>
-    <nav id="main-nav">
-        <button class="active" data-page="dashboard"><span class="nav-icon">📊</span><span class="nav-text">Dashboard</span></button>
-        <button data-page="clients"><span class="nav-icon">👥</span><span class="nav-text">Clients</span></button>
-        <button data-page="folders"><span class="nav-icon">📁</span><span class="nav-text">Folder Structure</span></button>
-        <button data-page="save"><span class="nav-icon">💾</span><span class="nav-text">Save Files</span></button>
-        <button data-page="pdf-studio"><span class="nav-icon">📄</span><span class="nav-text">PDF Studio</span></button>
-        <button data-page="vs-ai" id="nav-vs-ai" class="btn-vs-ai" title="VS AI Assistant"><span class="nav-icon"><img src="vs_ai_nav_icon.png" class="nav-img-icon vs-ai-glow" alt="VS AI" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;"></span><span class="nav-text">VS AI</span></button>
-        <button data-page="drive"><span class="nav-icon"><img src="google-drive.ico" alt="Drive" class="nav-img-icon"></span><span class="nav-text">Drive Sharing</span></button>
-        <button data-page="backup"><span class="nav-icon">🛡️</span><span class="nav-text">Backup & Restore</span></button>
-        <button data-page="activity"><span class="nav-icon">⚡</span><span class="nav-text">Activity</span></button>
-        <button data-page="setup"><span class="nav-icon">⚙️</span><span class="nav-text">Setup</span></button>
-        <button data-page="users" id="nav-users" style="display:none"><span class="nav-icon">👤</span><span class="nav-text">Users & Devices</span></button>
-    </nav>
-
-    <section id="content"></section>
-    
-    <footer class="app-site-footer">
-        <div class="site-credit-badge">
-            <span style="font-size:14px;line-height:1;">✨</span>
-            <span>© Designed & Created By Rudraksh Sikhwal</span>
+<!-- Main Application Shell -->
+<div class="app">
+    <!-- Left Glass Sidebar -->
+    <aside class="glass side">
+        <div class="brand">
+            <img src="logo.png" alt="VS Database" class="vs-logo-img">
         </div>
-    </footer>
-</main>
+        
+        <nav id="main-nav" aria-label="Main">
+            <button class="active" data-page="dashboard"><svg class="i" aria-hidden="true"><use href="#dashboard"/></svg><span>Dashboard</span></button>
+            <button data-page="clients"><svg class="i" aria-hidden="true"><use href="#clients"/></svg><span>Clients</span></button>
+            <button data-page="folders"><svg class="i" aria-hidden="true"><use href="#folder"/></svg><span>Folder Structure</span></button>
+            <button data-page="save"><svg class="i" aria-hidden="true"><use href="#upload"/></svg><span>Save Files</span></button>
+            <button data-page="pdf-studio" id="nav-pdf-studio" class="btn-studio" title="Studio"><svg class="i" aria-hidden="true"><use href="#studio"/></svg><span>Studio</span></button>
+            <button data-page="vs-ai" id="nav-vs-ai" class="btn-vs-ai" title="VS AI"><svg class="i" aria-hidden="true"><use href="#ai"/></svg><span>VS AI</span></button>
+            <button data-page="drive"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Drive Sharing</span></button>
+            <button data-page="backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg><span>Backup & Restore</span></button>
+            <button data-page="activity"><svg class="i" aria-hidden="true"><use href="#activity"/></svg><span>Activity</span></button>
+            <button data-page="setup"><svg class="i" aria-hidden="true"><use href="#setup"/></svg><span>Setup</span></button>
+            <button data-page="users" id="nav-users" style="display:none"><svg class="i" aria-hidden="true"><use href="#users"/></svg><span>Users & Devices</span></button>
+        </nav>
+
+        <footer class="side-foot">v1.0.0 · Designed by Rudraksh Sikhwal</footer>
+    </aside>
+
+    <!-- Main Workspace Container -->
+    <div class="main">
+        <header class="glass top">
+            <div>
+                <h1 id="page-title">Dashboard</h1>
+                <p id="page-sub">Overview of your practice</p>
+            </div>
+            <span class="sp"></span>
+            
+            <!-- Unified Status Pill with Tooltip and Dynamic Dot -->
+            <span class="pill tip" id="unified-status-pill" data-t="Server online · Drive checking..." tabindex="0">
+                <span class="dot" id="unified-status-dot"></span>
+                <span id="unified-status-text">All systems normal</span>
+                <!-- Preserved hidden probe hooks for app.js background checks -->
+                <span id="health" style="display:none">Checking server...</span>
+                <span id="drive-status" style="display:none">Drive status checking...</span>
+            </span>
+
+            <!-- User Profile Badge -->
+            <div class="pill user-profile-badge" id="user-status" style="display:none">
+                <svg class="i" aria-hidden="true"><use href="#users"/></svg>
+                <span id="current-user-badge">User</span>
+                <button id="logout-btn" class="btn ib tip" data-t="Sign out" aria-label="Sign out of VS Database" style="width:28px;height:28px;min-height:0;padding:0;border:0;background:transparent;margin-left:4px;cursor:pointer;">
+                    <svg class="i" aria-hidden="true"><use href="#logout"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Dynamic Content View -->
+        <main class="view" id="content"></main>
+    </div>
+</div>
+
+<!-- Exit Confirmation Modal Dialog -->
+<div id="vs-exit-modal" class="vs-exit-overlay" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="vs-exit-modal-title">
+    <div class="vs-exit-card glass">
+        <div class="vs-exit-icon-wrap">
+            <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+        </div>
+        <h3 id="vs-exit-modal-title" class="vs-exit-title">Are you sure you want to close VS Database?</h3>
+        <p class="vs-exit-desc">All open workspace operations and database records have been securely saved.</p>
+        <div class="vs-exit-actions">
+            <button id="vs-exit-btn-confirm" class="vs-exit-btn vs-exit-btn-yes">Yes</button>
+            <button id="vs-exit-btn-cancel" class="vs-exit-btn vs-exit-btn-no">No</button>
+        </div>
+    </div>
+</div>
+
+<!-- Native Confirmation Dialog -->
+<dialog id="dlg">
+    <h2 id="dt" style="font-size:18px;margin-bottom:8px;"></h2>
+    <p id="dp" class="muted" style="margin:8px 0 18px;line-height:1.5;"></p>
+    <form method="dialog" class="row" style="justify-content:flex-end;">
+        <button class="btn" value="x">Cancel</button>
+        <button class="btn p" id="dok" value="ok"></button>
+    </form>
+</dialog>
 
 <div id="auth-modal-root"></div>
 
+<!-- Application Scripts -->
 <script src="save-staging.js?v=20260917"></script>
 <script src="pdf-studio.js?v=20260917"></script>
-<script src="vs-ai.js?v=20260923_resilient_retry"></script>
-<script src="app.js?v=20260923_oauthbridge"></script>
+<script src="vs-ai.js?v=20260924_unified"></script>
+<script src="app.js?v=20260924_unified"></script>
 <script src="enhancements.js?v=20260821_isolated_portals"></script>
 <script src="client-portal.js?v=20260821_isolated_portals"></script>
 

@@ -1,0 +1,109 @@
+/* =========================================================================
+   VS DATABASE — UNIFIED GLASS DESIGN TOKENS
+   Shared design system: Light theme tokens, typography, radii, motion spec.
+   ========================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&display=swap');
+
+:root {
+  /* Color Palette (Exact from Reference HTML) */
+  --tx: #0f172a;
+  --tx2: #475569;
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass2: rgba(255, 255, 255, 0.8);
+  --bd: rgba(255, 255, 255, 0.75);
+  --line: rgba(15, 23, 42, 0.1);
+  --pri: linear-gradient(135deg, #2563eb, #7c3aed);
+  --pc: #4338ca;
+  --ok: #047857;
+  --okb: rgba(16, 185, 129, 0.15);
+  --wn: #92400e;
+  --wnb: rgba(245, 158, 11, 0.2);
+  --er: #b91c1c;
+  --erb: rgba(239, 68, 68, 0.13);
+  --sh: 0 10px 40px rgba(49, 46, 129, 0.14);
+  --bgA: #c7d2fe;
+  --bgB: #e9d5ff;
+  --bgC: #bae6fd;
+  --bgD: #eef2ff;
+
+  /* Backward Compatibility Aliases */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --text: var(--tx);
+  --muted: var(--tx2);
+  --card-bg: var(--glass2);
+  --border: var(--line);
+  --success: var(--ok);
+  --warning: var(--wn);
+  --danger: var(--er);
+
+  /* Radii */
+  --r-sm: 8px;
+  --r-md: 13px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+  --r-full: 9999px;
+
+  /* Motion Variables */
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --t-fast: 150ms;
+  --t-base: 250ms;
+  --t-slow: 500ms;
+}
+
+/* Glass Surface Fallbacks */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass, .card, .top, .side {
+    background: var(--glass2) !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .card, .top, .side {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: var(--glass2) !important;
+  }
+}
+
+/* Motion Rules & Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Shared Icon Sprite Stylings */
+svg.i {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Typography Baseline */
+body, button, input, select, textarea {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  color: var(--tx);
+}
+
+h1, h2, .fraunces-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}

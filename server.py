@@ -8805,6 +8805,32 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         session = pdf_engine.create_session(first_name, first_bytes, source_files=source_files)
 
+                elif payload.get("files") and isinstance(payload.get("files"), list) and len(payload.get("files")) > 0:
+                    flist = payload.get("files")
+                    source_files = []
+                    combined_docs = []
+                    first_bytes = None
+                    first_name = None
+                    for item in flist:
+                        fname = item.get("name") or "document.pdf"
+                        b64 = item.get("data") or item.get("file_base64") or item.get("bytes") or ""
+                        if b64.startswith("data:"):
+                            b64 = b64.split(",", 1)[1]
+                        raw = base64.b64decode(b64)
+                        source_files.append({"name": fname, "size": len(raw)})
+                        if first_bytes is None:
+                            first_bytes = raw
+                            first_name = fname
+                        else:
+                            combined_docs.append((raw, fname))
+                    if len(source_files) > 1:
+                        first_clean = os.path.splitext(first_name)[0]
+                        merged_name = payload.get("original_name") or f"{first_clean}_Merged_{len(source_files)}_Docs.pdf"
+                        session = pdf_engine.create_session(merged_name, first_bytes, source_files=source_files)
+                        for extra_bytes, extra_name in combined_docs:
+                            pdf_engine.execute_tool(session.session_id, "merge_pdf", {"additional_files": [extra_bytes]})
+                    else:
+                        session = pdf_engine.create_session(first_name, first_bytes, source_files=source_files)
                 elif payload.get("file_base64"):
                     orig_name = payload.get("original_name") or "document.pdf"
                     b64_data = payload.get("file_base64")
@@ -9142,6 +9168,32 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 })
 
+            if path == "/api/ai/open-exports":
+                export_dir = Path(APP_ROOT) / "data" / "ai_exports"
+                export_dir.mkdir(parents=True, exist_ok=True)
+                folder_str = str(export_dir.resolve())
+                if sys.platform == "win32":
+                    try:
+                        os.startfile(folder_str)
+                    except Exception:
+                        subprocess.Popen(f'explorer.exe "{folder_str}"', shell=True)
+                return self.send_json({"ok": True, "path": folder_str})
+
+            if path.startswith("/api/ai/exports/"):
+                fname = os.path.basename(path.replace("/api/ai/exports/", ""))
+                export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
+                if export_file.is_file():
+                    with open(export_file, "rb") as f:
+                        pdf_bytes = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Disposition", f'inline; filename="{fname}"')
+                    self.send_header("Content-Length", str(len(pdf_bytes)))
+                    self.end_headers()
+                    self.wfile.write(pdf_bytes)
+                    return
+                return self.send_json({"error": "Exported PDF not found"}, 404)
+
             return self.send_json({"error": "Unknown AI GET endpoint"}, 404)
         except Exception as e:
             logging.exception("AI GET error")
@@ -9175,6 +9227,32 @@ class Handler(BaseHTTPRequestHandler):
                 res = vs_ai_engine.export_ai_opinion_pdf(title, content, citations, client_name=cl_name)
                 return self.send_json(res)
 
+            if path == "/api/ai/save-to-client":
+                filename = payload.get("filename", "").strip()
+                client_file_no = payload.get("client_file_no", "").strip()
+                target_folder = payload.get("folder", "General").strip() or "General"
+                doc_title = payload.get("document_name") or filename
+                if not doc_title.lower().endswith(".pdf"):
+                    doc_title += ".pdf"
+                fname = os.path.basename(filename)
+                export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
+                if not export_file.is_file():
+                    return self.send_json({"ok": False, "error": f"Exported file '{fname}' not found"}, 404)
+                ctx = self.get_auth_context()
+                actor = ctx["user_id"] if ctx else "Host"
+                doc_payload = {
+                    "client_file_no": client_file_no,
+                    "document_name": doc_title,
+                    "source_local_path": str(export_file),
+                    "service": target_folder,
+                    "target_folder": target_folder,
+                    "period": "General",
+                    "save_local": True,
+                    "save_drive": False
+                }
+                res = save_document(doc_payload, actor=actor)
+                return self.send_json({"ok": True, "saved": res})
+
             if path == "/api/ai/conversations":
                 cid = payload.get("id") or f"conv_{uuid.uuid4().hex[:10]}"
                 title = payload.get("title", "New Chat").strip() or "New Chat"
@@ -9206,6 +9284,116 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("DELETE FROM ai_messages WHERE conversation_id = ?", (cid,))
                     con.commit()
                 return self.send_json({"ok": True, "message": "Conversation cleared"})
+
+            if path == "/api/ai/chat/stream":
+                cid = (payload.get("conversation_id") or "").strip()
+                prompt = (payload.get("prompt") or "").strip()
+                scope = payload.get("scope", "All Knowledge")
+                source_only = bool(payload.get("source_only", False))
+                attachments = payload.get("attachments", [])
+                client_ctx = payload.get("client_context")
+
+                if not prompt:
+                    return self.send_json({"error": "Prompt cannot be empty"}, 400)
+
+                t_now = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                with db() as con:
+                    if not cid:
+                        cid = f"conv_{uuid.uuid4().hex[:10]}"
+                        title = prompt[:30] + ("..." if len(prompt) > 30 else "")
+                        con.execute("""
+                            INSERT INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
+                            VALUES (?, ?, 'User', ?, 0, ?, ?)
+                        """, (cid, title, scope, t_now, t_now))
+                    else:
+                        con.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (t_now, cid))
+
+                    user_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only})
+                    con.execute("""
+                        INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
+                        VALUES (?, ?, 'user', ?, ?, ?)
+                    """, (user_msg_id, cid, prompt, user_meta, t_now))
+
+                    hist_rows = con.execute("SELECT role, content FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 10", (cid,)).fetchall()
+                    history = [dict(r) for r in hist_rows]
+                    con.commit()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_cors_headers()
+                self.end_headers()
+
+                def send_sse(ev_dict: dict):
+                    chunk = f"data: {json.dumps(ev_dict, ensure_ascii=False)}\n\n".encode("utf-8")
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+
+                send_sse({"type": "start", "conversation_id": cid})
+
+                asst_text = ""
+                asst_citations = []
+                asst_model = "VS AI Fast Core"
+
+                try:
+                    for ev in ai_engine.route_and_stream(
+                        prompt=prompt,
+                        conversation_id=cid,
+                        scope=scope,
+                        source_only=source_only,
+                        attachments=attachments,
+                        client_context=client_ctx,
+                        history=history
+                    ):
+                        ev_type = ev.get("type")
+                        if ev_type == "meta":
+                            asst_citations = ev.get("citations", [])
+                            asst_model = ev.get("model", asst_model)
+                            send_sse(ev)
+                        elif ev_type == "token":
+                            asst_text += ev.get("delta", "")
+                            send_sse(ev)
+                        elif ev_type == "done":
+                            asst_model = ev.get("model", asst_model)
+                            asst_citations = ev.get("citations", asst_citations)
+                        elif ev_type == "error":
+                            send_sse(ev)
+                            return
+
+                    asst_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+                    asst_meta = json.dumps({
+                        "citations": asst_citations,
+                        "model": asst_model,
+                        "provider": "VS AI"
+                    })
+                    with db() as con:
+                        con.execute("""
+                            INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
+                            VALUES (?, ?, 'assistant', ?, ?, ?)
+                        """, (asst_msg_id, cid, asst_text, asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
+                        con.commit()
+
+                    send_sse({
+                        "type": "done",
+                        "conversation_id": cid,
+                        "message_id": asst_msg_id,
+                        "full_text": asst_text,
+                        "citations": asst_citations,
+                        "model": asst_model
+                    })
+                except (BrokenPipeError, ConnectionResetError):
+                    logging.info("SSE client disconnected")
+                except Exception as stream_err:
+                    logging.exception(f"Error during SSE streaming: {stream_err}")
+                    try:
+                        send_sse({"type": "error", "error": str(stream_err)})
+                    except Exception:
+                        pass
+                return
 
             if path == "/api/ai/chat":
                 cid = (payload.get("conversation_id") or "").strip()

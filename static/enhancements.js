@@ -30,9 +30,9 @@
         </div>
 
         <div class="actions" style="margin-top:0;margin-bottom:18px;">
-          <button class="primary" id="save-rules-btn">💾 Save Rules & Order</button>
-          <button class="secondary" id="create-all-btn">📁 Create Missing Folders</button>
-          <button class="btn-reconcile" id="global-reconcile-btn" style="border-radius:13px;padding:0 17px;min-height:42px;font:700 12px inherit;cursor:pointer;">🔄 Scan & Reconcile All Clients</button>
+          <button class="primary" id="save-rules-btn"><svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#check"/></svg>Save Rules & Order</button>
+          <button class="secondary" id="create-all-btn"><svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#folder"/></svg>Create Missing Folders</button>
+          <button class="btn-reconcile" id="global-reconcile-btn" style="border-radius:13px;padding:0 17px;min-height:42px;font:700 12px inherit;cursor:pointer;"><svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#refresh"/></svg>Scan & Reconcile All Clients</button>
         </div>
         <div id="rules-result" style="margin-bottom:16px;"></div>
 
@@ -40,7 +40,7 @@
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:14px 16px;margin-bottom:20px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
             <div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:#166534;">
-              <span>📁</span> Client File Explorer & PDF Security Tools
+              <svg class="i" style="width:16px;height:16px;stroke:#166534;"><use href="#folder"/></svg> Client File Explorer & PDF Security Tools
             </div>
             <span style="font-size:11px;color:#15803d;">Browse folders, upload files, and Lock/Unlock client PDFs</span>
           </div>
@@ -49,8 +49,8 @@
               <option value="">Select client to open folders...</option>
               ${clients.map(c => `<option value="${escapeHtml(c.file_no)}">${escapeHtml(c.name)} (${escapeHtml(c.file_no)})</option>`).join('')}
             </select>
-            <button type="button" class="primary" id="btn-quick-open-tree" style="min-height:36px;font-size:12px;padding:0 14px;">📁 Open Folder Explorer</button>
-            <button type="button" class="secondary" id="btn-quick-client-pdf-pwd" style="min-height:36px;font-size:12px;padding:0 14px;background:#fef3c7;border-color:#fde68a;color:#92400e;">🔑 PDF Passwords</button>
+            <button type="button" class="primary" id="btn-quick-open-tree" style="min-height:36px;font-size:12px;padding:0 14px;"><svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#folder"/></svg>Open Folder Explorer</button>
+            <button type="button" class="secondary" id="btn-quick-client-pdf-pwd" style="min-height:36px;font-size:12px;padding:0 14px;background:#fef3c7;border-color:#fde68a;color:#92400e;"><svg class="i" style="width:14px;height:14px;margin-right:6px;stroke:#92400e;"><use href="#setup"/></svg>PDF Passwords</button>
           </div>
         </div>
 
@@ -59,7 +59,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
             <div style="display:flex;align-items:center;gap:10px;">
               <label style="font-size:13px;font-weight:700;margin:0;">Folder Structure For:</label>
-              <button type="button" class="secondary" id="btn-manage-ft-folders" style="min-height:30px;font-size:11.5px;padding:3px 12px;display:inline-flex;align-items:center;gap:5px;border-radius:10px;">🏷️ Manage Firm Types</button>
+              <button type="button" class="secondary" id="btn-manage-ft-folders" style="min-height:30px;font-size:11.5px;padding:3px 12px;display:inline-flex;align-items:center;gap:5px;border-radius:10px;"><svg class="i" style="width:13px;height:13px;"><use href="#setup"/></svg>Manage Firm Types</button>
             </div>
             <div id="tpl-status-badge"></div>
           </div>
@@ -78,17 +78,17 @@
               <ul class="tpl-tree" id="tpl-tree-list"></ul>
             </div>
             <div class="tpl-toolbar" style="margin-top:10px;flex-wrap:wrap;gap:6px;">
-              <button class="tpl-btn primary" id="tpl-add-root">+ Add Root Folder</button>
-              <button class="tpl-btn" id="tpl-add-sub" disabled>+ Add Subfolder</button>
-              <button class="tpl-btn" id="tpl-rename" disabled>✏ Rename</button>
-              <button class="tpl-btn danger" id="tpl-delete" disabled>🗑 Delete</button>
-              <button class="tpl-btn" id="tpl-move-up" disabled>⬆ Move Up</button>
-              <button class="tpl-btn" id="tpl-move-down" disabled>⬇ Move Down</button>
+              <button class="tpl-btn primary" id="tpl-add-root"><svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#plus"/></svg>Add Root Folder</button>
+              <button class="tpl-btn" id="tpl-add-sub" disabled><svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#plus"/></svg>Add Subfolder</button>
+              <button class="tpl-btn" id="tpl-rename" disabled><svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#edit"/></svg>Rename</button>
+              <button class="tpl-btn danger" id="tpl-delete" disabled><svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#trash"/></svg>Delete</button>
+              <button class="tpl-btn" id="tpl-move-up" disabled>Move Up</button>
+              <button class="tpl-btn" id="tpl-move-down" disabled>Move Down</button>
               <div style="flex:1"></div>
-              <button class="tpl-btn" id="tpl-reset-btn" style="display:none;color:#b45309;border-color:#fde047;background:#fefce8;">↺ Reset to Base</button>
-              <button class="tpl-btn primary" id="tpl-save" style="background:var(--blue);color:#fff;padding:6px 14px;">💾 Save for this Type</button>
-              <button class="tpl-btn" id="tpl-apply-all" style="background:#4338ca;color:#fff;padding:6px 14px;">🌐 Apply to ALL Types</button>
-              <button class="tpl-btn" id="tpl-apply-selected" style="background:#4f46e5;color:#fff;padding:6px 14px;">📋 Apply to Selected Types...</button>
+              <button class="tpl-btn" id="tpl-reset-btn" style="display:none;color:#b45309;border-color:#fde047;background:#fefce8;"><svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#refresh"/></svg>Reset to Base</button>
+              <button class="tpl-btn primary" id="tpl-save" style="background:var(--blue);color:#fff;padding:6px 14px;"><svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#check"/></svg>Save for this Type</button>
+              <button class="tpl-btn" id="tpl-apply-all" style="background:#4338ca;color:#fff;padding:6px 14px;">Apply to ALL Types</button>
+              <button class="tpl-btn" id="tpl-apply-selected" style="background:#4f46e5;color:#fff;padding:6px 14px;">Apply to Selected Types...</button>
             </div>
             <div id="tpl-result" style="margin-top:8px;"></div>
           </div>
@@ -109,10 +109,10 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="glass card">
         <h2>Configured Destinations</h2>
-        <p class="path">📁 Local Storage: <strong>${settings.local_root || 'No local storage configured'}</strong></p>
-        <p class="path">☁ Google Drive: <strong>${settings.drive_root || 'No Google Drive storage configured'}</strong></p>
+        <p class="path"><svg class="i" style="width:14px;height:14px;margin-right:6px;stroke:var(--pri);"><use href="#folder"/></svg>Local Storage: <strong>${settings.local_root || 'No local storage configured'}</strong></p>
+        <p class="path"><svg class="i" style="width:14px;height:14px;margin-right:6px;stroke:var(--pri);"><use href="#drive"/></svg>Google Drive: <strong>${settings.drive_root || 'No Google Drive storage configured'}</strong></p>
       </div>
     `;
 
@@ -457,7 +457,7 @@
         resEl.innerHTML = message(err.message, true);
       } finally {
         saveBtn.disabled = false;
-        saveBtn.textContent = '💾 Save for this Type';
+        saveBtn.innerHTML = '<svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#check"/></svg>Save for this Type';
       }
     };
 
@@ -617,7 +617,7 @@
         resEl.innerHTML = message(err.message, true);
       } finally {
         btn.disabled = false;
-        btn.textContent = '💾 Save Rules & Order';
+        btn.innerHTML = '<svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#check"/></svg>Save Rules & Order';
       }
     };
 
@@ -644,7 +644,7 @@
         resEl.innerHTML = message(err.message, true);
       } finally {
         btn.disabled = false;
-        btn.textContent = '📁 Create Missing Folders';
+        btn.innerHTML = '<svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#folder"/></svg>Create Missing Folders';
       }
     };
 
@@ -673,7 +673,7 @@
         resEl.innerHTML = message(err.message, true);
       } finally {
         btn.disabled = false;
-        btn.textContent = '🔄 Scan & Reconcile All Clients';
+        btn.innerHTML = '<svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#refresh"/></svg>Scan & Reconcile All Clients';
       }
     };
 
@@ -769,7 +769,7 @@
         
         <div class="actions" style="margin-top:18px;justify-content:flex-end;gap:8px;">
           <button class="secondary" id="cancel-edit-client">Cancel</button>
-          <button class="primary" id="save-edit-client">💾 Save & Rename Folders</button>
+          <button class="primary" id="save-edit-client"><svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#check"/></svg>Save & Rename Folders</button>
         </div>
       </div>
     `;
@@ -817,7 +817,7 @@
       } catch (err) {
         msgEl.innerHTML = message(err.message, true);
         btn.disabled = false;
-        btn.textContent = '💾 Save & Rename Folders';
+        btn.innerHTML = '<svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#check"/></svg>Save & Rename Folders';
       }
     };
   }
@@ -2794,16 +2794,16 @@
         td.className = 'td-actions';
         td.style.textAlign = 'right';
         td.innerHTML = `
-          <div style="display:inline-flex;gap:5px;align-items:center;">
-            <button class="tpl-btn btn-client-portal" data-fno="${escapeHtml(client.file_no)}" style="font-size:11px;padding:3px 8px;background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">🌐 Access</button>
-            <button class="tpl-btn btn-client-edit" data-fno="${escapeHtml(client.file_no)}" style="font-size:11px;padding:3px 8px;">✏ Edit</button>
-            <button class="tpl-btn btn-client-tree" data-fno="${escapeHtml(client.file_no)}" style="font-size:11px;padding:3px 8px;">📁 Folders</button>
-            <button class="tpl-btn btn-client-pdf-pwd" data-fno="${escapeHtml(client.file_no)}" style="font-size:11px;padding:3px 8px;background:#fef3c7;border-color:#fde68a;color:#92400e;">🔑 PDF</button>
-            <button class="tpl-btn btn-client-delete" data-fno="${escapeHtml(client.file_no)}" style="font-size:11px;padding:3px 8px;background:#fef2f2;border-color:#fecaca;color:#991b1b;">🗑 Delete</button>
+          <div class="acts">
+            <button class="btn ib tip btn-client-edit" data-t="Edit" aria-label="Edit client" data-fno="${escapeHtml(client.file_no)}"><svg class="i"><use href="#edit"/></svg></button>
+            <button class="btn ib tip btn-client-tree" data-t="Open folders" aria-label="Open folders" data-fno="${escapeHtml(client.file_no)}"><svg class="i"><use href="#folder"/></svg></button>
+            <button class="btn ib tip btn-client-portal" data-t="Client portal" aria-label="Client portal" data-fno="${escapeHtml(client.file_no)}"><svg class="i"><use href="#drive"/></svg></button>
+            <button class="btn ib d tip btn-client-delete" data-t="Delete" aria-label="Delete ${escapeHtml(client.name)}" data-del="${escapeHtml(client.name)}" data-fno="${escapeHtml(client.file_no)}"><svg class="i"><use href="#trash"/></svg></button>
           </div>
         `;
         tr.appendChild(td);
       }
+
     });
     
     table.querySelectorAll('.btn-client-portal').forEach(btn => {

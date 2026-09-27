@@ -83,13 +83,15 @@ def detect_system_hardware() -> Dict[str, Any]:
 class GeminiProvider:
     """Direct, lightweight HTTPS connector for the VS AI Statutory Intelligence Engine."""
 
-    DEFAULT_MODEL = "gemini-flash-latest"
+    DEFAULT_MODEL = "gemini-3.5-flash"
     FALLBACK_MODELS = [
-        "gemini-flash-latest",
+        "gemini-3.5-flash",
+        "gemma-4-26b-a4b-it",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
         "gemini-3.7-flash",
         "gemini-3.8-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-3.6-flash"
+        "gemini-flash-latest"
     ]
     API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -213,7 +215,7 @@ class GeminiProvider:
         }
         return res
 
-    def generate_content(
+    def _build_payload(
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
@@ -221,24 +223,7 @@ class GeminiProvider:
         attachments: Optional[List[Dict[str, Any]]] = None,
         temperature: float = 0.2
     ) -> Dict[str, Any]:
-        """Executes a completion request against the VS AI Engine with automatic backoff retry."""
-        api_key = self.get_api_key()
-        oauth_token = self.get_oauth_token()
-
-        if not api_key and not oauth_token:
-            return {
-                "ok": False,
-                "error": "VS AI key is not configured. Please add your key in VS AI Settings (click the settings gear or status badge)."
-            }
-
-        headers = {"Content-Type": "application/json"}
-        model = self.get_active_model()
-        if api_key:
-            url = f"{self.API_BASE}/{model}:generateContent?key={api_key}"
-        else:
-            url = f"{self.API_BASE}/{model}:generateContent"
-            headers["Authorization"] = f"Bearer {oauth_token}"
-
+        """Constructs standardized Gemini API JSON payload."""
         contents = []
 
         # Previous conversation turns if provided
@@ -279,7 +264,6 @@ class GeminiProvider:
                 elif att.get("text"):
                     current_parts.append({"text": f"--- ATTACHED FILE ({name}):\n{att['text']}\n---"})
                 elif raw_b64 and not mime.startswith("image/"):
-                    # Fallback text decoding for text/csv files if raw bytes were passed
                     try:
                         decoded_text = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
                         if len(decoded_text.strip()) > 0:
@@ -290,18 +274,43 @@ class GeminiProvider:
         current_parts.append({"text": prompt})
         contents.append({"role": "user", "parts": current_parts})
 
-        payload = {
+        payload: Dict[str, Any] = {
             "contents": contents,
             "generationConfig": {
                 "temperature": temperature,
                 "maxOutputTokens": 4096
             }
         }
-
         if system_instruction:
             payload["system_instruction"] = {
                 "parts": [{"text": system_instruction}]
             }
+        return payload
+
+    def generate_content(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        temperature: float = 0.2
+    ) -> Dict[str, Any]:
+        """Executes a completion request against the VS AI Engine with automatic backoff retry."""
+        api_key = self.get_api_key()
+        oauth_token = self.get_oauth_token()
+
+        if not api_key and not oauth_token:
+            return {
+                "ok": False,
+                "error": "VS AI key is not configured. Please add your key in VS AI Settings (click the settings gear or status badge)."
+            }
+
+        headers = {"Content-Type": "application/json"}
+        if oauth_token and not api_key:
+            headers["Authorization"] = f"Bearer {oauth_token}"
+
+        payload = self._build_payload(prompt, system_instruction, history, attachments, temperature)
+        payload_bytes = json.dumps(payload).encode("utf-8")
 
         active_model = self.get_active_model()
         candidates = [active_model]
@@ -319,8 +328,8 @@ class GeminiProvider:
 
             for attempt in range(2):
                 try:
-                    req = urllib.request.Request(model_url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                    with urllib.request.urlopen(req, timeout=35) as resp:
+                    req = urllib.request.Request(model_url, data=payload_bytes, headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=15) as resp:
                         if resp.status == 200:
                             data = json.loads(resp.read().decode("utf-8"))
                             text = ""
@@ -342,7 +351,7 @@ class GeminiProvider:
                     if h_err.code in (503, 429, 404) or "demand" in msg.lower() or "exhausted" in msg.lower() or "rate" in msg.lower():
                         logger.info(f"Model {candidate} busy/throttled ({h_err.code}: {msg}). Trying next candidate...")
                         if attempt == 0:
-                            time.sleep(0.5)
+                            time.sleep(0.3)
                             continue
                         break
 
@@ -351,14 +360,116 @@ class GeminiProvider:
                     last_error = str(exc)
                     if "timed out" in str(exc).lower():
                         if attempt == 0:
-                            time.sleep(0.6)
+                            time.sleep(0.4)
                             continue
                         break
                     return {"ok": False, "error": f"Failed to connect to VS AI service: {str(exc)}"}
 
         return {
             "ok": False,
-            "error": "VS AI servers are currently experiencing peak demand across model pools. Please click 'Retry Query' below to resend."
+            "error": f"VS AI servers are currently experiencing peak demand across model pools ({last_error}). Please click 'Retry Query' below to resend."
+        }
+
+    def stream_content(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        temperature: float = 0.2
+    ):
+        """Streams completion tokens using Server-Sent Events from streamGenerateContent."""
+        api_key = self.get_api_key()
+        oauth_token = self.get_oauth_token()
+
+        if not api_key and not oauth_token:
+            yield {
+                "type": "error",
+                "error": "VS AI key is not configured. Please add your key in VS AI Settings (click the settings gear or status badge)."
+            }
+            return
+
+        headers = {"Content-Type": "application/json"}
+        if oauth_token and not api_key:
+            headers["Authorization"] = f"Bearer {oauth_token}"
+
+        payload = self._build_payload(prompt, system_instruction, history, attachments, temperature)
+        payload_bytes = json.dumps(payload).encode("utf-8")
+
+        active_model = self.get_active_model()
+        candidates = [active_model]
+        for fb in self.FALLBACK_MODELS:
+            if fb not in candidates:
+                candidates.append(fb)
+
+        last_error = ""
+
+        for candidate in candidates:
+            if api_key:
+                model_url = f"{self.API_BASE}/{candidate}:streamGenerateContent?alt=sse&key={api_key}"
+            else:
+                model_url = f"{self.API_BASE}/{candidate}:streamGenerateContent?alt=sse"
+
+            token_yielded = False
+            try:
+                req = urllib.request.Request(
+                    model_url,
+                    data=payload_bytes,
+                    headers=headers,
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        for raw_line in resp:
+                            line = raw_line.decode("utf-8", errors="replace").strip()
+                            if not line.startswith("data:"):
+                                continue
+                            data_json = line[5:].strip()
+                            if not data_json or data_json == "[DONE]":
+                                continue
+                            try:
+                                d = json.loads(data_json)
+                            except Exception:
+                                continue
+
+                            cands = d.get("candidates", [])
+                            if cands and "content" in cands[0]:
+                                parts = cands[0]["content"].get("parts", [])
+                                for p in parts:
+                                    t = p.get("text", "")
+                                    if t:
+                                        token_yielded = True
+                                        yield {"type": "token", "delta": t, "model": candidate}
+
+                        if token_yielded:
+                            if candidate != active_model:
+                                self.set_active_model(candidate)
+                            yield {"type": "done", "model": candidate}
+                            return
+
+            except urllib.error.HTTPError as h_err:
+                try:
+                    err_detail = json.loads(h_err.read().decode("utf-8"))
+                    msg = err_detail.get("error", {}).get("message", str(h_err))
+                except Exception:
+                    msg = str(h_err)
+                last_error = f"HTTP {h_err.code}: {msg}"
+                logger.info(f"Model {candidate} stream notice ({last_error}). Trying next fallback candidate...")
+                if token_yielded:
+                    yield {"type": "done", "model": candidate}
+                    return
+                continue
+            except Exception as exc:
+                last_error = str(exc)
+                logger.info(f"Model {candidate} stream error ({last_error}). Trying next fallback candidate...")
+                if token_yielded:
+                    yield {"type": "done", "model": candidate}
+                    return
+                continue
+
+        yield {
+            "type": "error",
+            "error": f"VS AI servers are currently experiencing peak demand across model pools ({last_error}). Please click 'Retry Query' below to resend."
         }
 
     def generate_json(self, prompt: str, system_instruction: Optional[str] = None) -> Dict[str, Any]:
@@ -509,8 +620,18 @@ class KnowledgeBaseEngine:
 
                     # Detect Act / Source characteristics
                     name_lower = pdf_file.name.lower()
-                    if "income-tax" in name_lower or "income_tax" in name_lower:
-                        act_name = "Income Tax Act, 1961"
+                    if "2025" in name_lower and ("income" in name_lower or "tax" in name_lower) and "rule" not in name_lower:
+                        act_name = "Income-tax Act, 2025 (Act No. 30 of 2025)"
+                        law_type = "Income Tax"
+                        src_type = "Act"
+                        authority = "Ministry of Law and Justice, Government of India"
+                    elif ("2026" in name_lower or "2025" in name_lower) and "rule" in name_lower and ("income" in name_lower or "tax" in name_lower):
+                        act_name = "Income-tax Rules, 2026"
+                        law_type = "Income Tax"
+                        src_type = "Rules"
+                        authority = "Central Board of Direct Taxes, Ministry of Finance"
+                    elif "income-tax" in name_lower or "income_tax" in name_lower:
+                        act_name = "Income-tax Act, 1961 (Legacy Direct Tax Statute)"
                         law_type = "Income Tax"
                         src_type = "Act"
                         authority = "Ministry of Finance, Government of India"
@@ -610,6 +731,9 @@ class KnowledgeBaseEngine:
         }
         words = [t for t in re.findall(r'\b[a-z0-9\(\)\-]{3,}\b', q_clean) if t not in LEGAL_STOPWORDS]
 
+        wants_1961 = any(k in q_clean for k in ("1961", "old act", "legacy", "previous act", "prior to 2025", "earlier act", "past act"))
+        order_clause = "ORDER BY (CASE WHEN s.name LIKE '%1961%' THEN 0 ELSE 1 END), c.page_number ASC" if wants_1961 else "ORDER BY (CASE WHEN s.name LIKE '%2025%' OR s.name LIKE '%2026%' THEN 0 ELSE 1 END), c.page_number ASC"
+
         with sqlite3.connect(self.db_path, timeout=10) as con:
             con.row_factory = sqlite3.Row
             self._ensure_tables(con)
@@ -635,7 +759,8 @@ class KnowledgeBaseEngine:
                     FROM ai_source_chunks c
                     JOIN ai_sources s ON c.source_id = s.source_id
                     WHERE ({' OR '.join(where_parts)}) {scope_clause}
-                    LIMIT 30
+                    {order_clause}
+                    LIMIT 50
                 """
                 rows = con.execute(query_sql, params).fetchall()
             else:
@@ -651,7 +776,8 @@ class KnowledgeBaseEngine:
                         FROM ai_source_chunks c
                         JOIN ai_sources s ON c.source_id = s.source_id
                         WHERE ({' OR '.join(where_parts)}) {scope_clause}
-                        LIMIT 40
+                        {order_clause}
+                        LIMIT 60
                     """
                     rows = con.execute(query_sql, params).fetchall()
                 else:
@@ -661,33 +787,49 @@ class KnowledgeBaseEngine:
                         FROM ai_source_chunks c
                         JOIN ai_sources s ON c.source_id = s.source_id
                         WHERE 1=1 {scope_clause}
-                        LIMIT 30
+                        {order_clause}
+                        LIMIT 50
                     """).fetchall()
 
-            scored = []
-            for r in rows:
-                content_lower = (r["content"] or "").lower()
-                heading_lower = (r["heading"] or "").lower()
-                all_text = f"{heading_lower} {content_lower}"
+        scored = []
+        for r in rows:
+            content_lower = (r["content"] or "").lower()
+            heading_lower = (r["heading"] or "").lower()
+            all_text = f"{heading_lower} {content_lower}"
 
-                score = 0
-                for sec in target_sections:
-                    if sec in heading_lower:
-                        score += 60
-                    elif re.search(r'\b' + re.escape(sec) + r'\b', all_text):
-                        score += 35
+            score = 0
+            for sec in target_sections:
+                if sec in heading_lower:
+                    score += 60
+                elif re.search(r'\b' + re.escape(sec) + r'\b', all_text):
+                    score += 35
 
-                for w in words:
-                    if w in heading_lower:
-                        score += 15
-                    elif w in content_lower:
-                        score += 3
+            for w in words:
+                if w in heading_lower:
+                    score += 15
+                elif w in content_lower:
+                    score += 3
 
-                if score > 0 or not target_sections:
-                    scored.append((score, dict(r)))
+            # Apply Income Tax Act version prioritization
+            source_name_lower = (r["source_name"] or "").lower()
+            is_2025 = "2025" in source_name_lower or "2026" in source_name_lower
+            is_1961 = "1961" in source_name_lower
 
-            scored.sort(key=lambda x: x[0], reverse=True)
-            return [s[1] for s in scored[:limit]]
+            if wants_1961:
+                if is_1961:
+                    score += 80
+            else:
+                # Default: Income-tax Act, 2025 and Income-tax Rules, 2026 take precedence
+                if is_2025:
+                    score += 100
+                elif is_1961:
+                    score -= 20
+
+            if score > 0 or not target_sections:
+                scored.append((score, dict(r)))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [s[1] for s in scored[:limit]]
 
 
 # ============================================================
@@ -1079,20 +1221,104 @@ def export_ai_opinion_pdf(
 class AIModelOrchestrator:
     """Central manager handling RAG grounding, prompt composition, and Gemini execution."""
 
-    SYSTEM_PROMPT = (
-        "You are 'VS AI', an authoritative, highly intelligent AI Legal and Tax Assistant built specifically for "
-        "Indian Chartered Accountants, Tax Practitioners, and Corporate Advisors.\n\n"
-        "Your core expertise covers:\n"
-        "- Income-tax Act, 1961, Income Tax Rules, and relevant judicial precedents (ITAT, High Courts, Supreme Court).\n"
-        "- Central Goods and Services Tax Act, 2017 (CGST Act), SGST Acts, CGST Rules, and AAAR/AAR rulings.\n"
-        "- Companies Act, 2013 and ROC compliances.\n"
-        "- Drafting representation letters, appeals, and notice replies.\n\n"
-        "STRICT GROUNDING & CITATION GUIDELINES:\n"
-        "1. Strictly cite the exact Section, Sub-section, Clause, Rule, or Notification number when answering.\n"
-        "2. Ground your reasoning in the provided STATUTORY CHUNKS from the firm's knowledge library.\n"
-        "3. If an answer cannot be deduced with certainty from authentic statutes, clearly state the ambiguity and recommend official departmental circulars.\n"
-        "4. Format replies cleanly using clear headings, bold statutory terms, and concise bullet points."
-    )
+    @staticmethod
+    def is_statutory_inquiry(prompt: str) -> bool:
+        """Determines if the prompt explicitly inquires about statutory legal provisions, Acts, rules, or rulings."""
+        p = prompt.lower()
+        statutory_patterns = [
+            r'\bsec(?:tion)?\.?\s*\d+',
+            r'\brule\s*\d+',
+            r'\bclauses?\s*\d+',
+            r'\bschedules?\s*\d+',
+            r'\bact\b',
+            r'\bstatut',
+            r'\bincome\s*tax\b',
+            r'\bgst\b|\bcgst\b|\bsgst\b|\bigst\b',
+            r'\btds\b|\btcs\b',
+            r'\bprovisions?\b',
+            r'\bpenalt(?:y|ies)\b',
+            r'\bassessment\b',
+            r'\bappeals?\b',
+            r'\bscrutin(?:y|ies)\b',
+            r'\bnotice\b',
+            r'\bcircular\b',
+            r'\bnotifications?\b',
+            r'\bexemptions?\b',
+            r'\bdeductions?\b',
+            r'\b80c\b|\b80d\b|\b115bac\b|\b194[a-z]?\b|\b44ab\b|\b44ad\b|\b54[a-z]?\b|\b148\b|\b147\b|\b143\b|\b271\b',
+            r'\bcase\s*laws?\b|\brulings?\b|\bprecedents?\b',
+            r'\bjudg(?:e)?ments?\b',
+            r'\btribunals?\b|\bitat\b|\bnclt\b',
+            r'\bhigh\s*court\b|\bsupreme\s*court\b',
+            r'\bfinance\s*act\b',
+            r'\bcompanies\s*act\b'
+        ]
+        return any(re.search(pat, p) for pat in statutory_patterns)
+
+    def build_system_instruction(self, source_only: bool, has_attachments: bool, is_statutory: bool) -> str:
+        """Builds context-adaptive system instructions tailored to whether files or statutes are targeted."""
+        instructions = [
+            "You are 'VS AI', an authoritative, highly capable legal, tax, and practice copilot designed for "
+            "Chartered Accountants, Tax Practitioners, and Corporate Advisors."
+        ]
+
+        if has_attachments:
+            instructions.append(
+                "ATTACHED FILES / USER DOCUMENTS:\n"
+                "- One or more files/documents have been uploaded by the user.\n"
+                "- Your primary objective is to analyze, extract data from, summarize, or advise based on the attached document(s).\n"
+                "- Adhere strictly to the facts, figures, financial statements, and text found in the attached files."
+            )
+
+        if source_only:
+            instructions.append(
+                "AVAILABLE SOURCES ONLY RESTRICTION ACTIVE:\n"
+                "- You MUST restrict your reasoning and advisory strictly to the provided Sources (statutory knowledge chunks) "
+                "and/or the attached documents.\n"
+                "- Do NOT invent or assume external facts, hypothetical provisions, or unsubstantiated rules not present in the available sources."
+            )
+
+        if is_statutory or source_only:
+            instructions.append(
+                "STATUTORY APPLICABILITY & DIRECT TAX CITATIONS:\n"
+                "1. DEFAULT INCOME TAX STATUTE: By default, you MUST interpret, reason, and cite the new **Income-tax Act, 2025 (Act No. 30 of 2025)** "
+                "and the **Income-tax Rules, 2026** as the primary governing direct tax law in India.\n"
+                "2. LEGACY 1961 ACT: Only cite or apply the legacy Income-tax Act, 1961 if the user explicitly specifies '1961', refers to historic "
+                "assessment years/periods prior to the 2025 Act, or asks for a comparative transition analysis.\n"
+                "3. GST & CORPORATE LAW: Ground queries in the Central Goods and Services Tax Act, 2017 (CGST Act), SGST Acts, CGST Rules, and Companies Act, 2013.\n"
+                "4. STRICT CITATIONS: Accurately cite the exact Section, Sub-section, Clause, Rule, or Schedule."
+            )
+        else:
+            instructions.append(
+                "PRACTICE ADVISORY & PROFESSIONAL DRAFTING:\n"
+                "- Answer the user's inquiry directly, clearly, and practically.\n"
+                "- If drafting client communications, emails, advisory notes, computations, or explanations, maintain a polished, professional tone."
+            )
+
+        instructions.append(
+            "TABLES & CHARTS / GRAPHS GUIDELINES:\n"
+            "- When presenting comparisons, tax slabs, rate schedules, penalty tariffs, turnover brackets, deductions, financial statements, computations, or structured records, ALWAYS format them as structured Markdown tables with clear column headers (using '| Header 1 | Header 2 |' syntax).\n"
+            "- When visual trends, comparisons, or proportional distributions are requested or beneficial (e.g. tax regimes comparison, turnover trends, revenue vs expenses, deductions breakdown, GST rate distribution), provide a visual chart using a ```chart code block with valid JSON formatted as:\n"
+            "```chart\n"
+            "{\n"
+            '  "type": "bar" | "line" | "pie" | "doughnut",\n'
+            '  "title": "Descriptive Chart Title",\n'
+            '  "labels": ["Category A", "Category B", ...],\n'
+            '  "datasets": [\n'
+            '    {"label": "Series 1", "data": [12.5, 30.0, 45.2]}\n'
+            '  ]\n'
+            "}\n"
+            "```\n"
+            "The chat UI natively compiles and renders these into interactive visual graphics."
+        )
+
+        instructions.append(
+            "FORMATTING GUIDELINE:\n"
+            "- Structure your response cleanly using concise headings, bold key terms, and bullet points.\n"
+            "- Avoid unnecessary fluff; provide sharp, actionable professional output."
+        )
+
+        return "\n\n".join(instructions)
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -1113,8 +1339,14 @@ class AIModelOrchestrator:
         """Runs RAG search, formats statutory context, and queries Gemini."""
         t_start = time.time()
 
-        # 1. Retrieve Statutory Grounding Chunks
-        retrieved_chunks = self.kb.retrieve_relevant_chunks(prompt, scope=scope, limit=4)
+        has_attachments = bool(attachments and len(attachments) > 0)
+        is_statutory = self.is_statutory_inquiry(prompt)
+        should_retrieve_statutes = source_only or is_statutory
+
+        retrieved_chunks = []
+        if should_retrieve_statutes:
+            retrieved_chunks = self.kb.retrieve_relevant_chunks(prompt, scope=scope, limit=4)
+
         grounding_text = ""
         citations = []
 
@@ -1135,13 +1367,25 @@ class AIModelOrchestrator:
             client_info = f"\nCLIENT CONTEXT: Name: {client_context.get('name', 'N/A')}, File No: {client_context.get('file_no', 'N/A')}, PAN: {client_context.get('pan', 'N/A')}\n"
 
         full_prompt = prompt
-        if grounding_text:
-            full_prompt = f"{grounding_text}\n{client_info}\nUSER INQUIRY: {prompt}"
+        if grounding_text or client_info:
+            parts = []
+            if grounding_text:
+                parts.append(grounding_text)
+            if client_info:
+                parts.append(client_info)
+            parts.append(f"USER INQUIRY: {prompt}")
+            full_prompt = "\n".join(parts)
+
+        system_instruction = self.build_system_instruction(
+            source_only=source_only,
+            has_attachments=has_attachments,
+            is_statutory=is_statutory
+        )
 
         # 3. Call Gemini
         res = self.gemini.generate_content(
             prompt=full_prompt,
-            system_instruction=self.SYSTEM_PROMPT,
+            system_instruction=system_instruction,
             history=history,
             attachments=attachments
         )
@@ -1161,6 +1405,102 @@ class AIModelOrchestrator:
             "citations": citations,
             "model": res.get("model", self.gemini.get_active_model()),
             "provider": "VS AI",
+            "latency_ms": latency_ms
+        }
+
+    def route_and_stream(
+        self,
+        prompt: str,
+        conversation_id: str,
+        scope: str = "All Knowledge",
+        source_only: bool = False,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        client_context: Optional[Dict[str, Any]] = None,
+        history: Optional[List[Dict[str, str]]] = None
+    ):
+        """Runs RAG search, formats statutory context, and streams Gemini tokens via generator."""
+        t_start = time.time()
+
+        has_attachments = bool(attachments and len(attachments) > 0)
+        is_statutory = self.is_statutory_inquiry(prompt)
+        should_retrieve_statutes = source_only or is_statutory
+
+        retrieved_chunks = []
+        if should_retrieve_statutes:
+            retrieved_chunks = self.kb.retrieve_relevant_chunks(prompt, scope=scope, limit=4)
+
+        grounding_text = ""
+        citations = []
+
+        if retrieved_chunks:
+            grounding_text = "### AUTHENTIC STATUTORY KNOWLEDGE CHUNKS:\n"
+            for c in retrieved_chunks:
+                grounding_text += f"\n[SOURCE: {c['source_name']} | Section/Heading: {c['heading']} | Page {c['page_number']}]\n{c['content']}\n"
+                citations.append({
+                    "source": c["source_name"],
+                    "section": c["heading"],
+                    "page": c["page_number"],
+                    "chunk_id": c["chunk_id"]
+                })
+
+        # 2. Build Injected Prompt
+        client_info = ""
+        if client_context:
+            client_info = f"\nCLIENT CONTEXT: Name: {client_context.get('name', 'N/A')}, File No: {client_context.get('file_no', 'N/A')}, PAN: {client_context.get('pan', 'N/A')}\n"
+
+        full_prompt = prompt
+        if grounding_text or client_info:
+            parts = []
+            if grounding_text:
+                parts.append(grounding_text)
+            if client_info:
+                parts.append(client_info)
+            parts.append(f"USER INQUIRY: {prompt}")
+            full_prompt = "\n".join(parts)
+
+        system_instruction = self.build_system_instruction(
+            source_only=source_only,
+            has_attachments=has_attachments,
+            is_statutory=is_statutory
+        )
+
+        # Yield grounding metadata event first
+        active_model = self.gemini.get_active_model()
+        yield {
+            "type": "meta",
+            "citations": citations,
+            "model": active_model
+        }
+
+        # 3. Stream from Gemini
+        accumulated_text = []
+        used_model = active_model
+
+        for event in self.gemini.stream_content(
+            prompt=full_prompt,
+            system_instruction=system_instruction,
+            history=history,
+            attachments=attachments
+        ):
+            ev_type = event.get("type")
+            if ev_type == "token":
+                accumulated_text.append(event.get("delta", ""))
+                used_model = event.get("model", used_model)
+                yield event
+            elif ev_type == "done":
+                used_model = event.get("model", used_model)
+            elif ev_type == "error":
+                yield event
+                return
+
+        latency_ms = round((time.time() - t_start) * 1000, 2)
+        full_text = "".join(accumulated_text)
+
+        yield {
+            "type": "done",
+            "full_text": full_text,
+            "citations": citations,
+            "model": used_model,
             "latency_ms": latency_ms
         }
 

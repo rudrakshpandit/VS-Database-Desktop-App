@@ -104,10 +104,10 @@
 
     if (typeof window.saveAddIncomingFiles === 'function') {
       await window.saveAddIncomingFiles(rawFiles);
-      showNativeToast(`📥 Added ${rawFiles.length} file(s) to Save workspace`, 'success');
+      showNativeToast(`Added ${rawFiles.length} file(s) to Save workspace`, 'success');
     } else {
       window._pendingDroppedFiles = (window._pendingDroppedFiles || []).concat(rawFiles);
-      showNativeToast(`📥 Imported ${rawFiles.length} file(s) into Save workspace`, 'success');
+      showNativeToast(`Imported ${rawFiles.length} file(s) into Save workspace`, 'success');
     }
   }, false);
 })();
@@ -122,18 +122,18 @@ function showNativeToast(message, type = 'info', duration = 4000) {
   }
 
   const icons = {
-    success: '✅',
-    error: '❌',
-    warning: '⚠️',
-    info: 'ℹ️'
+    success: '<svg class="i" style="width:16px;height:16px;stroke:var(--ok);"><use href="#check"/></svg>',
+    error: '<svg class="i" style="width:16px;height:16px;stroke:var(--er);"><use href="#alert"/></svg>',
+    warning: '<svg class="i" style="width:16px;height:16px;stroke:var(--wn);"><use href="#alert"/></svg>',
+    info: '<svg class="i" style="width:16px;height:16px;stroke:var(--pri);"><use href="#info"/></svg>'
   };
 
   const toast = document.createElement('div');
   toast.className = `vs-native-toast toast-${type}`;
   toast.innerHTML = `
-    <span class="vs-native-toast-icon">${icons[type] || 'ℹ️'}</span>
+    <span class="vs-native-toast-icon">${icons[type] || icons.info}</span>
     <div class="vs-native-toast-body">${message}</div>
-    <button type="button" class="vs-native-toast-close" title="Dismiss">✕</button>
+    <button type="button" class="vs-native-toast-close" title="Dismiss"><svg class="i" style="width:12px;height:12px;"><use href="#close"/></svg></button>
   `;
 
   toast.querySelector('.vs-native-toast-close').onclick = () => {
@@ -162,10 +162,10 @@ function showNativeAlert(message, { title = 'VS Database', type = 'info' } = {})
   if (existing) existing.remove();
 
   const icons = {
-    success: '✅',
-    error: '⚠️',
-    warning: '⚠️',
-    info: '📑'
+    success: '<svg class="i" style="width:22px;height:22px;stroke:var(--ok);"><use href="#check"/></svg>',
+    error: '<svg class="i" style="width:22px;height:22px;stroke:var(--er);"><use href="#alert"/></svg>',
+    warning: '<svg class="i" style="width:22px;height:22px;stroke:var(--wn);"><use href="#alert"/></svg>',
+    info: '<svg class="i" style="width:22px;height:22px;stroke:var(--pri);"><use href="#info"/></svg>'
   };
 
   const overlay = document.createElement('div');
@@ -175,7 +175,7 @@ function showNativeAlert(message, { title = 'VS Database', type = 'info' } = {})
   overlay.innerHTML = `
     <div class="vs-native-alert-card">
       <div class="vs-native-alert-header">
-        <span style="font-size:22px;">${icons[type] || '📑'}</span>
+        <span style="font-size:22px;display:flex;align-items:center;">${icons[type] || icons.info}</span>
         <h3>${title}</h3>
       </div>
       <div class="vs-native-alert-msg">${typeof message === 'string' ? message.replace(/\n/g, '<br>') : String(message)}</div>
@@ -208,7 +208,7 @@ function showNativeConfirm(message, { title = 'VS Database', confirmText = 'Conf
     overlay.innerHTML = `
       <div class="vs-native-alert-card">
         <div class="vs-native-alert-header">
-          <span style="font-size:22px;">❓</span>
+          <span style="font-size:22px;display:flex;align-items:center;"><svg class="i" style="width:22px;height:22px;stroke:var(--pri);"><use href="#info"/></svg></span>
           <h3>${title}</h3>
         </div>
         <div class="vs-native-alert-msg">${typeof message === 'string' ? message.replace(/\n/g, '<br>') : String(message)}</div>
@@ -316,10 +316,78 @@ const content = document.querySelector('#content');
 const authRoot = document.querySelector('#auth-modal-root');
 const message = (text, error = false) => `<div class="notice ${error ? 'error' : ''}">${text}</div>`;
 
+const PAGE_META = {
+  dashboard: ["Dashboard", "Overview of your practice"],
+  clients: ["Clients", "Manage clients and import from Practive"],
+  folders: ["Folder Structure", "Templates that build client folders"],
+  save: ["Save Files", "Upload documents to client folders"],
+  'pdf-studio': ["Studio", "Merge, split, protect and edit PDFs"],
+  studio: ["Studio", "Merge, split, protect and edit PDFs"],
+  'vs-ai': ["VS AI", "Statutory legal and tax copilot for Chartered Accountants"],
+  ai: ["VS AI", "Statutory legal and tax copilot for Chartered Accountants"],
+  drive: ["Drive Sharing", "Client portals on Google Drive"],
+  backup: ["Backup & Restore", "Protect your database, clients and settings"],
+  activity: ["Activity", "Recent filings you can revert"],
+  setup: ["Setup", "Storage and integration"],
+  users: ["Users & Devices", "Staff accounts and approved PCs"]
+};
+
+function updateHeaderMeta(page) {
+  const p = PAGE_META[page] || PAGE_META['dashboard'];
+  const titleEl = document.getElementById('page-title');
+  const subEl = document.getElementById('page-sub');
+  if (titleEl) titleEl.textContent = p[0];
+  if (subEl) subEl.textContent = p[1];
+}
+
+function updateUnifiedStatus(serverOk, driveOk, serverMsg, driveMsg) {
+  const pill = document.getElementById('unified-status-pill');
+  const dot = document.getElementById('unified-status-dot');
+  const txt = document.getElementById('unified-status-text');
+  const srvEl = document.getElementById('health');
+  const drvEl = document.getElementById('drive-status');
+
+  const sText = serverMsg || (serverOk ? 'Server online' : 'Server offline');
+  const dText = driveMsg || (driveOk ? 'Drive connected' : 'Drive offline');
+
+  if (srvEl) srvEl.textContent = sText;
+  if (drvEl) drvEl.textContent = dText;
+
+  if (pill) {
+    pill.setAttribute('data-t', `${sText} · ${dText}`);
+  }
+  if (dot) {
+    dot.className = 'dot' + (serverOk && driveOk ? '' : ' w');
+  }
+  if (txt) {
+    if (!serverOk) txt.textContent = 'Server offline';
+    else if (!driveOk) txt.textContent = 'Drive offline';
+    else txt.textContent = 'All systems normal';
+  }
+}
+window.updateUnifiedStatus = updateUnifiedStatus;
+
 function nav() {
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.page === current));
+  if (current === 'vs-ai' || current === 'ai') {
+    document.body.classList.add('page-vs-ai-active');
+  } else {
+    document.body.classList.remove('page-vs-ai-active');
+  }
+  document.querySelectorAll('nav button').forEach(b => {
+    const isCur = b.dataset.page === current;
+    b.classList.toggle('active', isCur);
+    if (isCur) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  updateHeaderMeta(current);
+  if (content) {
+    content.classList.remove('tab-enter');
+    void content.offsetWidth;
+    content.classList.add('tab-enter');
+  }
   render();
 }
+
 
 function navigateTo(page) {
   if (!page) return;
@@ -533,7 +601,12 @@ function getTodayDateKey() {
   return `${year}-${month}-${day}`;
 }
 
+let startupVideoHasRun = false;
+
 function initDailyStartupVideo(force = false) {
+  if (startupVideoHasRun && !force) return;
+  startupVideoHasRun = true;
+
   const overlay = document.getElementById('vs-daily-startup-splash');
   const video = document.getElementById('vs-startup-video');
   if (!overlay || !video) return;
@@ -550,23 +623,6 @@ function initDailyStartupVideo(force = false) {
     return;
   }
 
-  const today = getTodayDateKey();
-  const lastPlayed = localStorage.getItem('vs_startup_video_played_date');
-
-  // Once per calendar day: if already played today and not force triggered, stay hidden
-  if (!force && lastPlayed === today) {
-    overlay.style.display = 'none';
-    return;
-  }
-
-  if (!force) {
-    try {
-      localStorage.setItem('vs_startup_video_played_date', today);
-    } catch (e) {
-      console.warn('[StartupVideo] Could not persist date to localStorage', e);
-    }
-  }
-
   if (startupVideoDismissTimeout) {
     clearTimeout(startupVideoDismissTimeout);
     startupVideoDismissTimeout = null;
@@ -576,7 +632,13 @@ function initDailyStartupVideo(force = false) {
   overlay.style.display = 'flex';
   overlay.style.opacity = '1';
   overlay.style.visibility = 'visible';
+  overlay.style.transform = 'none';
 
+  // Ensure normal startup video is loaded
+  if (!video.src.includes('Startup.mp4')) {
+    video.src = 'Startup.mp4?v=20260924_orig';
+  }
+  video.playbackRate = 1.0;
   video.currentTime = 0;
   video.muted = true; // Video only, no audio
 
@@ -617,12 +679,242 @@ function initDailyStartupVideo(force = false) {
 
 window.initDailyStartupVideo = initDailyStartupVideo;
 
-function initDesktopWindowControls() {
-  const winControls = document.getElementById('desktop-window-controls');
-  if (winControls) {
-    winControls.style.display = 'none';
+function updateMaximizeIcon(isMaximized) {
+  const iconMax = document.getElementById('titlebar-icon-max');
+  const iconRestore = document.getElementById('titlebar-icon-restore');
+  const maxBtn = document.getElementById('titlebar-max');
+  if (iconMax && iconRestore) {
+    if (isMaximized) {
+      iconMax.style.display = 'none';
+      iconRestore.style.display = 'inline-block';
+      if (maxBtn) maxBtn.title = 'Restore';
+    } else {
+      iconMax.style.display = 'inline-block';
+      iconRestore.style.display = 'none';
+      if (maxBtn) maxBtn.title = 'Maximize';
+    }
   }
 }
+
+window.onWindowMaximizedState = function(isMaximized) {
+  updateMaximizeIcon(isMaximized);
+};
+
+function showExitConfirmModal() {
+  const modal = document.getElementById('vs-exit-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    const cancelBtn = document.getElementById('vs-exit-btn-cancel');
+    if (cancelBtn) cancelBtn.focus();
+  }
+}
+window.showExitConfirmModal = showExitConfirmModal;
+
+function hideExitConfirmModal() {
+  const modal = document.getElementById('vs-exit-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+  }
+}
+window.hideExitConfirmModal = hideExitConfirmModal;
+
+function playExitReverseAnimationAndClose() {
+  const modal = document.getElementById('vs-exit-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  const overlay = document.getElementById('vs-daily-startup-splash');
+  const video = document.getElementById('vs-startup-video');
+
+  const doClose = async () => {
+    try {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.confirm_close) {
+        await window.pywebview.api.confirm_close();
+        return;
+      }
+    } catch (err) {
+      console.warn('Native pywebview close error:', err);
+    }
+    try {
+      await fetch('/api/desktop/close', { method: 'POST' });
+    } catch (_) {}
+    try { window.close(); } catch (_) {}
+  };
+
+  if (!overlay || !video) {
+    doClose();
+    return;
+  }
+
+  if (startupVideoDismissTimeout) {
+    clearTimeout(startupVideoDismissTimeout);
+    startupVideoDismissTimeout = null;
+  }
+
+  overlay.classList.remove('fade-out');
+  overlay.style.display = 'flex';
+  overlay.style.opacity = '1';
+  overlay.style.visibility = 'visible';
+  overlay.style.transform = 'none';
+
+  let closeExecuted = false;
+  const triggerCloseOnce = () => {
+    if (closeExecuted) return;
+    closeExecuted = true;
+    doClose();
+  };
+
+  video.ontimeupdate = null;
+  video.onended = triggerCloseOnce;
+  video.onerror = triggerCloseOnce;
+
+  // Exit_Reverse.mp4 is pre-rendered in reverse at 1.75X speed (3.88s duration)
+  video.src = 'Exit_Reverse.mp4?v=20260924_rev_175';
+  video.playbackRate = 1.0;
+  video.currentTime = 0;
+  video.muted = true;
+  video.load();
+
+  // Safety fallback timeout in case video stalls
+  setTimeout(() => {
+    triggerCloseOnce();
+  }, 4500);
+
+  const playPromise = video.play();
+  if (playPromise !== undefined) {
+    playPromise.catch((err) => {
+      console.warn('[ExitVideo] Playback failed, closing immediately:', err);
+      triggerCloseOnce();
+    });
+  }
+}
+window.playExitReverseAnimationAndClose = playExitReverseAnimationAndClose;
+
+function initExitModal() {
+  const modal = document.getElementById('vs-exit-modal');
+  const confirmBtn = document.getElementById('vs-exit-btn-confirm');
+  const cancelBtn = document.getElementById('vs-exit-btn-cancel');
+
+  if (cancelBtn) {
+    cancelBtn.onclick = (e) => {
+      e.preventDefault();
+      hideExitConfirmModal();
+    };
+  }
+
+  if (confirmBtn) {
+    confirmBtn.onclick = (e) => {
+      e.preventDefault();
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Closing...';
+      playExitReverseAnimationAndClose();
+    };
+  }
+
+  if (modal) {
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        hideExitConfirmModal();
+      }
+    };
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (modal && modal.style.display !== 'none') {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideExitConfirmModal();
+      } else if (e.key === 'Enter') {
+        const active = document.activeElement;
+        if (active && active.id === 'vs-exit-btn-cancel') {
+          hideExitConfirmModal();
+        } else if (confirmBtn) {
+          confirmBtn.click();
+        }
+      }
+    }
+  });
+}
+
+function initDesktopWindowControls() {
+  const minBtn = document.getElementById('titlebar-min');
+  const maxBtn = document.getElementById('titlebar-max');
+  const closeBtn = document.getElementById('titlebar-close');
+  const dragArea = document.querySelector('.titlebar-drag-area');
+
+  if (minBtn) {
+    minBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.minimize_window) {
+        window.pywebview.api.minimize_window();
+      }
+    };
+  }
+
+  if (maxBtn) {
+    maxBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
+        window.pywebview.api.maximize_window().then(res => {
+          if (res && typeof res.maximized === 'boolean') {
+            updateMaximizeIcon(res.maximized);
+          }
+        }).catch(() => {});
+      }
+    };
+  }
+
+  if (closeBtn) {
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      showExitConfirmModal();
+    };
+  }
+
+  if (dragArea) {
+    dragArea.ondblclick = (e) => {
+      if (e.target.closest('.no-drag') || e.target.closest('.titlebar-btn')) return;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
+        window.pywebview.api.maximize_window().then(res => {
+          if (res && typeof res.maximized === 'boolean') {
+            updateMaximizeIcon(res.maximized);
+          }
+        }).catch(() => {});
+      }
+    };
+
+    dragArea.onmousedown = (e) => {
+      if (e.target.closest('.no-drag') || e.target.closest('.titlebar-btn')) return;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+        window.pywebview.api.start_drag();
+      }
+    };
+  }
+
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
+    window.pywebview.api.is_maximized().then(res => {
+      if (res && typeof res.maximized === 'boolean') {
+        updateMaximizeIcon(res.maximized);
+      }
+    }).catch(() => {});
+  }
+
+  initExitModal();
+}
+
+window.addEventListener('pywebviewready', () => {
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
+    window.pywebview.api.is_maximized().then(res => {
+      if (res && typeof res.maximized === 'boolean') {
+        updateMaximizeIcon(res.maximized);
+      }
+    }).catch(() => {});
+  }
+});
 
 async function load() {
   initDesktopWindowControls();
@@ -663,34 +955,32 @@ async function load() {
       api('/api/firm-types')
     ]);
 
-    document.querySelector('#health').textContent = 'Server online';
-
+    let isDriveConnected = false;
     try {
       const gStat = await api('/api/google/status');
+      isDriveConnected = !!(gStat && gStat.connected);
       const ds = document.querySelector('#drive-status');
       if (ds) {
-        if (gStat.connected) {
-          ds.innerHTML = `<img src="google-drive.ico" alt="Drive" style="width:15px;height:15px;object-fit:contain;vertical-align:middle;margin-right:6px;"> <span>Drive: Connected</span>`;
-          ds.style.background = 'rgba(240,255,249,.76)';
-          ds.style.color = '#177454';
-          ds.style.borderColor = 'rgba(25,167,123,.16)';
-        } else {
-          ds.innerHTML = `<img src="google-drive.ico" alt="Drive" style="width:15px;height:15px;object-fit:contain;vertical-align:middle;margin-right:6px;"> <span>Drive: Not Connected</span>`;
-          ds.style.background = 'rgba(255,247,237,.76)';
-          ds.style.color = '#c2410c';
-          ds.style.borderColor = 'rgba(234,88,12,.16)';
-        }
+        ds.textContent = isDriveConnected ? 'Drive: Connected' : 'Drive: Not Connected';
       }
     } catch (_) {}
 
+    updateUnifiedStatus(true, isDriveConnected, 'Server online', isDriveConnected ? 'Drive connected' : 'Drive offline');
+
     await render();
-    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.page === current));
+    document.querySelectorAll('nav button').forEach(b => {
+      const isCur = b.dataset.page === current;
+      b.classList.toggle('active', isCur);
+      if (isCur) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
     dismissSplash();
   } catch (e) {
     dismissSplash();
-    document.querySelector('#health').textContent = 'Server offline';
+    updateUnifiedStatus(false, false, 'Server offline', 'Drive offline');
     content.innerHTML = message(e.message, true);
   }
+
 }
 
 function setup() {
@@ -702,46 +992,47 @@ function setup() {
   const driveRootName = settings.google_portal_root_name || 'VS Database';
 
   content.innerHTML = `
-    <div class="card setup-wizard-card" style="box-shadow:0 12px 34px rgba(15,23,42,0.06);border-radius:20px;">
+    <div class="glass card setup-wizard-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:14px;">
         <div>
-          <h1 style="margin:0 0 6px 0;font-size:24px;">🚀 System & Storage Setup</h1>
+          <h1 style="margin:0 0 6px 0;font-size:24px;">System & Storage Setup</h1>
           <p class="muted" style="margin:0;font-size:13px;">Configure your storage engine, Google Drive integration modes, dedicated folder names, and firm branding.</p>
         </div>
-        <button type="button" id="btn-fresh-start" class="secondary" style="border-radius:12px;padding:9px 18px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;background:#fef2f2;border-color:#fecaca;color:#b91c1c;cursor:pointer;">
-          🧹 Clean Fresh Start
+        <button type="button" id="btn-fresh-start" class="btn d" style="font-size:12px;">
+          <svg class="i" aria-hidden="true"><use href="#trash"/></svg>
+          <span>Clean Fresh Start</span>
         </button>
       </div>
 
       <!-- 1. Mode Chooser Cards -->
       <div style="margin-top:14px;margin-bottom:22px;">
-        <label style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:#1e293b;margin-bottom:10px;display:block;">
+        <label style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:var(--tx);margin-bottom:10px;display:block;">
           1. Select Storage & Google Drive Integration Mode
         </label>
         <div class="drive-mode-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:12px;">
           
-          <div class="drive-mode-card ${curMode === 'backup_and_client' ? 'active-mode' : ''}" data-mode="backup_and_client" style="border:2px solid ${curMode === 'backup_and_client' ? '#4f46e5' : 'rgba(226,232,240,0.8)'};background:${curMode === 'backup_and_client' ? 'rgba(238,242,255,0.7)' : '#fff'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
-            <div style="font-size:26px;margin-bottom:6px;">☁️👥</div>
-            <div style="font-weight:800;font-size:14px;color:#0f172a;">Backup And Client</div>
-            <div style="font-size:11.5px;color:#64748b;margin-top:4px;line-height:1.4;">Full Cloud Integration: Google Drive handles both Office Backups & Read-Only Client Portals.</div>
+          <div class="drive-mode-card ${curMode === 'backup_and_client' ? 'active-mode' : ''}" data-mode="backup_and_client" style="border:2px solid ${curMode === 'backup_and_client' ? '#4f46e5' : 'var(--line)'};background:${curMode === 'backup_and_client' ? 'rgba(238,242,255,0.7)' : 'var(--glass2)'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
+            <div style="margin-bottom:6px;"><svg class="i" style="width:26px;height:26px;color:#2563eb;" aria-hidden="true"><use href="#drive"/></svg></div>
+            <div style="font-weight:800;font-size:14px;color:var(--tx);">Backup And Client</div>
+            <div style="font-size:11.5px;color:var(--tx2);margin-top:4px;line-height:1.4;">Full Cloud Integration: Google Drive handles both Office Backups & Read-Only Client Portals.</div>
           </div>
 
-          <div class="drive-mode-card ${curMode === 'only_client' ? 'active-mode' : ''}" data-mode="only_client" style="border:2px solid ${curMode === 'only_client' ? '#4f46e5' : 'rgba(226,232,240,0.8)'};background:${curMode === 'only_client' ? 'rgba(238,242,255,0.7)' : '#fff'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
-            <div style="font-size:26px;margin-bottom:6px;">🌐👤</div>
-            <div style="font-weight:800;font-size:14px;color:#0f172a;">Only Client</div>
-            <div style="font-size:11.5px;color:#64748b;margin-top:4px;line-height:1.4;">Google Drive used exclusively for Client Portals; internal Office files stored on Local disk.</div>
+          <div class="drive-mode-card ${curMode === 'only_client' ? 'active-mode' : ''}" data-mode="only_client" style="border:2px solid ${curMode === 'only_client' ? '#4f46e5' : 'var(--line)'};background:${curMode === 'only_client' ? 'rgba(238,242,255,0.7)' : 'var(--glass2)'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
+            <div style="margin-bottom:6px;"><svg class="i" style="width:26px;height:26px;color:#2563eb;" aria-hidden="true"><use href="#folder"/></svg></div>
+            <div style="font-weight:800;font-size:14px;color:var(--tx);">Only Client</div>
+            <div style="font-size:11.5px;color:var(--tx2);margin-top:4px;line-height:1.4;">Google Drive used exclusively for Client Portals; internal Office files stored on Local disk.</div>
           </div>
 
-          <div class="drive-mode-card ${curMode === 'only_backup' ? 'active-mode' : ''}" data-mode="only_backup" style="border:2px solid ${curMode === 'only_backup' ? '#4f46e5' : 'rgba(226,232,240,0.8)'};background:${curMode === 'only_backup' ? 'rgba(238,242,255,0.7)' : '#fff'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
-            <div style="font-size:26px;margin-bottom:6px;">💾🏢</div>
-            <div style="font-weight:800;font-size:14px;color:#0f172a;">Only Backup</div>
-            <div style="font-size:11.5px;color:#64748b;margin-top:4px;line-height:1.4;">Google Drive used for Office Cloud Backups only; No Client Document Portals.</div>
+          <div class="drive-mode-card ${curMode === 'only_backup' ? 'active-mode' : ''}" data-mode="only_backup" style="border:2px solid ${curMode === 'only_backup' ? '#4f46e5' : 'var(--line)'};background:${curMode === 'only_backup' ? 'rgba(238,242,255,0.7)' : 'var(--glass2)'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
+            <div style="margin-bottom:6px;"><svg class="i" style="width:26px;height:26px;color:#2563eb;" aria-hidden="true"><use href="#backup"/></svg></div>
+            <div style="font-weight:800;font-size:14px;color:var(--tx);">Only Backup</div>
+            <div style="font-size:11.5px;color:var(--tx2);margin-top:4px;line-height:1.4;">Google Drive used for Office Cloud Backups only; No Client Document Portals.</div>
           </div>
 
-          <div class="drive-mode-card ${curMode === 'disabled' ? 'active-mode' : ''}" data-mode="disabled" style="border:2px solid ${curMode === 'disabled' ? '#4f46e5' : 'rgba(226,232,240,0.8)'};background:${curMode === 'disabled' ? 'rgba(238,242,255,0.7)' : '#fff'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
-            <div style="font-size:26px;margin-bottom:6px;">💻🔒</div>
-            <div style="font-weight:800;font-size:14px;color:#0f172a;">Disable Google Drive</div>
-            <div style="font-size:11.5px;color:#64748b;margin-top:4px;line-height:1.4;">100% Offline / Local Storage only. All office files and PDF passes stored locally.</div>
+          <div class="drive-mode-card ${curMode === 'disabled' ? 'active-mode' : ''}" data-mode="disabled" style="border:2px solid ${curMode === 'disabled' ? '#4f46e5' : 'var(--line)'};background:${curMode === 'disabled' ? 'rgba(238,242,255,0.7)' : 'var(--glass2)'};border-radius:16px;padding:16px;cursor:pointer;transition:all .2s ease;">
+            <div style="margin-bottom:6px;"><svg class="i" style="width:26px;height:26px;color:#64748b;" aria-hidden="true"><use href="#setup"/></svg></div>
+            <div style="font-weight:800;font-size:14px;color:var(--tx);">Disable Google Drive</div>
+            <div style="font-size:11.5px;color:var(--tx2);margin-top:4px;line-height:1.4;">100% Offline / Local Storage only. All office files and PDF passes stored locally.</div>
           </div>
 
         </div>
@@ -822,20 +1113,23 @@ function setup() {
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <button type="button" id="btn-check-updates" class="secondary" style="border-radius:12px;padding:9px 18px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
-              🔍 Check for Updates
+            <button type="button" id="btn-check-updates" class="btn">
+              <svg class="i" aria-hidden="true"><use href="#search"/></svg>
+              <span>Check for Updates</span>
             </button>
-            <button type="button" id="btn-apply-update" class="primary" style="display:none;border-radius:12px;padding:9px 18px;font-size:12px;font-weight:700;align-items:center;gap:6px;cursor:pointer;background:linear-gradient(135deg,#16a34a,#059669);box-shadow:0 8px 18px rgba(22,163,74,0.25);">
-              ⚡ Update Now
+            <button type="button" id="btn-apply-update" class="btn p" style="display:none;">
+              <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
+              <span>Update Now</span>
             </button>
           </div>
         </div>
         <div id="update-status-msg" style="margin-top:12px;font-size:12.5px;display:none;"></div>
       </div>
 
-      <div class="actions" style="margin-top:0;">
-        <button class="primary" id="save-settings" style="min-height:46px;font-size:14px;padding:0 26px;border-radius:12px;font-weight:700;cursor:pointer;">
-          💾 Save & Provision Workspace
+      <div class="row" style="margin-top:16px;">
+        <button class="btn p" id="save-settings" style="min-height:46px;font-size:14px;padding:0 26px;">
+          <svg class="i" aria-hidden="true"><use href="#check"/></svg>
+          <span>Save & Provision Workspace</span>
         </button>
       </div>
       <div id="result" style="margin-top:14px;"></div>
@@ -869,44 +1163,44 @@ function setup() {
       driveRootNameWrap.style.display = 'block';
       officeNameWrap.style.display = 'block';
       clientNameWrap.style.display = 'block';
-      previewBox.innerHTML = `<strong>📁 Active Structure Preview (Backup And Client):</strong><br>
-├── 💻 Local Storage [<code>${escapeHtml(locPath)}</code>]<br>
-│   ├── 🏢 ${escapeHtml(oName)}/ (Internal Office Files)<br>
-│   └── 📄 Client Access Links/ (Document Access Passes)<br>
-└── ☁️ Google Drive [<code>${escapeHtml(drvPath)}</code>]<br>
-    ├── 🏢 ${escapeHtml(oName)}/ (Synced Office Files & Backups)<br>
-    └── 👥 ${escapeHtml(cName)}/ (Read-Only Shared Client Portals [Google Drive API])`;
+      previewBox.innerHTML = `<strong>Active Structure Preview (Backup And Client):</strong><br>
+├── Local Storage [<code>${escapeHtml(locPath)}</code>]<br>
+│   ├── ${escapeHtml(oName)}/ (Internal Office Files)<br>
+│   └── Client Access Links/ (Document Access Passes)<br>
+└── Google Drive [<code>${escapeHtml(drvPath)}</code>]<br>
+    ├── ${escapeHtml(oName)}/ (Synced Office Files & Backups)<br>
+    └── ${escapeHtml(cName)}/ (Read-Only Shared Client Portals [Google Drive API])`;
     } else if (mode === 'only_client') {
       driveBaseWrap.style.display = 'block';
       driveRootNameWrap.style.display = 'block';
       officeNameWrap.style.display = 'none';
       clientNameWrap.style.display = 'block';
-      previewBox.innerHTML = `<strong>📁 Active Structure Preview (Only Client):</strong><br>
-├── 💻 Local Storage [<code>${escapeHtml(locPath)}</code>]<br>
-│   ├── 🏢 ${escapeHtml(oName)}/ (Internal Office Files & Backups)<br>
-│   └── 📄 Client Access Links/<br>
-└── ☁️ Google Drive [<code>${escapeHtml(drvPath)}</code>]<br>
-    └── 👥 ${escapeHtml(cName)}/ (Read-Only Shared Client Portals [Google Drive API])`;
+      previewBox.innerHTML = `<strong>Active Structure Preview (Only Client):</strong><br>
+├── Local Storage [<code>${escapeHtml(locPath)}</code>]<br>
+│   ├── ${escapeHtml(oName)}/ (Internal Office Files & Backups)<br>
+│   └── Client Access Links/<br>
+└── Google Drive [<code>${escapeHtml(drvPath)}</code>]<br>
+    └── ${escapeHtml(cName)}/ (Read-Only Shared Client Portals [Google Drive API])`;
     } else if (mode === 'only_backup') {
       driveBaseWrap.style.display = 'block';
       driveRootNameWrap.style.display = 'block';
       officeNameWrap.style.display = 'block';
       clientNameWrap.style.display = 'none';
-      previewBox.innerHTML = `<strong>📁 Active Structure Preview (Only Backup):</strong><br>
-├── 💻 Local Storage [<code>${escapeHtml(locPath)}</code>]<br>
-│   └── 🏢 ${escapeHtml(oName)}/ (Internal Office Files)<br>
-└── ☁️ Google Drive [<code>${escapeHtml(drvPath)}</code>]<br>
-    └── 💾 ${escapeHtml(oName)}/Backups/ (Encrypted Cloud Backups)`;
+      previewBox.innerHTML = `<strong>Active Structure Preview (Only Backup):</strong><br>
+├── Local Storage [<code>${escapeHtml(locPath)}</code>]<br>
+│   └── ${escapeHtml(oName)}/ (Internal Office Files)<br>
+└── Google Drive [<code>${escapeHtml(drvPath)}</code>]<br>
+    └── ${escapeHtml(oName)}/Backups/ (Encrypted Cloud Backups)`;
     } else {
       driveBaseWrap.style.display = 'none';
       driveRootNameWrap.style.display = 'none';
       officeNameWrap.style.display = 'block';
       clientNameWrap.style.display = 'none';
-      previewBox.innerHTML = `<strong>📁 Active Structure Preview (Disable Google Drive):</strong><br>
-└── 💻 Local Storage Only [<code>${escapeHtml(locPath)}</code>]<br>
-    ├── 🏢 ${escapeHtml(oName)}/ (All internal office files)<br>
-    ├── 💾 Backups/<br>
-    └── 📄 Client Access Links/`;
+      previewBox.innerHTML = `<strong>Active Structure Preview (Disable Google Drive):</strong><br>
+└── Local Storage Only [<code>${escapeHtml(locPath)}</code>]<br>
+    ├── ${escapeHtml(oName)}/ (All internal office files)<br>
+    ├── Backups/<br>
+    └── Client Access Links/`;
     }
   }
 
@@ -974,17 +1268,17 @@ function setup() {
         const res = await api('/api/system/check-updates');
         if (res.current_commit) commitBadge.textContent = `[${res.current_commit}]`;
         if (res.update_available) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">⚡ New update available (${res.latest_commit})! Click "Update Now" to apply.</span>`;
+          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New update available (${res.latest_commit})! Click "Update Now" to apply.</span>`;
           btnApplyUpdate.style.display = 'inline-flex';
         } else {
-          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;">✅ Your VS Database software is completely up-to-date.</span>`;
+          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date.</span>`;
           btnApplyUpdate.style.display = 'none';
         }
       } catch (err) {
         updateMsg.innerHTML = `<span style="color:#dc2626;">Error checking updates: ${escapeHtml(err.message)}</span>`;
       } finally {
         btnCheckUpdates.disabled = false;
-        btnCheckUpdates.textContent = '🔍 Check for Updates';
+        btnCheckUpdates.innerHTML = '<svg class="i" style="width:14px;height:14px;margin-right:6px;"><use href="#search"/></svg>Check for Updates';
       }
     };
   }
@@ -997,7 +1291,7 @@ function setup() {
       try {
         const res = await api('/api/system/apply-update', { method: 'POST', body: '{}' });
         if (res.ok) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">🎉 Update successful! Reloading application...</span>`;
+          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>Update successful! Reloading application...</span>`;
           setTimeout(() => location.reload(), 1500);
         } else {
           updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(res.error || 'Unknown error')}</span>`;
@@ -1316,24 +1610,31 @@ function promptNewFirmTypesImport(newFirmTypes, onConfirm, onCancel) {
 function clientsPage() {
   const activeFirmTypes = firmTypes.filter(ft => ft.status === 'active');
   content.innerHTML = `
-    <div class="card">
-      <h1>Practive clients</h1>
-      <p class="muted">Import one or more Practive exports or export current registered clients. Client name, mobile number, and firm type are required.</p>
-      <div class="actions" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-        <input id="client-file" type="file" accept=".csv,.xlsx" multiple>
-        <button class="primary" id="import">Import selected files</button>
-        <a class="secondary" href="/api/clients/export?format=xlsx" download="VS_Database_Clients.xlsx" id="btn-export-excel" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:600;">📊 Export Excel (.xlsx)</a>
-        <a class="secondary" href="/api/clients/export?format=csv" download="VS_Database_Clients.csv" id="btn-export-csv" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;">📄 Export CSV</a>
-        <a class="secondary" href="/api/template.csv" style="text-decoration:none;">Download CSV template</a>
-      </div>
-      <div id="import-result"></div>
+    <!-- Top Actions Toolbar -->
+    <div class="row" style="margin-bottom:16px;">
+      <label class="field" style="flex:1;min-width:240px;">
+        <svg class="i" aria-hidden="true"><use href="#search"/></svg>
+        <input type="text" id="clients-table-filter" placeholder="Search by name, file no., mobile, firm type or group" aria-label="Search clients">
+      </label>
+      <input id="client-file" type="file" accept=".csv,.xlsx" multiple style="display:none;">
+      <button class="btn" id="btn-trigger-import"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Import</button>
+      <button class="primary" id="import" style="display:none;">Import</button>
+      <a class="btn" href="/api/clients/export?format=xlsx" download="VS_Database_Clients.xlsx" id="btn-export-excel"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Export</a>
+      <button class="btn p" id="btn-toggle-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
+      <button class="btn" id="btn-open-ft-mgmt"><svg class="i" aria-hidden="true"><use href="#setup"/></svg>Firm types</button>
+      <a class="secondary" href="/api/template.csv" style="display:none;" id="btn-download-template">Download CSV template</a>
+      <a class="secondary" href="/api/clients/export?format=csv" download="VS_Database_Clients.csv" id="btn-export-csv" style="display:none;">Export CSV</a>
     </div>
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h2>Add one client manually</h2>
-        <button type="button" class="btn-manage-types" id="btn-open-ft-mgmt">⚙ Manage Firm Types</button>
+    <div id="import-result"></div>
+
+    <!-- Collapsible Add Client Card -->
+    <section class="glass card" id="add-client-panel" style="display:none;margin-bottom:16px;">
+      <div class="row" style="margin-bottom:14px;">
+        <h2 style="margin:0;"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client manually</h2>
+        <span class="sp"></span>
+        <button class="btn ib" id="btn-close-add-client" title="Close" aria-label="Close add client"><svg class="i"><use href="#close"/></svg></button>
       </div>
-      <div class="grid3">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;">
         <div><label>Practive File No. (optional)</label><input id="manual-file-no" placeholder="V-0001"></div>
         <div><label>Client name *</label><input id="manual-name" placeholder="XYZ Traders" required></div>
         <div><label>Mobile *</label><input id="manual-mobile" placeholder="9999999999" required></div>
@@ -1348,24 +1649,51 @@ function clientsPage() {
         <div><label>Group</label><input id="manual-group" placeholder="Default"></div>
         <div><label>Status</label><select id="manual-status"><option>Active</option><option>Inactive</option></select></div>
       </div>
-      <div class="actions"><button class="primary" id="add-client">Add client</button></div>
-      <div id="manual-result"></div>
-    </div>
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-        <h2 id="clients-count-label" style="margin:0;">${clients.length} registered clients</h2>
-        <span class="muted" style="font-size:12px;">All clients available with full scrolling & multi-select</span>
+      <div class="row" style="margin-top:16px;justify-content:flex-end;">
+        <button class="btn p" id="add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Save client</button>
       </div>
-      <input type="text" id="clients-table-filter" placeholder="🔍 Search registered clients by Name, File No, Mobile, Firm Type, or Group..." style="padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:#fff;margin-bottom:12px;width:100%;font-size:13px;" />
-      <div id="clients-bulk-bar-container"></div>
-      <div style="max-height:650px;overflow-y:auto;border:1px solid var(--line);border-radius:16px;">
+      <div id="manual-result" style="margin-top:10px;"></div>
+    </section>
+
+    <!-- Registered Clients Glass Card -->
+    <section class="glass card">
+      <div class="row" style="margin-bottom:14px;">
+        <h2 id="clients-count-label" style="margin:0;">${clients.length} registered clients</h2>
+        <span class="sp"></span>
+        <div id="clients-bulk-bar-container"></div>
+      </div>
+      <div class="tw">
         <table id="registered-clients-table">
-          <thead><tr><th style="width:36px;text-align:center;"><input type="checkbox" id="client-select-all" title="Select All" /></th><th>Reference</th><th>Name</th><th>Mobile</th><th>Firm Type</th><th>Group</th><th>Status</th></tr></thead>
-          <tbody id="registered-clients-tbody">${clients.map(c => `<tr data-fno="${escapeHtml(c.file_no)}"><td style="width:36px;text-align:center;"><input type="checkbox" class="client-row-checkbox" data-fno="${escapeHtml(c.file_no)}" /></td><td>${escapeHtml(c.file_no)}</td><td><strong>${escapeHtml(c.name)}</strong></td><td>${escapeHtml(c.mobile || '')}</td><td>${escapeHtml(c.client_type || 'Unassigned')}</td><td>${escapeHtml(c.client_group || '')}</td><td>${escapeHtml(c.status || '')}</td></tr>`).join('')}</tbody>
+          <thead>
+            <tr>
+              <th style="width:36px;text-align:center;"><input type="checkbox" id="client-select-all" title="Select All"></th>
+              <th>Reference</th>
+              <th>Name</th>
+              <th>Mobile</th>
+              <th>Firm type</th>
+              <th>Group</th>
+              <th>Status</th>
+              <th style="text-align:right" class="th-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="registered-clients-tbody">
+            ${clients.map(c => `
+              <tr data-fno="${escapeHtml(c.file_no)}">
+                <td style="width:36px;text-align:center;"><input type="checkbox" class="client-row-checkbox" data-fno="${escapeHtml(c.file_no)}"></td>
+                <td>${escapeHtml(c.file_no)}</td>
+                <td><b>${escapeHtml(c.name)}</b></td>
+                <td>${escapeHtml(c.mobile || '')}</td>
+                <td>${escapeHtml(c.client_type || 'Unassigned')}</td>
+                <td>${escapeHtml(c.client_group || '')}</td>
+                <td><span class="chip ${c.status === 'Inactive' ? 'w' : ''}">${escapeHtml(c.status || 'Active')}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
         </table>
       </div>
-    </div>
+    </section>
   `;
+
 
   const field = id => document.getElementById(id), importResult = field('import-result'), manualResult = field('manual-result');
 
@@ -1416,7 +1744,33 @@ function clientsPage() {
     filterInput.oninput = (e) => filterClientTable(e.target.value);
   }
 
+  const addPanel = field('add-client-panel');
+  const btnToggleAdd = field('btn-toggle-add-client');
+  const btnCloseAdd = field('btn-close-add-client');
+  if (btnToggleAdd && addPanel) {
+    btnToggleAdd.onclick = () => {
+      const isHidden = addPanel.style.display === 'none';
+      addPanel.style.display = isHidden ? 'block' : 'none';
+      if (isHidden) field('manual-name')?.focus();
+    };
+  }
+  if (btnCloseAdd && addPanel) {
+    btnCloseAdd.onclick = () => { addPanel.style.display = 'none'; };
+  }
+
+  const btnTrigImp = field('btn-trigger-import');
+  const clientFileInput = field('client-file');
+  if (btnTrigImp && clientFileInput) {
+    btnTrigImp.onclick = () => clientFileInput.click();
+    clientFileInput.onchange = () => {
+      if (clientFileInput.files && clientFileInput.files.length) {
+        field('import').click();
+      }
+    };
+  }
+
   field('btn-open-ft-mgmt').onclick = () => showFirmTypeManagementModal();
+
 
   field('manual-type').onchange = e => {
     if (e.target.value === '__add_new__') {
@@ -1710,7 +2064,7 @@ function showImportConflictModal(newClients, conflicts, invalidRows, newFirmType
 
 function folders() {
   content.innerHTML = `
-    <div class="card">
+    <div class="glass card">
       <h1>Folder structure</h1>
       <p class="muted">Each active client receives Client → Service → Period folders in both configured roots. Separate services/periods with commas.</p>
       <div class="grid3">
@@ -1718,20 +2072,20 @@ function folders() {
         <div><label>Periods</label><textarea id="periods">${rules.periods.join(', ')}</textarea></div>
         <div><label>Folder order</label><select id="order"><option value="service-period" ${rules.order_name === 'service-period' ? 'selected' : ''}>Client / Service / Period</option><option value="period-service" ${rules.order_name === 'period-service' ? 'selected' : ''}>Client / Period / Service</option></select></div>
       </div>
-      <div class="actions">
-        <button class="secondary" id="save-rules">Save rules</button>
-        <button class="primary" id="create">Create missing folders</button>
-        <button class="btn-reconcile" id="reconcile-all" style="border-radius:13px;padding:0 17px;min-height:42px;font:700 12px inherit;cursor:pointer;">🔄 Scan & Reconcile</button>
+      <div class="row" style="margin-top:16px;">
+        <button class="btn secondary" id="save-rules"><svg class="i" aria-hidden="true"><use href="#check"/></svg>Save rules</button>
+        <button class="btn p" id="create"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Create missing folders</button>
+        <button class="btn" id="reconcile-all"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile</button>
       </div>
-      <div id="result"></div>
-      <div id="reconcile-result"></div>
+      <div id="result" style="margin-top:12px;"></div>
+      <div id="reconcile-result" style="margin-top:12px;"></div>
     </div>
-    <div class="card">
-      <h2>Configured destinations</h2>
-      <p class="path">💻 Local Storage: <code>${escapeHtml(settings.local_root ? (settings.local_root + '\\' + (settings.office_folder_name || 'Office')) : 'No local storage selected')}</code></p>
-      ${(settings.google_drive_mode === 'backup_and_client' || settings.google_drive_mode === 'only_backup') ? `<p class="path">☁️ Google Drive (Office & Backups): <code>${escapeHtml(settings.drive_root ? (settings.drive_root + '\\' + (settings.office_folder_name || 'Office')) : 'Not configured')}</code></p>` : ''}
-      ${(settings.google_drive_mode === 'backup_and_client' || settings.google_drive_mode === 'only_client') ? `<p class="path">👥 Google Drive (Client Document Portals): <code>${escapeHtml(settings.drive_root ? (settings.drive_root + '\\' + (settings.client_folder_name || 'Client')) : 'Not configured')}</code></p>` : ''}
-      ${settings.google_drive_mode === 'disabled' ? `<p class="path muted">☁️ Google Drive: Disabled</p>` : ''}
+    <div class="glass card">
+      <h2><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Configured destinations</h2>
+      <p class="path" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><svg class="i" aria-hidden="true"><use href="#folder"/></svg><span>Local Storage:</span> <code>${escapeHtml(settings.local_root ? (settings.local_root + '\\' + (settings.office_folder_name || 'Office')) : 'No local storage selected')}</code></p>
+      ${(settings.google_drive_mode === 'backup_and_client' || settings.google_drive_mode === 'only_backup') ? `<p class="path" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Google Drive (Office & Backups):</span> <code>${escapeHtml(settings.drive_root ? (settings.drive_root + '\\' + (settings.office_folder_name || 'Office')) : 'Not configured')}</code></p>` : ''}
+      ${(settings.google_drive_mode === 'backup_and_client' || settings.google_drive_mode === 'only_client') ? `<p class="path" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Google Drive (Client Document Portals):</span> <code>${escapeHtml(settings.drive_root ? (settings.drive_root + '\\' + (settings.client_folder_name || 'Client')) : 'Not configured')}</code></p>` : ''}
+      ${settings.google_drive_mode === 'disabled' ? `<p class="path muted" style="display:flex;align-items:center;gap:8px;"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Google Drive: Disabled</span></p>` : ''}
     </div>
   `;
   const field = id => document.getElementById(id), readRules = () => ({ services: field('services').value.split(',').map(x => x.trim()).filter(Boolean), periods: field('periods').value.split(',').map(x => x.trim()).filter(Boolean), order_name: field('order').value }), result = field('result');
@@ -1752,7 +2106,7 @@ function folders() {
     const reconcileResult = field('reconcile-result');
     const btn = field('reconcile-all');
     try {
-      btn.disabled = true; btn.textContent = '🔄 Scanning…';
+      btn.disabled = true; btn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scanning…';
       reconcileResult.innerHTML = message('Scanning all client directories for folders and files…');
       const r = await api('/api/folders/reconcile', { method: 'POST', body: '{}' });
       let html = `<div class="notice">${r.clients_scanned} client(s) scanned. ${r.folders} folder(s) and ${r.files} file(s) discovered.</div>`;
@@ -1767,7 +2121,7 @@ function folders() {
       }
       reconcileResult.innerHTML = html;
     } catch (e) { reconcileResult.innerHTML = message(e.message, true); }
-    finally { btn.disabled = false; btn.textContent = '🔄 Scan & Reconcile'; }
+    finally { btn.disabled = false; btn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile'; }
   };
 }
 
@@ -2031,10 +2385,11 @@ function showLockedPdfPromptModal(lockedFiles) {
 
     const fileListHtml = lockedFiles.map(f => `
       <div style="padding: 7px 12px; background: rgba(254, 242, 242, 0.7); border: 1px solid rgba(254, 202, 202, 0.8); border-radius: 8px; font-size: 11.5px; color: #991b1b; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-        <span style="font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-          📕 ${escapeHtml(f.name)}
+        <span style="font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; display: flex; align-items: center; gap: 6px;">
+          <svg class="i" style="width:14px;height:14px;stroke:#dc2626;"><use href="#clip"/></svg>
+          ${escapeHtml(f.name)}
         </span>
-        <span style="font-size: 10.5px; font-weight: 800; background: #fee2e2; color: #b91c1c; padding: 2px 7px; border-radius: 6px; text-transform: uppercase;">🔒 Locked</span>
+        <span style="font-size: 10.5px; font-weight: 800; background: #fee2e2; color: #b91c1c; padding: 2px 7px; border-radius: 6px; text-transform: uppercase;">Locked</span>
       </div>
     `).join('');
 
@@ -2058,8 +2413,8 @@ function showLockedPdfPromptModal(lockedFiles) {
     modal.innerHTML = `
       <div style="background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(254, 202, 202, 0.8); border-radius: 20px; max-width: 470px; width: 100%; padding: 24px; box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.9); animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);">
         <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
-          <div style="width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, #fef2f2, #fee2e2); border: 1px solid #fecaca; display: flex; align-items: center; justify-content: center; font-size: 22px; box-shadow: 0 4px 10px rgba(239, 68, 68, 0.15);">
-            🔒
+          <div style="width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, #fef2f2, #fee2e2); border: 1px solid #fecaca; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(239, 68, 68, 0.15);">
+            <svg class="i" style="width:22px;height:22px;stroke:#dc2626;"><use href="#setup"/></svg>
           </div>
           <div>
             <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #1e293b;">Password-Protected PDF Detected</h3>
@@ -2077,10 +2432,10 @@ function showLockedPdfPromptModal(lockedFiles) {
 
         <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
           <button type="button" id="btn-modal-unlock-pdf" class="btn-sm" style="padding: 9px 16px; font-size: 12px; font-weight: 700; background: #fff; border: 1px solid #cbd5e1; color: #1e293b; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
-            <span>🔑</span> Unlock PDF(s)
+            <svg class="i" style="width:13px;height:13px;stroke:currentColor;"><use href="#setup"/></svg> Unlock PDF(s)
           </button>
           <button type="button" id="btn-modal-continue-save" class="btn-sm primary" style="padding: 9px 20px; font-size: 12px; font-weight: 700; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; border: 0; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);">
-            <span>▶️</span> Continue & Save
+            <svg class="i" style="width:13px;height:13px;stroke:#fff;"><use href="#check"/></svg> Continue & Save
           </button>
         </div>
       </div>
@@ -2148,13 +2503,13 @@ class BackgroundFileSaveQueue {
       drawer.innerHTML = `
         <div class="vs-queue-drawer-header">
           <div class="vs-queue-drawer-title">
-            <span style="font-size:16px;">📋</span>
+            <svg class="i" style="width:16px;height:16px;stroke:var(--pri);"><use href="#folder"/></svg>
             <span>Save Queue</span>
             <span id="vs-queue-header-count" class="badge active" style="font-size:11px;padding:2px 8px;">0 active</span>
           </div>
           <div class="vs-queue-drawer-actions">
             <button type="button" class="vs-queue-clear-btn" id="vs-queue-clear-btn" title="Clear completed tasks">Clear Finished</button>
-            <button type="button" class="vs-queue-close-btn" id="vs-queue-close-btn" title="Minimize">✕</button>
+            <button type="button" class="vs-queue-close-btn" id="vs-queue-close-btn" title="Minimize"><svg class="i" style="width:12px;height:12px;"><use href="#close"/></svg></button>
           </div>
         </div>
         <div class="vs-queue-drawer-body" id="vs-queue-drawer-body">
@@ -2665,23 +3020,23 @@ function save() {
   }
 
   content.innerHTML = `
-    <div class="card">
+    <div class="glass card">
       ${returnedBannerHtml}
       <h1>Save Files</h1>
       <p class="muted">Upload and organize client documents: PDF, Excel, Word, CSV, ZIP, JSON, images, and other office files.</p>
       
       <!-- DRAG AND DROP ZONE -->
       <div id="save-dropzone" class="dropzone" style="border: 2px dashed rgba(112, 126, 187, 0.4); border-radius: 20px; padding: 32px 20px; text-align: center; background: rgba(255, 255, 255, 0.55); cursor: pointer; transition: all 0.2s ease; margin-bottom: 16px;">
-        <div style="font-size: 38px; margin-bottom: 8px;">📑</div>
-        <h3 style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700; color: #0A1F44;">Drag & Drop Documents Here</h3>
+        <div style="margin-bottom: 8px;"><svg class="i" style="width:38px;height:38px;color:#2563eb;" aria-hidden="true"><use href="#upload"/></svg></div>
+        <h3 style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700; color: var(--tx);">Drag & Drop Documents Here</h3>
         <p style="margin: 0 0 12px 0; font-size: 12px; color: var(--muted);">PDF, Excel, Word, CSV, ZIP, JSON, Images</p>
-        <span id="save-file-label" class="badge" style="background:#eef2ff;color:#4968ed;border:1px solid #c7d2fe;padding:6px 16px;border-radius:20px;font-size:12px;font-weight:600;">Choose Files from Computer</span>
+        <span id="save-file-label" class="btn p" style="min-height:36px;font-size:12px;padding:0 18px;border-radius:20px;">Choose Files from Computer</span>
         <input type="file" id="pdf" multiple style="display:none;">
       </div>
 
       <!-- SELECTED FILES LIST -->
       <div id="selected-files-container" style="display:none;margin-bottom:18px;">
-        <div style="font-size:12px;font-weight:700;color:#56617d;margin-bottom:8px;">Selected Documents:</div>
+        <div style="font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px;">Selected Documents:</div>
         <div id="selected-files-list" style="display:flex;flex-direction:column;gap:6px;"></div>
       </div>
 
@@ -2689,7 +3044,7 @@ function save() {
       <div class="grid" style="margin-top:0;">
         <div>
           <label>Select Client *</label>
-          <input type="text" id="client-search-filter" placeholder="🔍 Search client by name or file no..." style="margin-bottom:6px;width:100%;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#fff;font-size:12px;" />
+          <input type="text" id="client-search-filter" placeholder="Search client by name or file no..." style="margin-bottom:6px;width:100%;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--glass2);font-size:12px;" />
           <select id="client">
             <option value="">Select client…</option>
             ${clients.map(c => `<option value="${escapeHtml(c.file_no)}">${escapeHtml(c.name)} (${escapeHtml(c.file_no)})</option>`).join('')}
@@ -2708,22 +3063,22 @@ function save() {
       <div style="margin-top: 16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <label style="margin:0;">Destination Folder *</label>
-          <span id="web-folder-status-tag" style="font-size:11px;color:#4968ed;font-weight:700;">Client Folders</span>
+          <span id="web-folder-status-tag" style="font-size:11px;color:#2563eb;font-weight:700;">Client Folders</span>
         </div>
         
-        <div id="web-selected-folder-box" style="background:rgba(238,242,255,0.75);border:1px solid rgba(112,126,187,0.25);border-radius:14px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:10px;">
+        <div id="web-selected-folder-box" style="background:var(--glass2);border:1px solid var(--line);border-radius:14px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-            <span style="font-size:16px;">📁</span>
+            <svg class="i" style="width:16px;height:16px;color:#2563eb;" aria-hidden="true"><use href="#folder"/></svg>
             <strong id="web-selected-folder-label" style="color:#2563eb;">/ (Client Root)</strong>
           </div>
-          <button id="web-btn-reset-folder" type="button" class="btn-sm" style="background:transparent;border:0;color:#2563eb;cursor:pointer;font-weight:700;padding:2px 8px;">Root</button>
+          <button id="web-btn-reset-folder" type="button" class="btn" style="min-height:28px;padding:0 10px;font-size:11px;">Root</button>
         </div>
 
-        <div id="web-folder-navigator" style="border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,0.85);padding:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(112,126,187,0.15);gap:8px;">
-            <button id="web-folder-nav-up" type="button" class="btn-sm" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:#f8fafc;cursor:pointer;">⮜ Up</button>
-            <span id="web-folder-nav-crumb" style="font-size:12px;font-weight:600;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/ (Client Root)</span>
-            <button id="web-folder-nav-select-this" type="button" class="btn-sm primary" style="font-size:11px;font-weight:700;padding:4px 12px;cursor:pointer;">✓ Select This Folder</button>
+        <div id="web-folder-navigator" style="border:1px solid var(--line);border-radius:16px;background:var(--glass2);padding:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);gap:8px;">
+            <button id="web-folder-nav-up" type="button" class="btn" style="min-height:30px;font-size:11px;padding:2px 10px;">&larr; Up</button>
+            <span id="web-folder-nav-crumb" style="font-size:12px;font-weight:600;color:var(--tx);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/ (Client Root)</span>
+            <button id="web-folder-nav-select-this" type="button" class="btn p" style="min-height:30px;font-size:11px;padding:2px 12px;"><svg class="i" aria-hidden="true"><use href="#check"/></svg>Select This Folder</button>
           </div>
           <div id="web-folder-nav-list" style="max-height:200px;overflow-y:auto;">
             <div style="padding:16px;font-size:12px;color:var(--muted);text-align:center;">Select a client above to view and pick folders</div>
@@ -3728,44 +4083,44 @@ function save() {
 async function drive() {
   const status = await api('/api/google/status');
   content.innerHTML = `
-    <div class="card">
+    <div class="glass card">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:8px;">
-        <img src="google-drive.ico" alt="Google Drive" style="width:36px;height:36px;object-fit:contain;">
+        <svg class="i" style="width:36px;height:36px;color:#2563eb;" aria-hidden="true"><use href="#drive"/></svg>
         <div>
-          <h1 style="margin:0;font-size:24px;font-weight:800;">Google Drive Client Sharing</h1>
+          <h1 style="margin:0;font-size:24px;font-weight:600;">Google Drive Client Sharing</h1>
           <p class="muted" style="margin:2px 0 0;font-size:13px;">Connect your firm Google Drive once. The system automatically maintains separated, secure Client Document Access portals for each client.</p>
         </div>
       </div>
       <div class="grid" style="margin-top:20px;">
-        <div><label>Google OAuth credentials JSON</label><input id="google-credentials" type="file" accept="application/json,.json"><p class="muted">Redirect URI:<br><code>${status.redirect_uri}</code></p></div>
+        <div><label>Google OAuth credentials JSON</label><input id="google-credentials" type="file" accept="application/json,.json"><p class="muted" style="margin-top:4px;">Redirect URI:<br><code>${status.redirect_uri}</code></p></div>
         <div>
           <label>Connection status</label>
           <p class="path" style="display:flex;align-items:center;gap:8px;">
-            <img src="google-drive.ico" style="width:16px;height:16px;object-fit:contain;">
+            <svg class="i" style="width:18px;height:18px;color:${status.connected ? '#10b981' : '#f59e0b'};" aria-hidden="true"><use href="#drive"/></svg>
             <strong>${status.connected ? 'Connected to Google Drive' : 'Not connected'}</strong>
           </p>
           <p class="muted">Credentials: ${status.credentials_uploaded ? 'uploaded' : 'not uploaded'}</p>
         </div>
       </div>
-      <div style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
-        <label style="font-weight:700;margin-bottom:6px;display:block;color:#0f172a;">Google Drive Usage Mode</label>
+      <div style="margin-top:16px;background:var(--glass2);border:1px solid var(--line);border-radius:14px;padding:16px;">
+        <label style="font-weight:700;margin-bottom:6px;display:block;color:var(--tx);">Google Drive Usage Mode</label>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-          <select id="drive-usage-mode" class="input" style="flex:1;min-width:280px;padding:9px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;background:#fff;">
+          <select id="drive-usage-mode" class="input" style="flex:1;min-width:280px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13.5px;background:var(--glass2);">
             <option value="backup_and_client" ${status.google_drive_mode === 'backup_and_client' || !status.google_drive_mode ? 'selected' : ''}>Use Google Drive for backup And Client</option>
             <option value="only_client" ${status.google_drive_mode === 'only_client' ? 'selected' : ''}>Only Client</option>
             <option value="only_backup" ${status.google_drive_mode === 'only_backup' ? 'selected' : ''}>Only Backup</option>
             <option value="disabled" ${status.google_drive_mode === 'disabled' ? 'selected' : ''}>Disable</option>
           </select>
-          <button class="primary" id="save-drive-mode" style="padding:9px 18px;font-size:13px;">Save Drive Mode</button>
+          <button class="btn p" id="save-drive-mode" style="padding:9px 18px;font-size:13px;">Save Drive Mode</button>
         </div>
         <p class="muted" style="margin:6px 0 0;font-size:12px;">Controls whether Google Drive handles both Client Document Portals and System Backups, is dedicated solely to Client Portals or Backups, or is disabled.</p>
       </div>
-      <div class="actions" style="margin-top:20px;">
-        <button class="secondary" id="upload-google">Upload credentials</button>
-        <button class="primary" id="connect-google" style="display:inline-flex;align-items:center;gap:6px;"><img src="google-drive.ico" style="width:16px;height:16px;object-fit:contain;"> Connect Google Drive</button>
-        <button class="secondary" id="create-portals">Create client folder links</button>
+      <div class="row" style="margin-top:20px;">
+        <button class="btn secondary" id="upload-google"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Upload credentials</button>
+        <button class="btn p" id="connect-google"><svg class="i" aria-hidden="true"><use href="#drive"/></svg>Connect Google Drive</button>
+        <button class="btn secondary" id="create-portals"><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Create client folder links</button>
       </div>
-      <div id="result"></div>
+      <div id="result" style="margin-top:12px;"></div>
     </div>
   `;
   const field = id => document.getElementById(id), result = field('result');
@@ -3837,16 +4192,16 @@ async function activity() {
   try { jobs = await api('/api/jobs'); } catch (_) {}
   try { activityLog = await api('/api/activity-log'); } catch (_) {}
   const eventIcon = (type) => {
-    if (type.includes('import')) return '<div class="event-icon import">📥</div>';
-    if (type.includes('replace')) return '<div class="event-icon replace">↻</div>';
-    if (type.includes('skip')) return '<div class="event-icon skip">→</div>';
-    if (type.includes('rename')) return '<div class="event-icon rename">✎</div>';
-    if (type.includes('folder') || type.includes('reconcil')) return '<div class="event-icon folder">📁</div>';
-    if (type.includes('revok') || type.includes('revert')) return '<div class="event-icon skip" style="background:#fee2e2;color:#991b1b;">↩</div>';
-    return '<div class="event-icon import">●</div>';
+    if (type.includes('import')) return '<div class="event-icon import"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#upload"/></svg></div>';
+    if (type.includes('replace')) return '<div class="event-icon replace"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#refresh"/></svg></div>';
+    if (type.includes('skip')) return '<div class="event-icon skip">&rarr;</div>';
+    if (type.includes('rename')) return '<div class="event-icon rename"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#edit"/></svg></div>';
+    if (type.includes('folder') || type.includes('reconcil')) return '<div class="event-icon folder"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#folder"/></svg></div>';
+    if (type.includes('revok') || type.includes('revert')) return '<div class="event-icon skip" style="background:#fee2e2;color:#991b1b;"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#refresh"/></svg></div>';
+    return '<div class="event-icon import"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#activity"/></svg></div>';
   };
   content.innerHTML = `
-    <div class="card">
+    <div class="glass card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div>
           <h1>Recent filing activity</h1>
@@ -3854,45 +4209,47 @@ async function activity() {
         </div>
       </div>
       <div id="activity-alert"></div>
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>User</th>
-            <th>Client</th>
-            <th>Destination Directory</th>
-            <th>Document</th>
-            <th>Status</th>
-            <th style="text-align:right;">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${jobs.length === 0 ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:18px;">No filing activity recorded yet.</td></tr>' : jobs.map((j, idx) => `
-            <tr style="${j.status === 'revoked' ? 'opacity:0.65;background:#f8fafc;' : ''}">
-              <td>${new Date(j.created_at).toLocaleString()}</td>
-              <td><b>${escapeHtml(j.actor || 'Host')}</b></td>
-              <td><b>${escapeHtml(j.client_name)}</b><br><small class="muted">${escapeHtml(j.client_file_no)}</small></td>
-              <td><code>${escapeHtml(j.destination_folder || j.target_folder || (j.service + ' / ' + j.period))}</code></td>
-              <td><b>${escapeHtml(j.document_name)}</b></td>
-              <td>
-                <span class="badge ${j.status === 'revoked' ? 'revoked' : (j.status === 'saved' ? 'approved' : 'pending')}">${escapeHtml(j.status)}</span>
-                ${j.reverted_at ? `<br><small class="muted">Reverted ${new Date(j.reverted_at).toLocaleTimeString()}</small>` : ''}
-              </td>
-              <td style="text-align:right;">
-                ${j.is_revocable && j.status !== 'revoked' ? `
-                  <button class="tpl-btn btn-sm btn-revert-job" data-id="${escapeHtml(j.id)}" data-doc="${escapeHtml(j.document_name)}" style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;font-weight:700;padding:4px 10px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">↩ Revert</button>
-                ` : (j.status === 'revoked' ? `
-                  <span style="color:#64748b;font-size:11px;font-style:italic;">Safe Archived</span>
-                ` : `
-                  <span class="muted" style="font-size:11px;">Completed</span>
-                `)}
-              </td>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Client</th>
+              <th>Destination Directory</th>
+              <th>Document</th>
+              <th>Status</th>
+              <th style="text-align:right;">Action</th>
             </tr>
-          `).join('')}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            ${jobs.length === 0 ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:18px;">No filing activity recorded yet.</td></tr>' : jobs.map((j, idx) => `
+              <tr style="${j.status === 'revoked' ? 'opacity:0.65;background:#f8fafc;' : ''}">
+                <td>${new Date(j.created_at).toLocaleString()}</td>
+                <td><b>${escapeHtml(j.actor || 'Host')}</b></td>
+                <td><b>${escapeHtml(j.client_name)}</b><br><small class="muted">${escapeHtml(j.client_file_no)}</small></td>
+                <td><code>${escapeHtml(j.destination_folder || j.target_folder || (j.service + ' / ' + j.period))}</code></td>
+                <td><b>${escapeHtml(j.document_name)}</b></td>
+                <td>
+                  <span class="chip ${j.status === 'revoked' ? 'w' : (j.status === 'saved' ? '' : 'w')}">${escapeHtml(j.status)}</span>
+                  ${j.reverted_at ? `<br><small class="muted">Reverted ${new Date(j.reverted_at).toLocaleTimeString()}</small>` : ''}
+                </td>
+                <td style="text-align:right;">
+                  ${j.is_revocable && j.status !== 'revoked' ? `
+                    <button class="btn ib d tip btn-revert-job" data-t="Revert" data-id="${escapeHtml(j.id)}" data-doc="${escapeHtml(j.document_name)}" aria-label="Revert"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg></button>
+                  ` : (j.status === 'revoked' ? `
+                    <span style="color:#64748b;font-size:11px;font-style:italic;">Safe Archived</span>
+                  ` : `
+                    <span class="muted" style="font-size:11px;">Completed</span>
+                  `)}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div class="card">
+    <div class="glass card">
       <h2>System Activity Log</h2>
       <p class="muted">Import, replace, rename, reconciliation, folder, and security events.</p>
       ${activityLog.length === 0 ? '<p class="muted">No activity events recorded yet.</p>' :
@@ -3943,113 +4300,119 @@ async function usersPage() {
   const pendingRequests = data.requests.filter(r => r.status === 'pending');
 
   content.innerHTML = `
-    <div class="card">
-      <h1>Users & Approved Devices</h1>
-      <p class="muted">Manage office PCs, staff accounts, and approve new device access requests.</p>
-    </div>
-
-    <div class="card">
-      <h2>Pending Device Access Requests (${pendingRequests.length})</h2>
+    ${pendingRequests.length > 0 ? `
+    <section class="glass card" style="border-color:rgba(245,158,11,0.4);margin-bottom:16px;">
+      <h2 style="color:var(--wn);"><svg class="i"><use href="#alert"/></svg>Pending device access requests (${pendingRequests.length})</h2>
       <div id="pending-requests-container">
-        ${pendingRequests.length === 0 ? '<p class="muted">No pending access requests.</p>' : pendingRequests.map(r => `
-          <div class="req-item" id="req-${r.request_id}">
+        ${pendingRequests.map(r => `
+          <div class="req-item" id="req-${r.request_id}" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);">
             <div class="req-meta">
-              <b>👤 User: ${escapeHtml(r.user_id)}</b>
-              <span>💻 Device: <b>${escapeHtml(r.device_name)}</b> &nbsp;|&nbsp; 🌐 IP: <code>${escapeHtml(r.ip_address)}</code></span><br>
+              <b>${escapeHtml(r.user_id)}</b> &middot; Device: <strong>${escapeHtml(r.device_name)}</strong> (<code>${escapeHtml(r.ip_address)}</code>)<br>
               <small class="muted">Requested at: ${new Date(r.created_at).toLocaleString()}</small>
             </div>
-            <div class="actions" style="margin-top:0;">
-              <button class="primary btn-sm btn-approve" data-id="${r.request_id}">APPROVE</button>
-              <button class="secondary btn-sm btn-reject" data-id="${r.request_id}">REJECT</button>
+            <div class="acts">
+              <button class="btn p btn-sm btn-approve" data-id="${r.request_id}">Approve</button>
+              <button class="btn d btn-sm btn-reject" data-id="${r.request_id}">Reject</button>
             </div>
           </div>
         `).join('')}
       </div>
-      <div id="req-result"></div>
-    </div>
+      <div id="req-result" style="margin-top:10px;"></div>
+    </section>
+    ` : ''}
 
-    <div class="card">
-      <h2>Approved Devices & Office PCs</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Device Name</th>
-            <th>User</th>
-            <th>IP Address</th>
-            <th>Last Activity</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.devices.map(d => `
+    <section class="glass card" style="margin-bottom:16px;">
+      <h2><svg class="i"><use href="#users"/></svg>Approved devices</h2>
+      <div class="tw">
+        <table>
+          <thead>
             <tr>
-              <td><b>${escapeHtml(d.device_name)}</b><br><small style="font-family:monospace;">${escapeHtml(d.device_id.substring(0, 16))}...</small></td>
-              <td>${escapeHtml(d.user_id)}</td>
-              <td><code>${escapeHtml(d.ip_address)}</code></td>
-              <td>${d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Never'}</td>
-              <td><span class="badge ${d.status}">${escapeHtml(d.status)}</span></td>
-              <td>
-                ${d.status === 'approved' ? `
-                  <button class="secondary btn-sm btn-toggle-dev" data-id="${d.device_id}" data-status="disabled">Disable</button>
-                  <button class="secondary btn-sm btn-revoke btn-revoke-dev" data-id="${d.device_id}">Revoke</button>
-                ` : d.status === 'disabled' ? `
-                  <button class="primary btn-sm btn-toggle-dev" data-id="${d.device_id}" data-status="approved">Enable</button>
-                  <button class="secondary btn-sm btn-revoke btn-revoke-dev" data-id="${d.device_id}">Revoke</button>
-                ` : `<span class="muted">Revoked</span>`}
-              </td>
+              <th>Device</th>
+              <th>User</th>
+              <th>IP Address</th>
+              <th>Last active</th>
+              <th>Status</th>
+              <th style="text-align:right;">Actions</th>
             </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <h2>Registered User Accounts</h2>
-        <span class="muted" style="font-size:12px;">Host Admin Credentials Vault</span>
+          </thead>
+          <tbody>
+            ${data.devices.map(d => `
+              <tr>
+                <td><b>${escapeHtml(d.device_name)}</b><br><small class="muted" style="font-family:monospace;">${escapeHtml((d.device_id || '').substring(0, 16))}...</small></td>
+                <td>${escapeHtml(d.user_id)}</td>
+                <td><code>${escapeHtml(d.ip_address)}</code></td>
+                <td>${d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Never'}</td>
+                <td><span class="chip ${d.status === 'approved' ? '' : 'w'}">${escapeHtml(d.status)}</span></td>
+                <td>
+                  <div class="acts">
+                    ${d.status === 'approved' ? `
+                      <button class="btn btn-sm btn-toggle-dev" data-id="${d.device_id}" data-status="disabled">Disable</button>
+                      <button class="btn ib d tip btn-revoke-dev" data-t="Revoke" aria-label="Revoke device" data-id="${d.device_id}"><svg class="i"><use href="#trash"/></svg></button>
+                    ` : d.status === 'disabled' ? `
+                      <button class="btn p btn-sm btn-toggle-dev" data-id="${d.device_id}" data-status="approved">Enable</button>
+                      <button class="btn ib d tip btn-revoke-dev" data-t="Revoke" aria-label="Revoke device" data-id="${d.device_id}"><svg class="i"><use href="#trash"/></svg></button>
+                    ` : `<span class="muted">Revoked</span>`}
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       </div>
-      <div id="users-alert"></div>
-      <table>
-        <thead>
-          <tr>
-            <th>User ID</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Password (Host View)</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.users.map(u => `
+    </section>
+
+    <section class="glass card">
+      <div class="row" style="margin-bottom:12px;">
+        <h2><svg class="i"><use href="#users"/></svg>User accounts</h2>
+        <span class="sp"></span>
+        <div id="users-alert"></div>
+      </div>
+      <div class="tw">
+        <table>
+          <thead>
             <tr>
-              <td><b>${escapeHtml(u.user_id)}</b></td>
-              <td>${u.role === 'host' ? '<b>Host Admin</b>' : 'Staff'}</td>
-              <td><span class="badge ${u.status}">${escapeHtml(u.status)}</span></td>
-              <td>
-                <div style="display:flex;align-items:center;gap:6px;">
-                  <span class="pwd-display" data-uid="${escapeHtml(u.user_id)}" style="font-family:monospace;font-size:13px;letter-spacing:1px;">••••••••</span>
-                  <button class="secondary btn-sm btn-toggle-pwd" data-uid="${escapeHtml(u.user_id)}" data-pwd="${escapeHtml(u.password_text || '')}" title="Show / Hide Password" style="padding:2px 7px;font-size:11px;">👁 View</button>
-                  <button class="tpl-btn btn-sm btn-change-pwd" data-uid="${escapeHtml(u.user_id)}" style="padding:2px 8px;font-size:11px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-weight:600;border-radius:6px;cursor:pointer;">✏ Change</button>
-                </div>
-              </td>
-              <td>${new Date(u.created_at).toLocaleDateString()}</td>
-              <td>
-                ${u.role !== 'host' ? (u.status === 'active' ? `
-                  <button class="secondary btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="disabled">Disable</button>
-                ` : `
-                  <button class="primary btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="active">Enable</button>
-                `) : `<span class="muted">Primary Owner</span>`}
-              </td>
+              <th>User</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Password (Host view)</th>
+              <th>Created</th>
+              <th style="text-align:right;">Actions</th>
             </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            ${data.users.map(u => `
+              <tr>
+                <td><b>${escapeHtml(u.user_id)}</b></td>
+                <td>${u.role === 'host' ? '<b>Host Admin</b>' : 'Staff'}</td>
+                <td><span class="chip ${u.status === 'active' ? '' : 'w'}">${escapeHtml(u.status)}</span></td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="pwd-display" data-uid="${escapeHtml(u.user_id)}" style="font-family:monospace;font-size:13px;letter-spacing:1px;">••••••••</span>
+                    <button class="btn ib tip btn-toggle-pwd" data-uid="${escapeHtml(u.user_id)}" data-pwd="${escapeHtml(u.password_text || '')}" data-t="Show/Hide" aria-label="View Password"><svg class="i"><use href="#search"/></svg></button>
+                  </div>
+                </td>
+                <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}</td>
+                <td>
+                  <div class="acts">
+                    ${u.role !== 'host' ? (u.status === 'active' ? `
+                      <button class="btn btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="disabled">Disable</button>
+                    ` : `
+                      <button class="btn p btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="active">Enable</button>
+                    `) : `<span class="chip">Owner</span>`}
+                    <button class="btn btn-sm btn-change-pwd" data-uid="${escapeHtml(u.user_id)}">Reset password</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:12px;font-size:12.5px;">Passwords are secured in SQLite vault. Reset allows configuring a new password directly.</p>
+    </section>
   `;
 
   // Attach handlers
+
   content.querySelectorAll('.btn-approve').forEach(btn => {
     btn.onclick = async () => {
       try {
@@ -4219,173 +4582,112 @@ const escapeHtml = value => String(value || '').replace(/[&<>'"]/g, char => ({ '
 
 async function dashboard() {
   content.innerHTML = `
-    <div class="card dash-hero">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
-        <div>
-          <h1 style="margin:0 0 4px;font-size:24px;font-weight:800;letter-spacing:-0.5px;">Executive Dashboard</h1>
-          <p class="muted" style="margin:0;font-size:13px;">Real-time overview & operations control center for ${escapeHtml(settings.firm_name || 'VS Database')}</p>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button class="dash-action-btn primary" id="dash-quick-add-client">➕ Add Client</button>
-          <button class="dash-action-btn" id="dash-quick-save-file">📤 Save File</button>
-        </div>
+    <!-- Prominent Global Search Bar -->
+    <label class="field" style="margin-bottom:16px;">
+      <svg class="i" aria-hidden="true"><use href="#search"/></svg>
+      <input type="text" id="dash-global-search" class="dash-search-input" placeholder="Search client, file number, folder, or file..." autocomplete="off" aria-label="Search client, file number, folder or file">
+    </label>
+    <div id="dash-search-results" class="dash-search-results" style="display:none;"></div>
+
+    <!-- Quick Stats Grid -->
+    <div class="grid5" id="dash-stats-grid">
+      <div class="glass stat" id="card-stat-clients" style="cursor:pointer;" title="Click to view Clients">
+        <span>Clients</span>
+        <b id="stat-total-clients">${clients.length || '0'}</b>
       </div>
-
-      <!-- Prominent Global Search Bar -->
-      <div class="dash-search-box">
-        <span class="dash-search-icon">🔍</span>
-        <input type="text" id="dash-global-search" class="dash-search-input" placeholder="Search client, file number, folder, or file..." autocomplete="off">
-        <div id="dash-search-results" class="dash-search-results"></div>
+      <div class="glass stat" id="card-stat-folders" style="cursor:pointer;" title="Click to view Folders">
+        <span>Folders</span>
+        <b id="stat-total-folders">...</b>
       </div>
-
-      <!-- Quick Stats Grid -->
-      <div class="dash-stats-grid" id="dash-stats-grid">
-        <div class="dash-stat-card" id="card-stat-clients" style="cursor:pointer;">
-          <div class="dash-stat-top">
-            <span class="dash-stat-lbl">Total Clients</span>
-            <div class="dash-stat-icon">👥</div>
-          </div>
-          <div class="dash-stat-val" id="stat-total-clients">${clients.length || '0'}</div>
-        </div>
-        <div class="dash-stat-card" id="card-stat-folders" style="cursor:pointer;">
-          <div class="dash-stat-top">
-            <span class="dash-stat-lbl">Total Folders</span>
-            <div class="dash-stat-icon">📁</div>
-          </div>
-          <div class="dash-stat-val" id="stat-total-folders">...</div>
-        </div>
-        <div class="dash-stat-card" id="card-stat-files" style="cursor:pointer;">
-          <div class="dash-stat-top">
-            <span class="dash-stat-lbl">Total Files</span>
-            <div class="dash-stat-icon">📄</div>
-          </div>
-          <div class="dash-stat-val" id="stat-total-files">...</div>
-        </div>
-        <div class="dash-stat-card" id="card-stat-cloud" style="cursor:pointer;">
-          <div class="dash-stat-top">
-            <span class="dash-stat-lbl">Cloud Files</span>
-            <div class="dash-stat-icon" style="background:#e8f0fe;"><img src="google-drive.ico" alt="Drive" style="width:22px;height:22px;object-fit:contain;"></div>
-          </div>
-          <div class="dash-stat-val" id="stat-cloud-files">...</div>
-        </div>
-        <div class="dash-stat-card" id="card-stat-issues" style="cursor:pointer;">
-          <div class="dash-stat-top">
-            <span class="dash-stat-lbl">Pending / Attention</span>
-            <div class="dash-stat-icon" style="background:#fef2f2;color:#dc2626;">⚠️</div>
-          </div>
-          <div class="dash-stat-val" id="stat-pending-issues">0</div>
-        </div>
+      <div class="glass stat" id="card-stat-files" style="cursor:pointer;" title="Click to view Saved Files">
+        <span>Files</span>
+        <b id="stat-total-files">...</b>
       </div>
-
-      <!-- Quick Actions Grid -->
-      <div style="margin-bottom:20px;">
-        <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);">Quick Actions</h3>
-        <div class="dash-actions-bar">
-          <button class="dash-action-btn" id="qa-add-client">➕ Add Client</button>
-          <button class="dash-action-btn" id="qa-import-clients">📥 Import Clients</button>
-          <button class="dash-action-btn" id="qa-open-explorer">📂 Open File Explorer</button>
-          <button class="dash-action-btn" id="qa-save-file">📤 Save / Upload File</button>
-          <button class="dash-action-btn" id="qa-pdf-security">🔐 PDF Security</button>
-          <button class="dash-action-btn" id="qa-reconcile">🔄 Reconcile Filesystem</button>
-          <button class="dash-action-btn" id="qa-backup">💾 Backup System</button>
-        </div>
+      <div class="glass stat" id="card-stat-cloud" style="cursor:pointer;" title="Click to view Drive Sharing">
+        <span>Cloud files</span>
+        <b id="stat-cloud-files">...</b>
       </div>
-
-      <!-- Pending / Attention Required Alert Strip -->
-      <div id="dash-attention-container" style="margin-bottom:20px;"></div>
-
-      <!-- Two-Column Layout: Recent Activity & Storage Overview -->
-      <!-- Two-Column Layout: Recent Activity & Storage Overview -->
-      <div class="dash-two-col">
-        <!-- Column 1: Recent Activity -->
-        <div style="background:rgba(255,255,255,0.7);padding:20px;border-radius:18px;border:1px solid rgba(226,232,240,0.8);display:flex;flex-direction:column;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-            <h3 style="margin:0;font-size:15px;font-weight:700;">📝 Recent Activity</h3>
-            <button class="btn-view-all" id="dash-view-all-activity">
-              <span>View All</span>
-              <span style="font-size:13px;line-height:1;">→</span>
-            </button>
-          </div>
-          <div id="dash-recent-activity-list" style="flex:1;">
-            <p class="muted" style="font-size:12px;">Loading recent activities...</p>
-          </div>
-        </div>
-
-        <!-- Column 2: Storage & Sync Overview with Live Storage Levels -->
-        <div style="background:rgba(255,255,255,0.7);padding:20px;border-radius:18px;border:1px solid rgba(226,232,240,0.8);">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-            <h3 style="margin:0;font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px;">
-              <span style="font-size:16px;">💾</span> Storage & Cloud Overview
-            </h3>
-            <span id="dash-drive-badge" class="summary-badge" style="font-size:11px;">Checking Drive...</span>
-          </div>
-
-          <!-- Local Storage Level Block -->
-          <div class="storage-level-box">
-            <div class="storage-level-header">
-              <span style="display:flex;align-items:center;gap:6px;">
-                <span>📁</span>
-                <span>Local Disk Storage</span>
-              </span>
-              <span id="dash-local-percent-badge" class="summary-badge ok" style="font-size:10.5px;">0% Used</span>
-            </div>
-            <div class="storage-progress-track">
-              <div id="dash-local-progress-bar" class="storage-progress-bar local" style="width: 0%;"></div>
-            </div>
-            <div class="storage-level-details">
-              <div>
-                <strong>Disk Usage:</strong> <span id="dash-local-usage-text">Calculating...</span>
-              </div>
-              <div>
-                <strong>Available:</strong> <span id="dash-local-free-text" style="color:#166534;font-weight:700;">...</span>
-              </div>
-            </div>
-            <div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(226,232,240,0.8);display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);">
-              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;">Path: <code id="dash-local-path-text">${escapeHtml(settings.local_root || 'D:\\Code Trial')}</code></span>
-              <span>Office Data: <strong id="dash-local-managed-text" style="color:var(--blue);">0 B</strong></span>
-            </div>
-          </div>
-
-          <!-- Google Drive Cloud Storage Level Block -->
-          <div class="storage-level-box">
-            <div class="storage-level-header">
-              <span style="display:flex;align-items:center;gap:6px;">
-                <img src="google-drive.ico" alt="Drive" style="width:16px;height:16px;object-fit:contain;">
-                <span>Google Drive Cloud Storage</span>
-              </span>
-              <span id="dash-drive-cloud-status" class="summary-badge" style="font-size:10.5px;">Checking...</span>
-            </div>
-            <div id="dash-drive-storage-body">
-              <div class="storage-progress-track">
-                <div id="dash-drive-progress-bar" class="storage-progress-bar drive" style="width: 0%;"></div>
-              </div>
-              <div class="storage-level-details">
-                <div>
-                  <strong>Cloud Quota:</strong> <span id="dash-drive-usage-text">Connecting...</span>
-                </div>
-                <div>
-                  <strong>Available:</strong> <span id="dash-drive-free-text" style="color:#166534;font-weight:700;">...</span>
-                </div>
-              </div>
-              <div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(226,232,240,0.8);display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);">
-                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;">Account: <strong id="dash-drive-account-text">...</strong></span>
-                <span id="dash-drive-folder-text">Synced</span>
-              </div>
-            </div>
-          </div>
-
-          <div style="display:flex;gap:8px;margin-top:14px;">
-            <button class="secondary" id="dash-open-drive-tab" style="flex:1;font-size:12px;padding:8px;display:inline-flex;align-items:center;justify-content:center;gap:6px;"><img src="google-drive.ico" style="width:14px;height:14px;object-fit:contain;"> Manage Cloud Drive</button>
-            <button class="secondary" id="dash-open-backup-tab" style="flex:1;font-size:12px;padding:8px;">Backup & Restore</button>
-          </div>
-        </div>
+      <div class="glass stat" id="card-stat-issues" style="cursor:pointer;" title="Click to review Attention Items">
+        <span>Needs attention</span>
+        <b id="stat-pending-issues">0</b>
       </div>
+    </div>
+
+    <!-- Quick Actions Row -->
+    <div class="row" style="margin-top:16px;">
+      <button class="btn p" id="dash-quick-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
+      <button class="btn" id="dash-quick-save-file"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Save file</button>
+      <button class="btn" id="qa-open-explorer"><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Open explorer</button>
+      <button class="btn" id="qa-reconcile"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Reconcile folders</button>
+      <button class="btn" id="qa-backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg>Backup</button>
+      <button class="btn" id="qa-import-clients" style="display:none;"></button>
+      <button class="btn" id="qa-pdf-security" style="display:none;"></button>
+      <button class="btn" id="qa-add-client" style="display:none;"></button>
+      <button class="btn" id="qa-save-file" style="display:none;"></button>
+    </div>
+
+    <!-- Attention Container -->
+    <div id="dash-attention-container" style="display:none;margin-top:16px;"></div>
+
+    <!-- Two-Column Layout: Recent Activity & Storage Overview -->
+    <div class="two" style="margin-top:16px;">
+      <!-- Column 1: Recent Activity -->
+      <section class="glass card" style="display:flex;flex-direction:column;">
+        <div class="row" style="margin-bottom:12px;">
+          <h2 style="margin:0;"><svg class="i" aria-hidden="true"><use href="#activity"/></svg>Recent activity</h2>
+          <span class="sp"></span>
+          <button class="btn" id="dash-view-all-activity" style="min-height:32px;padding:0 12px;font-size:12px;">View all <svg class="i" style="width:14px;height:14px;"><use href="#send"/></svg></button>
+        </div>
+        <ul class="list" id="dash-recent-activity-list" style="flex:1;">
+          <li><span class="muted">Loading recent activities...</span></li>
+        </ul>
+      </section>
+
+      <!-- Column 2: Storage -->
+      <section class="glass card">
+        <div class="row" style="margin-bottom:14px;">
+          <h2 style="margin:0;"><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Storage</h2>
+          <span class="sp"></span>
+          <span id="dash-drive-badge" class="chip" style="font-size:11px;">Checking Drive...</span>
+        </div>
+
+        <!-- Local Disk -->
+        <div class="row">
+          <b>Local disk</b>
+          <span class="sp"></span>
+          <span id="dash-local-percent-badge" class="chip w">0% used</span>
+        </div>
+        <div class="bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+          <i id="dash-local-progress-bar" style="width: 0%;"></i>
+        </div>
+        <p class="muted" style="font-size:12.5px;margin-bottom:16px;line-height:1.5;">
+          <span id="dash-local-free-text">...</span> free of <span id="dash-local-usage-text">Calculating...</span>. Backups share this disk. <a href="#backup" id="dash-open-backup-tab" style="color:var(--pc);font-weight:600;text-decoration:none;">Move backups to Drive</a>
+          <span style="display:block;margin-top:4px;font-size:11.5px;">Path: <code id="dash-local-path-text">${escapeHtml(settings.local_root || 'D:\\Code Trial')}</code> &middot; Managed: <strong id="dash-local-managed-text" style="color:var(--pc);">0 B</strong></span>
+        </p>
+
+        <!-- Google Drive Cloud Storage -->
+        <div class="row" style="margin-top:16px;">
+          <b>Google Drive</b>
+          <span class="sp"></span>
+          <span id="dash-drive-cloud-status" class="chip">Connected</span>
+        </div>
+        <div class="bar" role="progressbar">
+          <i id="dash-drive-progress-bar" style="width: 0%; background: #10b981;"></i>
+        </div>
+        <div id="dash-drive-storage-body">
+          <p class="muted" style="font-size:12.5px;line-height:1.5;">
+            <span id="dash-drive-free-text">...</span> free of <span id="dash-drive-usage-text">Connecting...</span> quota.
+            <span style="display:block;margin-top:4px;font-size:11.5px;">Account: <strong id="dash-drive-account-text">...</strong> &middot; Status: <span id="dash-drive-folder-text">Synced</span> &middot; <a href="#drive" id="dash-open-drive-tab" style="color:var(--pc);font-weight:600;text-decoration:none;">Manage Drive</a></span>
+          </p>
+        </div>
+      </section>
     </div>
   `;
 
   attachDashboardEvents();
   loadDashboardData();
 }
+
 
 function attachDashboardEvents() {
   const navigateTo = (page) => {
@@ -4736,18 +5038,19 @@ async function loadDashboardActivity() {
 
     const acts = data.activities || [];
     if (!acts.length) {
-      activityListEl.innerHTML = `<p class="muted" style="font-size:12px;">No activity recorded yet.</p>`;
+      activityListEl.innerHTML = `<li><span class="muted" style="font-size:12px;">No activity recorded yet.</span></li>`;
     } else {
       activityListEl.innerHTML = acts.map(a => `
-        <div class="dash-activity-item">
-          <div style="flex:1;">
+        <li>
+          <span>
             <strong>${escapeHtml(formatActionName(a.action || a.event_type))}</strong>${a.details || a.detail ? `: ${escapeHtml(a.details || a.detail)}` : ''}
-            ${a.client_file_no ? `<span class="file-meta-badge" style="font-size:10px;margin-left:4px;">${escapeHtml(a.client_file_no)}</span>` : ''}
-          </div>
-          <div class="dash-activity-time">${a.created_at ? new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</div>
-        </div>
+            ${a.client_file_no ? `<br><small class="muted">Client ${escapeHtml(a.client_file_no)}</small>` : ''}
+          </span>
+          <small class="muted">${a.created_at ? new Date(a.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}</small>
+        </li>
       `).join('');
     }
+
   } catch (err) {
     console.warn('Recent activity load error:', err);
   }
@@ -4766,103 +5069,61 @@ async function backupPage() {
   const backupDir = settings.backup_dir || 'D:\\AntiGravity Automation\\VS_Desktop_App Old\\data\\backups';
 
   content.innerHTML = `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
-        <div>
-          <h1 style="margin:0 0 4px;font-size:22px;font-weight:800;">Backup & Restore</h1>
-          <p class="muted" style="margin:0;font-size:13px;">Full system state protection: database, clients, folder inventory, save jobs, portal configurations, and settings.</p>
-        </div>
-        <div style="display:flex;gap:10px;">
-          <button class="primary" id="btn-create-backup" style="display:inline-flex;align-items:center;gap:6px;padding:10px 18px;font-weight:700;">💾 Create Backup</button>
-          <button class="secondary" id="btn-restore-file" style="display:inline-flex;align-items:center;gap:6px;padding:10px 18px;font-weight:700;">🔄 Restore from File</button>
-          <input type="file" id="backup-file-input" accept=".vsbackup" style="display:none;">
-        </div>
-      </div>
-
-      <!-- Prominent Physical Storage Location Banner -->
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-radius:16px;background:rgba(255,255,255,0.75);border:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap;gap:12px;">
-        <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:280px;">
-          <div style="font-size:24px;width:44px;height:44px;border-radius:12px;background:#eef2ff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">📁</div>
-          <div>
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px;">Physical Backup Storage Directory</div>
-            <div style="font-family:ui-monospace,monospace;font-size:13px;font-weight:700;color:var(--ink);margin-top:2px;">
-              ${escapeHtml(backupDir)}
-            </div>
-          </div>
-        </div>
-        <button class="secondary btn-sm" id="btn-open-backup-dir" style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;font-weight:700;border-radius:11px;font-size:12px;cursor:pointer;">
-          📂 Open in File Explorer
-        </button>
-      </div>
-
-      <!-- Backup Schedule & Retention Settings -->
-      <div style="background:rgba(255,255,255,0.7);border:1px solid var(--line);border-radius:18px;padding:18px 20px;margin-bottom:24px;">
-        <h3 style="margin:0 0 14px;font-size:14px;font-weight:700;color:var(--text);">⚙️ Automatic Schedule & Retention Settings</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;align-items:end;">
-          <div>
-            <label for="backup-freq-select" style="font-weight:700;font-size:12px;">Automatic Backup Schedule</label>
-            <select id="backup-freq-select">
-              <option value="Daily" ${settings.backup_frequency === 'Daily' ? 'selected' : ''}>Daily (Recommended)</option>
-              <option value="Weekly" ${settings.backup_frequency === 'Weekly' ? 'selected' : ''}>Weekly</option>
-              <option value="Monthly" ${settings.backup_frequency === 'Monthly' ? 'selected' : ''}>Monthly</option>
-              <option value="Disabled" ${settings.backup_frequency === 'Disabled' ? 'selected' : ''}>Disabled</option>
-            </select>
-          </div>
-          <div>
-            <label for="backup-retention-count" style="font-weight:700;font-size:12px;">Keep Last N Backups</label>
-            <input type="number" id="backup-retention-count" value="${escapeHtml(settings.backup_retention_count || '10')}" min="1" max="100">
-          </div>
-          <div>
-            <label for="backup-retention-days" style="font-weight:700;font-size:12px;">Keep Backups For (Days)</label>
-            <input type="number" id="backup-retention-days" value="${escapeHtml(settings.backup_retention_days || '60')}" min="7" max="365">
-          </div>
-          <div>
-            <button class="primary" id="btn-save-backup-settings" style="width:100%;padding:10px;font-weight:700;">💾 Save Schedule</button>
-          </div>
-        </div>
-        <div id="backup-settings-result" style="margin-top:10px;"></div>
-      </div>
-
-      <!-- Last Backup Status Card -->
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-radius:14px;background:#f0fdf4;border:1px solid #bbf7d0;margin-bottom:24px;flex-wrap:wrap;gap:10px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div style="font-size:24px;">🛡️</div>
-          <div>
-            <div style="font-size:13px;font-weight:700;color:#166534;">Last System Backup: <span id="last-backup-display">${settings.last_backup_time ? new Date(settings.last_backup_time).toLocaleString() : 'None Recorded'}</span></div>
-            <div style="font-size:11px;color:#15803d;">System State: <span class="backup-badge-verified">✓ ${escapeHtml(settings.last_backup_status || 'Verified')}</span></div>
-          </div>
-        </div>
-        <div class="muted" style="font-size:11px;">Automatic point-in-time SQLite snapshot with cryptographic SHA256 integrity</div>
-      </div>
-
-      <!-- Backup History Table -->
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <h3 style="margin:0;font-size:15px;font-weight:700;">📜 Backup History</h3>
-            <span id="backup-count-badge" class="file-meta-badge" style="font-size:11px;">Loading...</span>
-          </div>
-          <button class="alt" id="btn-refresh-backups" style="font-size:12px;padding:5px 12px;cursor:pointer;">🔄 Refresh List</button>
-        </div>
-        <div class="table-container">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead>
-              <tr style="text-align:left;border-bottom:1.5px solid var(--line);">
-                <th style="padding:10px;">Date & Time</th>
-                <th style="padding:10px;">Type</th>
-                <th style="padding:10px;">File Name</th>
-                <th style="padding:10px;">Size</th>
-                <th style="padding:10px;">Status</th>
-                <th style="padding:10px;text-align:right;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="backup-history-tbody">
-              <tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted);">Loading backup history...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+    <!-- Top Banner -->
+    <div class="banner">
+      <svg class="i"><use href="#backup"/></svg>
+      <span>Last backup <span id="last-backup-display">${escapeHtml(settings.last_backup_time ? new Date(settings.last_backup_time).toLocaleString() : 'None Recorded')}</span> &middot; verified (SHA-256)</span>
+      <span style="flex:1"></span>
+      <button class="btn p" id="btn-create-backup"><svg class="i"><use href="#plus"/></svg>Create backup</button>
+      <button class="btn" id="btn-restore-file"><svg class="i"><use href="#refresh"/></svg>Restore from file</button>
+      <input type="file" id="backup-file-input" accept=".vsbackup" style="display:none;">
     </div>
+
+    <!-- Schedule & Retention Glass Card -->
+    <section class="glass card">
+      <h2><svg class="i"><use href="#setup"/></svg>Schedule and retention</h2>
+      <div class="row">
+        <select class="btn" id="backup-freq-select" aria-label="Schedule">
+          <option value="Daily" ${settings.backup_frequency === 'Daily' ? 'selected' : ''}>Daily (recommended)</option>
+          <option value="Weekly" ${settings.backup_frequency === 'Weekly' ? 'selected' : ''}>Weekly</option>
+          <option value="Monthly" ${settings.backup_frequency === 'Monthly' ? 'selected' : ''}>Monthly</option>
+          <option value="Disabled" ${settings.backup_frequency === 'Disabled' ? 'selected' : ''}>Disabled</option>
+        </select>
+        <label class="muted" style="display:flex;align-items:center;gap:6px;">Keep last <input class="field" id="backup-retention-count" style="width:70px;min-height:38px;padding:0 8px;text-align:center;" value="${escapeHtml(settings.backup_retention_count || '10')}"> backups</label>
+        <label class="muted" style="display:flex;align-items:center;gap:6px;">for <input class="field" id="backup-retention-days" style="width:70px;min-height:38px;padding:0 8px;text-align:center;" value="${escapeHtml(settings.backup_retention_days || '60')}"> days</label>
+        <span class="sp"></span>
+        <button class="btn" id="btn-save-backup-settings">Save schedule</button>
+        <button class="btn secondary" id="btn-open-backup-dir"><svg class="i"><use href="#folder"/></svg>Open folder</button>
+      </div>
+      <div id="backup-settings-result" style="margin-top:10px;"></div>
+      <p class="chip w" style="margin-top:14px;"><svg class="i"><use href="#alert"/></svg>Backups are stored on the same disk as your data. Add a Drive copy.</p>
+    </section>
+
+    <!-- Backup History Glass Card -->
+    <section class="glass card">
+      <div class="row" style="margin-bottom:14px;">
+        <h2><svg class="i"><use href="#backup"/></svg>Backup history <span class="muted" id="backup-count-badge" style="font-size:12.5px;font-weight:normal;margin-left:8px;">...</span></h2>
+        <span class="sp"></span>
+        <button class="btn ib tip" id="btn-refresh-backups" data-t="Refresh" aria-label="Refresh backups"><svg class="i"><use href="#refresh"/></svg></button>
+      </div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>File</th>
+              <th>Size</th>
+              <th>Status</th>
+              <th style="text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="backup-history-tbody">
+            <tr><td colspan="6" style="padding:20px;text-align:center;" class="muted">Loading backup history...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   `;
 
   attachBackupEvents();
@@ -4896,7 +5157,7 @@ function attachBackupEvents() {
       alert(`Backup failed: ${err.message}`);
     } finally {
       btn.disabled = false;
-      btn.textContent = '💾 Create Backup';
+      btn.innerHTML = `<svg class="i"><use href="#plus"/></svg>Create backup`;
     }
   });
 
@@ -4963,10 +5224,10 @@ async function loadBackupHistory() {
     const list = await api('/api/backups');
     if (countBadge) {
       const totalBytes = (list || []).reduce((acc, b) => acc + (b.size_bytes || 0), 0);
-      countBadge.textContent = `${list.length} Archive(s) • ${formatBytes(totalBytes)}`;
+      countBadge.textContent = `${list.length} archive(s) · ${formatBytes(totalBytes)}`;
     }
     if (!list.length) {
-      tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">No backups found. Click <strong>"Create Backup"</strong> to generate your first verified system snapshot.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="padding:24px;text-align:center;" class="muted">No backups found. Click <strong>"Create backup"</strong> to generate your first verified system snapshot.</td></tr>`;
       return;
     }
     const esc = escapeHtml;
@@ -4983,25 +5244,25 @@ async function loadBackupHistory() {
       } catch (_) {}
 
       const isEmergency = (b.backup_type || '').toLowerCase().includes('pre-restore') || (b.filename || '').includes('emergency');
-      const typeBadgeClass = isEmergency ? 'summary-badge conflict' : 'file-meta-badge';
-      const typeLabel = isEmergency ? 'Emergency Pre-Restore' : (b.backup_type ? (b.backup_type.charAt(0).toUpperCase() + b.backup_type.slice(1)) : 'Manual');
+      const typeLabel = isEmergency ? 'Emergency' : (b.backup_type ? (b.backup_type.charAt(0).toUpperCase() + b.backup_type.slice(1)) : 'Manual');
+      const isUnusuallySmall = (b.size_bytes || 0) < 50000;
 
       return `
-        <tr style="border-bottom:1px solid rgba(226,232,240,0.6);">
-          <td style="padding:10px;font-size:12.5px;font-weight:600;">${displayDate}</td>
-          <td style="padding:10px;"><span class="${typeBadgeClass}" style="font-size:10px;">${esc(typeLabel)}</span></td>
-          <td style="padding:10px;font-family:ui-monospace,monospace;font-size:11.5px;font-weight:600;color:var(--ink);">${esc(b.filename)}</td>
-          <td style="padding:10px;font-size:12px;">${formatBytes(b.size_bytes || 0)}</td>
-          <td style="padding:10px;">
+        <tr>
+          <td style="font-weight:600;">${displayDate}</td>
+          <td><span class="chip ${isEmergency ? 'w' : ''}">${esc(typeLabel)}</span></td>
+          <td><code>${esc(b.filename)}</code></td>
+          <td>${formatBytes(b.size_bytes || 0)}${isUnusuallySmall ? ' <span class="chip w">Unusually small</span>' : ''}</td>
+          <td>
             ${b.status === 'Verified' 
-              ? `<span class="backup-badge-verified">✓ Verified</span>` 
-              : `<span class="backup-badge-failed">⚠ ${esc(b.status)}</span>`}
+              ? `<span class="chip">Verified</span>` 
+              : `<span class="chip w">${esc(b.status)}</span>`}
           </td>
-          <td style="padding:10px;text-align:right;">
-            <div style="display:inline-flex;gap:6px;">
-              <button class="primary btn-sm btn-restore-item" data-file="${esc(b.filename)}" style="font-size:11px;padding:4px 10px;">Restore</button>
-              <a href="/api/backup/download/${encodeURIComponent(b.filename)}" download class="dash-action-btn btn-sm" style="font-size:11px;padding:4px 10px;text-decoration:none;">Download</a>
-              <button class="secondary btn-sm btn-delete-item" data-file="${esc(b.filename)}" style="font-size:11px;padding:4px 10px;color:#b91c1c;">Delete</button>
+          <td>
+            <div class="acts">
+              <button class="btn btn-sm btn-restore-item" data-file="${esc(b.filename)}">Restore</button>
+              <a href="/api/backup/download/${encodeURIComponent(b.filename)}" download class="btn ib tip" data-t="Download" aria-label="Download backup"><svg class="i"><use href="#dl"/></svg></a>
+              <button class="btn ib d tip btn-delete-item" data-file="${esc(b.filename)}" data-t="Delete" aria-label="Delete backup"><svg class="i"><use href="#trash"/></svg></button>
             </div>
           </td>
         </tr>
@@ -5043,6 +5304,11 @@ async function loadBackupHistory() {
 }
 
 async function render() {
+  if (current === 'vs-ai' || current === 'ai') {
+    document.body.classList.add('page-vs-ai-active');
+  } else {
+    document.body.classList.remove('page-vs-ai-active');
+  }
   if (current === 'dashboard') await dashboard();
   else if (current === 'setup') setup();
   else if (current === 'clients') clientsPage();
@@ -5051,7 +5317,7 @@ async function render() {
   else if (current === 'save') save();
   else if (current === 'backup') await backupPage();
   else if (current === 'users') await usersPage();
-  else if (current === 'pdf-studio') { if (typeof pdfStudioPage === 'function') await pdfStudioPage(); }
+  else if (current === 'pdf-studio' || current === 'studio') { if (typeof pdfStudioPage === 'function') await pdfStudioPage(); }
   else if (current === 'vs-ai' || current === 'ai') {
     if (typeof renderVsAi === 'function') await renderVsAi();
     else if (typeof render_page_vs_ai === 'function') await render_page_vs_ai();
@@ -5066,7 +5332,8 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 });
 
 function applyHashRoute() {
-  const hash = (window.location.hash || '').replace('#', '').trim();
+  const rawHash = (window.location.hash || '').replace('#', '').trim();
+  const hash = rawHash.split('?')[0];
   if (!hash || hash === current) return;
   if (hash === 'dashboard') {
     current = 'dashboard';
@@ -5074,7 +5341,7 @@ function applyHashRoute() {
   } else if (hash === 'save' || hash === 'save-files') {
     current = 'save';
     nav();
-  } else if (hash === 'pdf-studio') {
+  } else if (hash === 'pdf-studio' || hash === 'studio') {
     current = 'pdf-studio';
     nav();
   } else if (hash === 'vs-ai' || hash === 'ai') {
