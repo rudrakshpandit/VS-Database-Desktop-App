@@ -1,0 +1,1107 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>VS Database • Compiler Studio</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+    <link rel="icon" type="image/x-icon" href="app_icon.ico">
+
+    <style>
+        :root {
+            --tx: #0f172a;
+            --tx2: #475569;
+            --tx3: #94a3b8;
+            --glass: rgba(255, 255, 255, 0.68);
+            --glass2: rgba(255, 255, 255, 0.88);
+            --bd: rgba(255, 255, 255, 0.8);
+            --line: rgba(15, 23, 42, 0.08);
+            --pri: linear-gradient(135deg, #2563eb, #7c3aed);
+            --pri-hover: linear-gradient(135deg, #1d4ed8, #6d28d9);
+            --pri-glow: rgba(99, 102, 241, 0.28);
+            --ok: #059669;
+            --okb: rgba(16, 185, 129, 0.12);
+            --wn: #d97706;
+            --wnb: rgba(245, 158, 11, 0.15);
+            --er: #dc2626;
+            --erb: rgba(239, 68, 68, 0.12);
+            --sh: 0 10px 40px rgba(49, 46, 129, 0.12);
+            --bgA: #c7d2fe;
+            --bgB: #e9d5ff;
+            --bgC: #bae6fd;
+            --bgD: #eef2ff;
+            --ease: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+            color: var(--tx);
+            background: var(--bgD);
+            user-select: none;
+        }
+
+        /* Ambient Glass Orbs */
+        .orbs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+        .orbs i { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.75; }
+        .orbs i:nth-child(1) { width: 520px; height: 520px; background: var(--bgA); top: -140px; left: -100px; }
+        .orbs i:nth-child(2) { width: 460px; height: 460px; background: var(--bgB); right: -120px; top: 15%; }
+        .orbs i:nth-child(3) { width: 420px; height: 420px; background: var(--bgC); bottom: -140px; left: 35%; }
+
+        /* App Container */
+        .compiler-app {
+            position: relative;
+            z-index: 1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Titlebar */
+        .titlebar {
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            background: rgba(255, 255, 255, 0.55);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--line);
+            -webkit-app-region: drag;
+            app-region: drag;
+            flex-shrink: 0;
+        }
+
+        .titlebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .titlebar-brand img {
+            width: 22px;
+            height: 22px;
+            object-fit: contain;
+        }
+
+        .titlebar-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--tx);
+            letter-spacing: -0.01em;
+        }
+
+        .titlebar-badge {
+            font-size: 10.5px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(99, 102, 241, 0.1);
+            color: #4338ca;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            letter-spacing: 0.02em;
+        }
+
+        .titlebar-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            -webkit-app-region: no-drag;
+            app-region: no-drag;
+        }
+
+        .titlebar-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 26px;
+            border-radius: 8px;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            background: rgba(255, 255, 255, 0.65);
+            color: var(--tx2);
+            cursor: pointer;
+            transition: all 0.15s var(--ease);
+            outline: none;
+        }
+
+        .titlebar-btn:hover {
+            background: #ffffff;
+            border-color: rgba(99, 102, 241, 0.3);
+            color: #4338ca;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+        }
+
+        .titlebar-btn-close:hover {
+            background: rgba(239, 68, 68, 0.12);
+            border-color: rgba(239, 68, 68, 0.35);
+            color: #dc2626;
+        }
+
+        /* Main Workspace Grid */
+        .workspace {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 16px;
+            padding: 16px;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        /* Glass Cards */
+        .glass-card {
+            background: var(--glass);
+            border: 1px solid var(--bd);
+            border-radius: 18px;
+            box-shadow: var(--sh), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(24px) saturate(150%);
+            -webkit-backdrop-filter: blur(24px) saturate(150%);
+        }
+
+        /* Left Deck */
+        .left-deck {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .left-deck::-webkit-scrollbar { width: 5px; }
+        .left-deck::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 10px; }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px 10px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .card-title {
+            font-size: 13.5px;
+            font-weight: 700;
+            color: var(--tx);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-body {
+            padding: 14px 16px;
+        }
+
+        /* Status Details */
+        .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            padding: 6px 0;
+            border-bottom: 1px dashed rgba(15, 23, 42, 0.06);
+        }
+        .status-row:last-child { border-bottom: none; }
+        .status-label { color: var(--tx2); font-weight: 500; }
+        .status-val { font-weight: 600; color: var(--tx); font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+        .badge-pill {
+            padding: 2px 7px;
+            border-radius: 6px;
+            font-size: 10.5px;
+            font-weight: 600;
+        }
+        .badge-ok { background: var(--okb); color: var(--ok); }
+        .badge-wn { background: var(--wnb); color: var(--wn); }
+
+        /* Checklist */
+        .check-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            padding: 4px 0;
+            color: var(--tx2);
+        }
+        .check-icon {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 800;
+            flex-shrink: 0;
+        }
+        .check-icon.ok { background: var(--okb); color: var(--ok); }
+        .check-icon.wn { background: var(--wnb); color: var(--wn); }
+
+        /* Checkbox Options */
+        .option-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+        .option-item input[type="checkbox"] {
+            margin-top: 2px;
+            width: 15px;
+            height: 15px;
+            accent-color: #4f46e5;
+            cursor: pointer;
+        }
+        .option-text {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--tx);
+        }
+        .option-sub {
+            font-size: 11px;
+            color: var(--tx2);
+            font-weight: 400;
+            margin-top: 1px;
+        }
+
+        /* Action Buttons */
+        .btn-compile {
+            width: 100%;
+            padding: 13px 18px;
+            border: none;
+            border-radius: 14px;
+            background: var(--pri);
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            cursor: pointer;
+            box-shadow: 0 8px 24px var(--pri-glow), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s var(--ease);
+        }
+
+        .btn-compile:hover:not(:disabled) {
+            background: var(--pri-hover);
+            transform: translateY(-1.5px);
+            box-shadow: 0 12px 28px rgba(99, 102, 241, 0.38);
+        }
+
+        .btn-compile:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        .btn-compile:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+
+        .btn-compile.compiling {
+            background: linear-gradient(135deg, #d97706, #b45309);
+            box-shadow: 0 8px 20px rgba(217, 119, 6, 0.3);
+        }
+
+        .btn-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .btn-sub {
+            padding: 9px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid rgba(203, 213, 225, 0.8);
+            background: rgba(255, 255, 255, 0.85);
+            color: var(--tx);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.15s var(--ease);
+        }
+
+        .btn-sub:hover {
+            background: #ffffff;
+            border-color: #94a3b8;
+            transform: translateY(-1px);
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .btn-sub:active {
+            transform: scale(0.97);
+        }
+
+        /* Right Deck / Console */
+        .right-deck {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            min-height: 0;
+        }
+
+        /* Pipeline Stepper */
+        .pipeline-card {
+            padding: 12px 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .stage-node {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            position: relative;
+        }
+
+        .stage-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: rgba(241, 245, 249, 0.9);
+            border: 1.5px solid rgba(203, 213, 225, 0.8);
+            color: var(--tx3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            margin-bottom: 5px;
+            transition: all 0.25s var(--ease);
+        }
+
+        .stage-label {
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--tx2);
+            transition: color 0.2s ease;
+        }
+
+        .stage-node.active .stage-icon {
+            background: #4f46e5;
+            color: #ffffff;
+            border-color: #4338ca;
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25);
+            animation: pulse 1.8s infinite;
+        }
+        .stage-node.active .stage-label { color: #4338ca; font-weight: 700; }
+
+        .stage-node.done .stage-icon {
+            background: #10b981;
+            color: #ffffff;
+            border-color: #059669;
+        }
+        .stage-node.done .stage-label { color: #059669; }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+            70% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+        }
+
+        /* Progress Card */
+        .progress-card {
+            padding: 12px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .progress-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+        }
+
+        .progress-status { font-weight: 700; color: var(--tx); }
+        .progress-percent { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #4338ca; }
+
+        .progress-track {
+            height: 9px;
+            background: rgba(226, 232, 240, 0.85);
+            border-radius: 999px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--pri);
+            border-radius: 999px;
+            transition: width 0.25s var(--ease);
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.5);
+        }
+
+        /* Terminal Console */
+        .console-card {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            background: rgba(15, 23, 42, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+        }
+
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 14px;
+            background: rgba(30, 41, 59, 0.7);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            border-top-left-radius: 18px;
+            border-top-right-radius: 18px;
+        }
+
+        .console-dots {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .console-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+        }
+        .dot-red { background: #ef4444; }
+        .dot-yellow { background: #f59e0b; }
+        .dot-green { background: #10b981; }
+
+        .console-title {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        .console-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .console-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #cbd5e1;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .console-btn:hover {
+            background: rgba(255, 255, 255, 0.18);
+            color: #ffffff;
+        }
+
+        .console-body {
+            flex: 1;
+            padding: 12px 14px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', Consolas, monospace;
+            font-size: 11.5px;
+            line-height: 1.55;
+            color: #cbd5e1;
+            user-select: text;
+        }
+
+        .console-body::-webkit-scrollbar { width: 6px; }
+        .console-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 10px; }
+
+        .log-line { margin-bottom: 2px; word-break: break-all; }
+        .log-time { color: #64748b; margin-right: 6px; }
+        .log-info { color: #e2e8f0; }
+        .log-stage { color: #60a5fa; font-weight: 600; }
+        .log-warn { color: #fbbf24; }
+        .log-err { color: #f87171; font-weight: 600; }
+        .log-ok { color: #34d399; font-weight: 600; }
+
+        /* Success Notification Modal */
+        .success-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 999;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(12px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .success-card {
+            width: 440px;
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 26px 28px;
+            text-align: center;
+            box-shadow: 0 25px 60px rgba(15, 23, 42, 0.25);
+            animation: popIn 0.25s var(--ease);
+        }
+
+        @keyframes popIn { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        .success-icon-wrap {
+            width: 58px;
+            height: 58px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(99, 102, 241, 0.15));
+            color: #059669;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            margin: 0 auto 14px;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .success-title { font-size: 18px; font-weight: 800; color: #0f172a; margin-bottom: 6px; }
+        .success-desc { font-size: 13px; color: #64748b; margin-bottom: 20px; line-height: 1.5; }
+        .success-stats {
+            background: rgba(241, 245, 249, 0.85);
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            text-align: left;
+            font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .spin-icon {
+            display: inline-block;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- Ambient Orbs -->
+    <div class="orbs"><i></i><i></i><i></i></div>
+
+    <div class="compiler-app">
+        <!-- Frameless Titlebar -->
+        <header class="titlebar">
+            <div class="titlebar-brand">
+                <img src="logo Monogram.png" alt="VS">
+                <span class="titlebar-title">VS Database • Compiler Studio</span>
+                <span class="titlebar-badge">v2.5 Standalone</span>
+            </div>
+            <div class="titlebar-actions">
+                <button id="btn-min" class="titlebar-btn" title="Minimize">
+                    <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="2.2" fill="none"><line x1="4" y1="12" x2="20" y2="12"></line></svg>
+                </button>
+                <button id="btn-max" class="titlebar-btn" title="Maximize">
+                    <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.2" fill="none"><rect x="3.5" y="3.5" width="17" height="17" rx="2"></rect></svg>
+                </button>
+                <button id="btn-close" class="titlebar-btn titlebar-btn-close" title="Close">
+                    <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="2.2" fill="none"><line x1="5" y1="5" x2="19" y2="19"></line><line x1="19" y1="5" x2="5" y2="19"></line></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="workspace">
+            <!-- Left Deck -->
+            <div class="left-deck">
+                <!-- Target Status Card -->
+                <div class="glass-card">
+                    <div class="card-header">
+                        <span class="card-title">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="#4f46e5" stroke-width="2" fill="none"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect></svg>
+                            Build Target
+                        </span>
+                        <span id="target-status-badge" class="badge-pill badge-ok">Ready</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="status-row">
+                            <span class="status-label">Target Binary</span>
+                            <span class="status-val">VS_Database.exe</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Spec File</span>
+                            <span class="status-val">VS_Database.spec</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Current Exe</span>
+                            <span id="stat-exe-size" class="status-val">Checking...</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Last Compiled</span>
+                            <span id="stat-exe-date" class="status-val">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Build Options Card -->
+                <div class="glass-card">
+                    <div class="card-header">
+                        <span class="card-title">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="#4f46e5" stroke-width="2" fill="none"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                            Build Settings
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <label class="option-item">
+                            <input type="checkbox" id="opt-clean" checked>
+                            <div>
+                                <div class="option-text">Clean Rebuild Cache</div>
+                                <div class="option-sub">Clear build/ and dist/ artifacts before compiling</div>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="checkbox" id="opt-deploy" checked>
+                            <div>
+                                <div class="option-text">Auto-Deploy to Root</div>
+                                <div class="option-sub">Copy final exe directly to ./VS_Database.exe</div>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="checkbox" id="opt-backup" checked>
+                            <div>
+                                <div class="option-text">Backup Current Executable</div>
+                                <div class="option-sub">Preserve existing binary as .bak before overwriting</div>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="checkbox" id="opt-verify" checked>
+                            <div>
+                                <div class="option-text">Post-Build Verification</div>
+                                <div class="option-sub">Verify integrity, headers, and bundled runtime assets</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Pre-flight Checklist Card -->
+                <div class="glass-card">
+                    <div class="card-header">
+                        <span class="card-title">
+                            <svg viewBox="0 0 24 24" width="15" height="15" stroke="#059669" stroke-width="2" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                            Readiness Checks
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <div class="check-item"><span class="check-icon ok" id="chk-py">✓</span> Python Environment (<span id="txt-py-ver">3.14</span>)</div>
+                        <div class="check-item"><span class="check-icon ok" id="chk-pi">✓</span> PyInstaller Engine (<span id="txt-pi-ver">6.x</span>)</div>
+                        <div class="check-item"><span class="check-icon ok" id="chk-sp">✓</span> Spec Configuration (<span id="txt-sp-ver">Found</span>)</div>
+                        <div class="check-item"><span class="check-icon ok" id="chk-wv">✓</span> WebView2 Runtimes & DLLs</div>
+                        <div class="check-item"><span class="check-icon ok" id="chk-ic">✓</span> Branding Assets & Icons</div>
+                    </div>
+                </div>
+
+                <!-- Action Deck Card -->
+                <div class="glass-card" style="padding: 14px;">
+                    <button id="btn-start" class="btn-compile" onclick="handleCompileClick()">
+                        <svg id="icon-start" viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        <span id="text-start">Compile Standalone App</span>
+                    </button>
+                    <div class="btn-row">
+                        <button class="btn-sub" onclick="handleLaunchApp()" title="Launch newly compiled application">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                            Run App
+                        </button>
+                        <button class="btn-sub" onclick="handleOpenFolder()" title="Reveal in Windows Explorer">
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                            Open Folder
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Deck / Live Monitor -->
+            <div class="right-deck">
+                <!-- Pipeline Stepper -->
+                <div class="glass-card pipeline-card">
+                    <div class="stage-node" id="stage-1">
+                        <div class="stage-icon">1</div>
+                        <span class="stage-label">Pre-Flight</span>
+                    </div>
+                    <div style="height: 1px; flex: 0.5; background: rgba(148, 163, 184, 0.4);"></div>
+                    <div class="stage-node" id="stage-2">
+                        <div class="stage-icon">2</div>
+                        <span class="stage-label">Analysis</span>
+                    </div>
+                    <div style="height: 1px; flex: 0.5; background: rgba(148, 163, 184, 0.4);"></div>
+                    <div class="stage-node" id="stage-3">
+                        <div class="stage-icon">3</div>
+                        <span class="stage-label">Packaging</span>
+                    </div>
+                    <div style="height: 1px; flex: 0.5; background: rgba(148, 163, 184, 0.4);"></div>
+                    <div class="stage-node" id="stage-4">
+                        <div class="stage-icon">4</div>
+                        <span class="stage-label">Linking EXE</span>
+                    </div>
+                    <div style="height: 1px; flex: 0.5; background: rgba(148, 163, 184, 0.4);"></div>
+                    <div class="stage-node" id="stage-5">
+                        <div class="stage-icon">5</div>
+                        <span class="stage-label">Deploy</span>
+                    </div>
+                </div>
+
+                <!-- Progress Tracker -->
+                <div class="glass-card progress-card">
+                    <div class="progress-meta">
+                        <span id="lbl-status" class="progress-status">Ready to compile</span>
+                        <span id="lbl-elapsed" style="font-size: 11px; color: var(--tx2);">00:00</span>
+                        <span id="lbl-percent" class="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="bar-fill" class="progress-fill"></div>
+                    </div>
+                </div>
+
+                <!-- Live Terminal Console -->
+                <div class="glass-card console-card">
+                    <div class="console-header">
+                        <div class="console-dots">
+                            <span class="console-dot dot-red"></span>
+                            <span class="console-dot dot-yellow"></span>
+                            <span class="console-dot dot-green"></span>
+                            <span class="console-title" style="margin-left: 6px;">COMPILER_CONSOLE &bull; LIVE STDOUT</span>
+                        </div>
+                        <div class="console-actions">
+                            <label style="font-size: 10px; color: #94a3b8; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox" id="chk-autoscroll" checked> Auto-scroll
+                            </label>
+                            <button class="console-btn" onclick="copyConsoleLogs()">Copy Log</button>
+                            <button class="console-btn" onclick="clearConsoleLogs()">Clear</button>
+                        </div>
+                    </div>
+                    <div id="console-stream" class="console-body">
+                        <div class="log-line"><span class="log-time">[INIT]</span><span class="log-info">VS Database Compiler Studio initialized.</span></div>
+                        <div class="log-line"><span class="log-time">[INFO]</span><span class="log-info">Ready to build standalone Windows x64 binary.</span></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="success-modal" class="success-overlay">
+        <div class="success-card">
+            <div class="success-icon-wrap">✓</div>
+            <h2 class="success-title">Build Succeeded!</h2>
+            <p class="success-desc">The standalone desktop executable has been built, verified, and placed in the project root.</p>
+            
+            <div class="success-stats">
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="color: #64748b; font-weight: 500;">Executable</span>
+                    <span style="font-weight: 700; color: #0f172a;">VS_Database.exe</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="color: #64748b; font-weight: 500;">Binary Size</span>
+                    <span id="modal-size" style="font-weight: 700; color: #059669;">~96.4 MB</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span style="color: #64748b; font-weight: 500;">Compile Time</span>
+                    <span id="modal-time" style="font-weight: 700; color: #4338ca;">—</span>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-sub" style="flex: 1;" onclick="closeSuccessModal()">Dismiss</button>
+                <button class="btn-compile" style="flex: 1.4; padding: 10px;" onclick="handleLaunchApp(); closeSuccessModal();">
+                    ▶ Launch App
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isCompiling = false;
+        let pollTimer = null;
+        let elapsedTimer = null;
+        let startTime = 0;
+        let lastLogIndex = 0;
+
+        // Window Controls
+        document.getElementById('btn-min').addEventListener('click', () => {
+            if (window.pywebview && window.pywebview.api) window.pywebview.api.minimize();
+            else fetch('/api/window/minimize', { method: 'POST' });
+        });
+        document.getElementById('btn-max').addEventListener('click', () => {
+            if (window.pywebview && window.pywebview.api) window.pywebview.api.maximize();
+            else fetch('/api/window/maximize', { method: 'POST' });
+        });
+        document.getElementById('btn-close').addEventListener('click', () => {
+            if (window.pywebview && window.pywebview.api) window.pywebview.api.close();
+            else fetch('/api/window/close', { method: 'POST' });
+        });
+
+        // Initial Status Fetch
+        async function fetchInitialStatus() {
+            try {
+                let data = null;
+                if (window.pywebview && window.pywebview.api) {
+                    data = await window.pywebview.api.get_status();
+                } else {
+                    const res = await fetch('/api/status');
+                    data = await res.json();
+                }
+
+                if (data) {
+                    if (data.exe_size) document.getElementById('stat-exe-size').innerText = data.exe_size;
+                    if (data.exe_date) document.getElementById('stat-exe-date').innerText = data.exe_date;
+                    if (data.python_ver) document.getElementById('txt-py-ver').innerText = data.python_ver;
+                    if (data.pyinstaller_ver) document.getElementById('txt-pi-ver').innerText = data.pyinstaller_ver;
+                }
+            } catch (err) {
+                console.warn('Status poll notice:', err);
+            }
+        }
+
+        window.addEventListener('pywebviewready', fetchInitialStatus);
+        document.addEventListener('DOMContentLoaded', fetchInitialStatus);
+
+        // Compilation Action
+        async function handleCompileClick() {
+            if (isCompiling) {
+                // Abort action
+                if (confirm('Are you sure you want to stop compilation?')) {
+                    if (window.pywebview && window.pywebview.api) await window.pywebview.api.cancel_compile();
+                    else await fetch('/api/cancel', { method: 'POST' });
+                    appendLog('WARN', 'Compilation cancelled by user.');
+                    resetBuildState(false);
+                }
+                return;
+            }
+
+            // Start build
+            isCompiling = true;
+            lastLogIndex = 0;
+            startTime = Date.now();
+
+            const options = {
+                clean_build: document.getElementById('opt-clean').checked,
+                auto_deploy: document.getElementById('opt-deploy').checked,
+                backup_existing: document.getElementById('opt-backup').checked,
+                verify: document.getElementById('opt-verify').checked
+            };
+
+            updateButtonState(true);
+            setStage(1);
+            setProgress(5, 'Initializing build environment...');
+            clearConsoleLogs();
+            appendLog('STAGE', '>>> PRE-FLIGHT: Validating spec and source tree...');
+
+            try {
+                let started = false;
+                if (window.pywebview && window.pywebview.api) {
+                    started = await window.pywebview.api.start_compile(options);
+                } else {
+                    const res = await fetch('/api/compile', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(options)
+                    });
+                    const d = await res.json();
+                    started = d.ok;
+                }
+
+                if (started) {
+                    startTimers();
+                } else {
+                    appendLog('ERR', 'Failed to spawn compilation worker.');
+                    resetBuildState(false);
+                }
+            } catch (err) {
+                appendLog('ERR', 'Compile trigger error: ' + err);
+                resetBuildState(false);
+            }
+        }
+
+        function startTimers() {
+            elapsedTimer = setInterval(() => {
+                const diff = Math.floor((Date.now() - startTime) / 1000);
+                const mins = String(Math.floor(diff / 60)).padStart(2, '0');
+                const secs = String(diff % 60).padStart(2, '0');
+                document.getElementById('lbl-elapsed').innerText = `${mins}:${secs}`;
+            }, 1000);
+
+            pollTimer = setInterval(pollLogs, 300);
+        }
+
+        async function pollLogs() {
+            try {
+                let data = null;
+                if (window.pywebview && window.pywebview.api) {
+                    data = await window.pywebview.api.get_logs(lastLogIndex);
+                } else {
+                    const res = await fetch(`/api/logs?since=${lastLogIndex}`);
+                    data = await res.json();
+                }
+
+                if (data && data.logs) {
+                    data.logs.forEach(item => {
+                        appendLog(item.level || 'INFO', item.msg);
+                    });
+                    lastLogIndex = data.next_index || (lastLogIndex + data.logs.length);
+
+                    if (data.stage) setStage(data.stage);
+                    if (data.percent !== undefined) setProgress(data.percent, data.status_text || 'Compiling...');
+
+                    if (data.is_done) {
+                        clearInterval(pollTimer);
+                        clearInterval(elapsedTimer);
+                        isCompiling = false;
+                        updateButtonState(false);
+
+                        if (data.success) {
+                            setStage(5);
+                            setProgress(100, 'Compilation Completed Successfully!');
+                            appendLog('OK', '==================================================');
+                            appendLog('OK', '✓ STANDALONE EXECUTABLE GENERATED & VERIFIED');
+                            appendLog('OK', '==================================================');
+                            showSuccessModal(data);
+                            fetchInitialStatus();
+                        } else {
+                            appendLog('ERR', 'Build terminated with errors. Code: ' + data.exit_code);
+                            setProgress(0, 'Build Failed');
+                            document.getElementById('target-status-badge').className = 'badge-pill badge-wn';
+                            document.getElementById('target-status-badge').innerText = 'Build Failed';
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('Poll error:', err);
+            }
+        }
+
+        function setStage(num) {
+            for (let i = 1; i <= 5; i++) {
+                const el = document.getElementById(`stage-${i}`);
+                el.className = 'stage-node';
+                if (i < num) el.classList.add('done');
+                else if (i === num) el.classList.add('active');
+            }
+        }
+
+        function setProgress(percent, text) {
+            document.getElementById('bar-fill').style.width = percent + '%';
+            document.getElementById('lbl-percent').innerText = percent + '%';
+            if (text) document.getElementById('lbl-status').innerText = text;
+        }
+
+        function appendLog(level, msg) {
+            const stream = document.getElementById('console-stream');
+            const row = document.createElement('div');
+            row.className = 'log-line';
+
+            const now = new Date();
+            const timeStr = `[${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}]`;
+
+            let lvlClass = 'log-info';
+            if (level === 'WARN') lvlClass = 'log-warn';
+            else if (level === 'ERR') lvlClass = 'log-err';
+            else if (level === 'STAGE') lvlClass = 'log-stage';
+            else if (level === 'OK') lvlClass = 'log-ok';
+
+            row.innerHTML = `<span class="log-time">${timeStr}</span><span class="${lvlClass}">${escapeHtml(msg)}</span>`;
+            stream.appendChild(row);
+
+            if (document.getElementById('chk-autoscroll').checked) {
+                stream.scrollTop = stream.scrollHeight;
+            }
+        }
+
+        function updateButtonState(running) {
+            const btn = document.getElementById('btn-start');
+            const txt = document.getElementById('text-start');
+            const icon = document.getElementById('icon-start');
+
+            if (running) {
+                btn.classList.add('compiling');
+                txt.innerText = 'Compiling... (Click to Abort)';
+                icon.innerHTML = '<circle cx="12" cy="12" r="10" stroke-width="2.5" stroke-dasharray="32" stroke-dashoffset="12" class="spin-icon"></circle>';
+                document.getElementById('target-status-badge').className = 'badge-pill badge-wn';
+                document.getElementById('target-status-badge').innerText = 'Building...';
+            } else {
+                btn.classList.remove('compiling');
+                txt.innerText = 'Compile Standalone App';
+                icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+            }
+        }
+
+        function resetBuildState(success) {
+            clearInterval(pollTimer);
+            clearInterval(elapsedTimer);
+            isCompiling = false;
+            updateButtonState(false);
+            if (!success) {
+                setProgress(0, 'Cancelled');
+            }
+        }
+
+        function clearConsoleLogs() {
+            document.getElementById('console-stream').innerHTML = '';
+        }
+
+        function copyConsoleLogs() {
+            const stream = document.getElementById('console-stream');
+            navigator.clipboard.writeText(stream.innerText).then(() => {
+                alert('Console logs copied to clipboard!');
+            });
+        }
+
+        function showSuccessModal(data) {
+            if (data.exe_size) document.getElementById('modal-size').innerText = data.exe_size;
+            document.getElementById('modal-time').innerText = document.getElementById('lbl-elapsed').innerText;
+            document.getElementById('success-modal').style.display = 'flex';
+            document.getElementById('target-status-badge').className = 'badge-pill badge-ok';
+            document.getElementById('target-status-badge').innerText = 'Compiled ✓';
+        }
+
+        function closeSuccessModal() {
+            document.getElementById('success-modal').style.display = 'none';
+        }
+
+        async function handleLaunchApp() {
+            if (window.pywebview && window.pywebview.api) {
+                await window.pywebview.api.launch_app();
+            } else {
+                await fetch('/api/launch', { method: 'POST' });
+            }
+        }
+
+        async function handleOpenFolder() {
+            if (window.pywebview && window.pywebview.api) {
+                await window.pywebview.api.open_folder();
+            } else {
+                await fetch('/api/open-folder', { method: 'POST' });
+            }
+        }
+
+        function escapeHtml(str) {
+            return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+    </script>
+</body>
+</html>

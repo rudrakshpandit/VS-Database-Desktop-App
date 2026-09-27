@@ -59,7 +59,18 @@ python main_app.py
 ```
 
 ### Compiling Executable
+
+#### Option A: Compiler Studio GUI (Recommended)
+Launch the built-in glassmorphic compiler suite with live pipeline tracking, real-time stdout console, and one-click deployment:
+```powershell
+python compiler.py
+# or double-click:
+Run_Compiler.bat
+```
+
+#### Option B: Headless CLI
 ```powershell
 python -m PyInstaller VS_Database.spec --noconfirm
 ```
-The compiled standalone binary will be generated in `dist/VS_Database.exe`.
+The compiled standalone binary will be generated in `dist/VS_Database.exe` and copied to root `./VS_Database.exe`.
+
