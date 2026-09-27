@@ -181,12 +181,12 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 14px 16px 10px;
+            padding: 10px 14px 8px;
             border-bottom: 1px solid var(--line);
         }
 
         .card-title {
-            font-size: 13.5px;
+            font-size: 13px;
             font-weight: 700;
             color: var(--tx);
             display: flex;
@@ -195,7 +195,7 @@
         }
 
         .card-body {
-            padding: 14px 16px;
+            padding: 10px 14px;
         }
 
         /* Status Details */
@@ -203,13 +203,13 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            font-size: 12px;
-            padding: 6px 0;
+            font-size: 11.5px;
+            padding: 4px 0;
             border-bottom: 1px dashed rgba(15, 23, 42, 0.06);
         }
         .status-row:last-child { border-bottom: none; }
         .status-label { color: var(--tx2); font-weight: 500; }
-        .status-val { font-weight: 600; color: var(--tx); font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+        .status-val { font-weight: 600; color: var(--tx); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
         .badge-pill {
             padding: 2px 7px;
             border-radius: 6px;
@@ -224,8 +224,8 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 12px;
-            padding: 4px 0;
+            font-size: 11.5px;
+            padding: 3px 0;
             color: var(--tx2);
         }
         .check-icon {
@@ -246,27 +246,28 @@
         .option-item {
             display: flex;
             align-items: flex-start;
-            gap: 10px;
-            margin-bottom: 10px;
+            gap: 8px;
+            margin-bottom: 6px;
             cursor: pointer;
         }
+        .option-item:last-child { margin-bottom: 0; }
         .option-item input[type="checkbox"] {
             margin-top: 2px;
-            width: 15px;
-            height: 15px;
+            width: 14px;
+            height: 14px;
             accent-color: #4f46e5;
             cursor: pointer;
         }
         .option-text {
-            font-size: 12.5px;
+            font-size: 12px;
             font-weight: 600;
             color: var(--tx);
         }
         .option-sub {
-            font-size: 11px;
+            font-size: 10.5px;
             color: var(--tx2);
             font-weight: 400;
-            margin-top: 1px;
+            margin-top: 0px;
         }
 
         /* Action Buttons */
