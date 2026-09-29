@@ -58,7 +58,7 @@ A high-performance standalone Windows desktop application for client management,
 python main_app.py
 ```
 
-### Compiling Executable
+### Compiling Executable & Setup Installer
 
 #### Option A: Compiler Studio GUI (Recommended)
 Launch the built-in glassmorphic compiler suite with live pipeline tracking, real-time stdout console, and one-click deployment:
@@ -67,10 +67,22 @@ python compiler.py
 # or double-click:
 Run_Compiler.bat
 ```
+Within Compiler Studio, you can:
+- Click **"Compile Standalone App"** to build `VS_Database.exe`.
+- Click **"Build Setup Installer (.exe)"** to generate `VS_Database_Setup.exe`.
 
-#### Option B: Headless CLI
+#### Option B: Building Setup Installer Directly
+To build the complete single-file Windows installer (`VS_Database_Setup.exe` with desktop shortcut and Start Menu integration):
+```powershell
+python build_setup.py
+# or double-click:
+Run_Build_Setup.bat
+```
+
+#### Option C: Headless CLI (Standalone Binary)
 ```powershell
 python -m PyInstaller VS_Database.spec --noconfirm
 ```
 The compiled standalone binary will be generated in `dist/VS_Database.exe` and copied to root `./VS_Database.exe`.
+
 

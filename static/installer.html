@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>VS Database • Setup Wizard</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+    <link rel="icon" type="image/x-icon" href="app_icon.ico">
+
+    <style>
+        :root {
+            --tx: #0f172a;
+            --tx2: #475569;
+            --tx3: #94a3b8;
+            --glass: rgba(255, 255, 255, 0.72);
+            --glass2: rgba(255, 255, 255, 0.9);
+            --bd: rgba(255, 255, 255, 0.85);
+            --line: rgba(15, 23, 42, 0.08);
+            --pri: linear-gradient(135deg, #2563eb, #7c3aed);
+            --pri-hover: linear-gradient(135deg, #1d4ed8, #6d28d9);
+            --pri-glow: rgba(99, 102, 241, 0.32);
+            --ok: #059669;
+            --okb: rgba(16, 185, 129, 0.12);
+            --wn: #d97706;
+            --wnb: rgba(245, 158, 11, 0.15);
+            --er: #dc2626;
+            --erb: rgba(239, 68, 68, 0.12);
+            --sh: 0 16px 50px rgba(49, 46, 129, 0.16);
+            --bgA: #c7d2fe;
+            --bgB: #e9d5ff;
+            --bgC: #bae6fd;
+            --bgD: #eef2ff;
+            --ease: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+            color: var(--tx);
+            background: var(--bgD);
+            user-select: none;
+        }
+
+        /* Ambient Glass Orbs */
+        .orbs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+        .orbs i { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.75; }
+        .orbs i:nth-child(1) { width: 440px; height: 440px; background: var(--bgA); top: -120px; left: -80px; }
+        .orbs i:nth-child(2) { width: 380px; height: 380px; background: var(--bgB); right: -90px; top: 20%; }
+        .orbs i:nth-child(3) { width: 360px; height: 360px; background: var(--bgC); bottom: -120px; left: 30%; }
+
+        /* Setup Shell */
+        .setup-app {
+            position: relative;
+            z-index: 1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Titlebar */
+        .titlebar {
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            background: rgba(255, 255, 255, 0.58);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--line);
+            -webkit-app-region: drag;
+            app-region: drag;
+            flex-shrink: 0;
+        }
+
+        .titlebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .titlebar-brand img {
+            width: 22px;
+            height: 22px;
+            object-fit: contain;
+        }
+
+        .titlebar-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--tx);
+            letter-spacing: -0.01em;
+        }
+
+        .titlebar-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 999px;
+            background: rgba(99, 102, 241, 0.1);
+            color: #4338ca;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            letter-spacing: 0.02em;
+        }
+
+        .titlebar-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            -webkit-app-region: no-drag;
+            app-region: no-drag;
+        }
+
+        .titlebar-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 26px;
+            border-radius: 8px;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            background: rgba(255, 255, 255, 0.65);
+            color: var(--tx2);
+            cursor: pointer;
+            transition: all 0.15s var(--ease);
+            outline: none;
+        }
+
+        .titlebar-btn:hover {
+            background: #ffffff;
+            border-color: rgba(99, 102, 241, 0.3);
+            color: #4338ca;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+        }
+
+        .titlebar-btn-close:hover {
+            background: rgba(239, 68, 68, 0.12);
+            border-color: rgba(239, 68, 68, 0.35);
+            color: #dc2626;
+        }
+
+        /* Wizard Container */
+        .wizard-body {
+            flex: 1;
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Glass Card */
+        .glass-card {
+            flex: 1;
+            background: var(--glass);
+            border: 1px solid var(--bd);
+            border-radius: 20px;
+            box-shadow: var(--sh), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(24px) saturate(150%);
+            -webkit-backdrop-filter: blur(24px) saturate(150%);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 28px 20px;
+            position: relative;
+        }
+
+        /* Wizard Views */
+        .step-view {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            animation: fadeIn 0.22s var(--ease) forwards;
+        }
+
+        .step-view.active {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Header Hero */
+        .wizard-hero {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .hero-logo {
+            width: 58px;
+            height: 58px;
+            border-radius: 16px;
+            background: #ffffff;
+            border: 1px solid rgba(226, 232, 240, 0.9);
+            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .hero-logo img {
+            width: 44px;
+            height: 44px;
+            object-fit: contain;
+        }
+
+        .hero-text h1 {
+            font-size: 19px;
+            font-weight: 800;
+            color: var(--tx);
+            letter-spacing: -0.02em;
+            margin-bottom: 3px;
+        }
+
+        .hero-text p {
+            font-size: 12.5px;
+            color: var(--tx2);
+            line-height: 1.4;
+        }
+
+        /* Path Picker */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--tx);
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .path-input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .path-input {
+            flex: 1;
+            padding: 9px 12px;
+            border-radius: 11px;
+            border: 1px solid rgba(203, 213, 225, 0.9);
+            background: rgba(255, 255, 255, 0.9);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            color: var(--tx);
+            outline: none;
+            transition: all 0.15s ease;
+        }
+
+        .path-input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+        }
+
+        .btn-browse {
+            padding: 9px 16px;
+            border-radius: 11px;
+            border: 1px solid rgba(203, 213, 225, 0.9);
+            background: rgba(255, 255, 255, 0.85);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--tx);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-browse:hover {
+            background: #ffffff;
+            border-color: #94a3b8;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+        }
+
+        .path-hint {
+            font-size: 11px;
+            color: var(--tx3);
+            margin-top: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Checkbox Options */
+        .options-box {
+            background: rgba(248, 250, 252, 0.7);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            border-radius: 14px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+        }
+
+        .option-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px 0;
+            cursor: pointer;
+        }
+
+        .option-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #4f46e5;
+            cursor: pointer;
+        }
+
+        .option-text {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--tx);
+        }
+
+        /* Step 2 Progress */
+        .installing-wrap {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px 0;
+        }
+
+        .progress-wheel-wrap {
+            width: 68px;
+            height: 68px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.1));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+
+        .install-title {
+            font-size: 17px;
+            font-weight: 800;
+            color: var(--tx);
+            margin-bottom: 6px;
+        }
+
+        .install-status-text {
+            font-size: 12px;
+            color: var(--tx2);
+            margin-bottom: 20px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .progress-bar-track {
+            width: 100%;
+            height: 10px;
+            background: rgba(226, 232, 240, 0.85);
+            border-radius: 999px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--pri);
+            border-radius: 999px;
+            transition: width 0.2s var(--ease);
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.5);
+        }
+
+        .progress-subtext {
+            font-size: 11px;
+            color: var(--tx3);
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        /* Step 3 Success */
+        .success-wrap {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 10px 0;
+        }
+
+        .success-badge {
+            width: 64px;
+            height: 64px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(99, 102, 241, 0.12));
+            color: #059669;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 30px;
+            margin-bottom: 14px;
+            border: 1px solid rgba(16, 185, 129, 0.28);
+            box-shadow: 0 8px 24px rgba(16, 185, 129, 0.18);
+        }
+
+        .success-h1 {
+            font-size: 19px;
+            font-weight: 800;
+            color: var(--tx);
+            margin-bottom: 6px;
+        }
+
+        .success-p {
+            font-size: 12.5px;
+            color: var(--tx2);
+            max-width: 440px;
+            line-height: 1.5;
+            margin-bottom: 20px;
+        }
+
+        .summary-card {
+            width: 100%;
+            background: rgba(248, 250, 252, 0.85);
+            border: 1px solid rgba(226, 232, 240, 0.9);
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            text-align: left;
+            font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        /* Wizard Footer Controls */
+        .wizard-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: auto;
+            padding-top: 14px;
+            border-top: 1px solid var(--line);
+        }
+
+        .btn-cancel {
+            padding: 10px 18px;
+            border-radius: 12px;
+            border: 1px solid rgba(203, 213, 225, 0.85);
+            background: rgba(255, 255, 255, 0.8);
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--tx2);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-cancel:hover {
+            background: #ffffff;
+            color: var(--tx);
+        }
+
+        .btn-next {
+            padding: 10px 22px;
+            border-radius: 12px;
+            border: none;
+            background: var(--pri);
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 6px 18px var(--pri-glow);
+            transition: all 0.18s var(--ease);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-next:hover {
+            background: var(--pri-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 24px rgba(99, 102, 241, 0.38);
+        }
+
+        .btn-next:active {
+            transform: scale(0.98);
+        }
+
+        .spin-icon {
+            display: inline-block;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- Ambient Orbs -->
+    <div class="orbs"><i></i><i></i><i></i></div>
+
+    <div class="setup-app">
+        <!-- Titlebar -->
+        <header class="titlebar">
+            <div class="titlebar-brand">
+                <img src="logo Monogram.png" alt="VS">
+                <span class="titlebar-title">VS Database • Setup Wizard</span>
+                <span class="titlebar-badge">v2.5.0 Installer</span>
+            </div>
+            <div class="titlebar-actions">
+                <button id="btn-min" class="titlebar-btn" title="Minimize">
+                    <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="2.2" fill="none"><line x1="4" y1="12" x2="20" y2="12"></line></svg>
+                </button>
+                <button id="btn-close" class="titlebar-btn titlebar-btn-close" title="Close">
+                    <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="2.2" fill="none"><line x1="5" y1="5" x2="19" y2="19"></line><line x1="19" y1="5" x2="5" y2="19"></line></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Wizard Container -->
+        <main class="wizard-body">
+            <div class="glass-card">
+                
+                <!-- STEP 1: Welcome & Setup Options -->
+                <div id="step-1" class="step-view active">
+                    <div class="wizard-hero">
+                        <div class="hero-logo">
+                            <img src="logo Monogram.png" alt="VS Logo">
+                        </div>
+                        <div class="hero-text">
+                            <h1>Install VS Database</h1>
+                            <p>Deploy the high-performance client vault and office filing suite onto your computer.</p>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Destination Folder</label>
+                        <div class="path-input-row">
+                            <input type="text" id="input-install-path" class="path-input" value="C:\Users\User\AppData\Local\Programs\VS Database">
+                            <button class="btn-browse" onclick="handleBrowseFolder()">Browse...</button>
+                        </div>
+                        <div class="path-hint">
+                            <span>Space required: ~110 MB</span>
+                            <span id="txt-space-avail">Space available: Sufficient</span>
+                        </div>
+                    </div>
+
+                    <div class="options-box">
+                        <label class="option-item">
+                            <input type="checkbox" id="chk-desktop" checked>
+                            <span class="option-text">Create Desktop Shortcut (with official VS Database icon)</span>
+                        </label>
+                        <label class="option-item">
+                            <input type="checkbox" id="chk-startmenu" checked>
+                            <span class="option-text">Add to Start Menu Programs</span>
+                        </label>
+                        <label class="option-item">
+                            <input type="checkbox" id="chk-uninstaller" checked>
+                            <span class="option-text">Register in Windows Apps & Features (Clean Uninstaller)</span>
+                        </label>
+                    </div>
+
+                    <div class="wizard-footer">
+                        <button class="btn-cancel" onclick="handleCancel()">Cancel</button>
+                        <button class="btn-next" onclick="handleStartInstall()">
+                            Install Now
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- STEP 2: Installing Progress -->
+                <div id="step-2" class="step-view">
+                    <div class="installing-wrap">
+                        <div class="progress-wheel-wrap">
+                            <svg viewBox="0 0 24 24" width="34" height="34" stroke="#4f46e5" stroke-width="2.2" fill="none" class="spin-icon">
+                                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+                            </svg>
+                        </div>
+                        <h2 class="install-title">Installing VS Database...</h2>
+                        <div id="lbl-install-status" class="install-status-text">Preparing installation directory...</div>
+                        
+                        <div class="progress-bar-track">
+                            <div id="bar-install-fill" class="progress-bar-fill"></div>
+                        </div>
+                        <div class="progress-subtext">
+                            <span id="lbl-substep">Extracting binary payload</span>
+                            <span id="lbl-percent" style="font-family:'JetBrains Mono',monospace; font-weight:700; color:#4338ca;">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 3: Complete -->
+                <div id="step-3" class="step-view">
+                    <div class="success-wrap">
+                        <div class="success-badge">✓</div>
+                        <h1 class="success-h1">VS Database Installed!</h1>
+                        <p class="success-p">The application has been successfully installed onto your computer and is ready for use.</p>
+
+                        <div class="summary-card">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                <span style="color:#64748b; font-weight:500;">Installed Directory</span>
+                                <span id="summary-path" style="font-family:'JetBrains Mono',monospace; font-weight:600; color:#0f172a;">—</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between;">
+                                <span style="color:#64748b; font-weight:500;">Desktop Shortcut</span>
+                                <span style="color:#059669; font-weight:700;">✓ Created on Desktop</span>
+                            </div>
+                        </div>
+
+                        <label class="option-item" style="margin-bottom: 10px;">
+                            <input type="checkbox" id="chk-launch" checked>
+                            <span class="option-text" style="font-size:13px; color:#4338ca;">Launch VS Database now</span>
+                        </label>
+                    </div>
+
+                    <div class="wizard-footer">
+                        <button class="btn-next" style="padding: 10px 32px;" onclick="handleFinish()">
+                            Finish
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let pollTimer = null;
+
+        // Window Controls
+        document.getElementById('btn-min').addEventListener('click', () => {
+            if (window.pywebview && window.pywebview.api) window.pywebview.api.minimize();
+            else fetch('/api/window/minimize', { method: 'POST' });
+        });
+        document.getElementById('btn-close').addEventListener('click', () => {
+            handleCancel();
+        });
+
+        // Initialize default install paths
+        async function initPaths() {
+            try {
+                let data = null;
+                if (window.pywebview && window.pywebview.api) {
+                    data = await window.pywebview.api.get_default_paths();
+                } else {
+                    const res = await fetch('/api/default-paths');
+                    data = await res.json();
+                }
+
+                if (data && data.install_path) {
+                    document.getElementById('input-install-path').value = data.install_path;
+                    if (data.free_space_str) {
+                        document.getElementById('txt-space-avail').innerText = `Space available: ${data.free_space_str}`;
+                    }
+                }
+            } catch (err) {
+                console.warn('Init paths notice:', err);
+            }
+        }
+
+        window.addEventListener('pywebviewready', initPaths);
+        document.addEventListener('DOMContentLoaded', initPaths);
+
+        async function handleBrowseFolder() {
+            try {
+                let chosen = null;
+                if (window.pywebview && window.pywebview.api) {
+                    chosen = await window.pywebview.api.select_folder();
+                } else {
+                    const res = await fetch('/api/select-folder', { method: 'POST' });
+                    const d = await res.json();
+                    chosen = d.folder;
+                }
+                if (chosen) {
+                    document.getElementById('input-install-path').value = chosen;
+                }
+            } catch (err) {
+                console.warn('Browse folder notice:', err);
+            }
+        }
+
+        function switchStep(num) {
+            document.querySelectorAll('.step-view').forEach(el => el.classList.remove('active'));
+            document.getElementById(`step-${num}`).classList.add('active');
+        }
+
+        async function handleStartInstall() {
+            const installPath = document.getElementById('input-install-path').value.trim();
+            if (!installPath) {
+                alert('Please specify a valid installation path.');
+                return;
+            }
+
+            const options = {
+                install_path: installPath,
+                create_desktop_shortcut: document.getElementById('chk-desktop').checked,
+                create_startmenu_shortcut: document.getElementById('chk-startmenu').checked,
+                register_uninstaller: document.getElementById('chk-uninstaller').checked
+            };
+
+            switchStep(2);
+            setProgress(5, 'Extracting files and assets...');
+
+            try {
+                let started = false;
+                if (window.pywebview && window.pywebview.api) {
+                    started = await window.pywebview.api.start_installation(options);
+                } else {
+                    const res = await fetch('/api/install', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(options)
+                    });
+                    const d = await res.json();
+                    started = d.ok;
+                }
+
+                if (started) {
+                    pollTimer = setInterval(pollProgress, 250);
+                } else {
+                    alert('Could not start installation process.');
+                    switchStep(1);
+                }
+            } catch (err) {
+                alert('Error starting installation: ' + err);
+                switchStep(1);
+            }
+        }
+
+        async function pollProgress() {
+            try {
+                let data = null;
+                if (window.pywebview && window.pywebview.api) {
+                    data = await window.pywebview.api.get_install_progress();
+                } else {
+                    const res = await fetch('/api/install/progress');
+                    data = await res.json();
+                }
+
+                if (data) {
+                    if (data.percent !== undefined) setProgress(data.percent, data.status_text, data.substep);
+
+                    if (data.is_done) {
+                        clearInterval(pollTimer);
+                        if (data.success) {
+                            document.getElementById('summary-path').innerText = data.installed_path || document.getElementById('input-install-path').value;
+                            switchStep(3);
+                        } else {
+                            alert('Installation failed: ' + (data.error || 'Unknown error.'));
+                            switchStep(1);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('Poll error:', err);
+            }
+        }
+
+        function setProgress(percent, statusText, subText) {
+            document.getElementById('bar-install-fill').style.width = percent + '%';
+            document.getElementById('lbl-percent').innerText = percent + '%';
+            if (statusText) document.getElementById('lbl-install-status').innerText = statusText;
+            if (subText) document.getElementById('lbl-substep').innerText = subText;
+        }
+
+        function handleCancel() {
+            if (confirm('Are you sure you want to cancel VS Database setup?')) {
+                if (window.pywebview && window.pywebview.api) window.pywebview.api.close();
+                else fetch('/api/window/close', { method: 'POST' });
+            }
+        }
+
+        async function handleFinish() {
+            const launch = document.getElementById('chk-launch').checked;
+            if (launch) {
+                if (window.pywebview && window.pywebview.api) await window.pywebview.api.launch_app();
+                else await fetch('/api/launch-app', { method: 'POST' });
+            }
+            if (window.pywebview && window.pywebview.api) window.pywebview.api.close();
+            else fetch('/api/window/close', { method: 'POST' });
+        }
+    </script>
+</body>
+</html>

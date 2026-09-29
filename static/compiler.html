@@ -643,16 +643,12 @@
                     </div>
                     <div class="card-body">
                         <div class="status-row">
-                            <span class="status-label">Target Binary</span>
-                            <span class="status-val">VS_Database.exe</span>
-                        </div>
-                        <div class="status-row">
-                            <span class="status-label">Spec File</span>
-                            <span class="status-val">VS_Database.spec</span>
-                        </div>
-                        <div class="status-row">
-                            <span class="status-label">Current Exe</span>
+                            <span class="status-label">Standalone Exe</span>
                             <span id="stat-exe-size" class="status-val">Checking...</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Setup Installer</span>
+                            <span id="stat-setup-size" class="status-val">Checking...</span>
                         </div>
                         <div class="status-row">
                             <span class="status-label">Last Compiled</span>
@@ -719,13 +715,17 @@
                 </div>
 
                 <!-- Action Deck Card -->
-                <div class="glass-card" style="padding: 14px;">
-                    <button id="btn-start" class="btn-compile" onclick="handleCompileClick()">
-                        <svg id="icon-start" viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <div class="glass-card" style="padding: 12px 14px;">
+                    <button id="btn-start" class="btn-compile" onclick="handleCompileClick('app')">
+                        <svg id="icon-start" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                         <span id="text-start">Compile Standalone App</span>
                     </button>
+                    <button id="btn-setup" class="btn-compile" style="background: linear-gradient(135deg, #059669, #0d9488); margin-top: 8px;" onclick="handleCompileClick('setup')">
+                        <svg id="icon-setup" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        <span id="text-setup">Build Setup Installer (.exe)</span>
+                    </button>
                     <div class="btn-row">
-                        <button class="btn-sub" onclick="handleLaunchApp()" title="Launch newly compiled application">
+                        <button class="btn-sub" onclick="handleLaunchApp()" title="Launch application">
                             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                             Run App
                         </button>
@@ -870,6 +870,7 @@
 
                 if (data) {
                     if (data.exe_size) document.getElementById('stat-exe-size').innerText = data.exe_size;
+                    if (data.setup_size) document.getElementById('stat-setup-size').innerText = data.setup_size;
                     if (data.exe_date) document.getElementById('stat-exe-date').innerText = data.exe_date;
                     if (data.python_ver) document.getElementById('txt-py-ver').innerText = data.python_ver;
                     if (data.pyinstaller_ver) document.getElementById('txt-pi-ver').innerText = data.pyinstaller_ver;
@@ -883,7 +884,7 @@
         document.addEventListener('DOMContentLoaded', fetchInitialStatus);
 
         // Compilation Action
-        async function handleCompileClick() {
+        async function handleCompileClick(target = 'app') {
             if (isCompiling) {
                 // Abort action
                 if (confirm('Are you sure you want to stop compilation?')) {
@@ -900,18 +901,20 @@
             lastLogIndex = 0;
             startTime = Date.now();
 
+            const isSetup = (target === 'setup');
             const options = {
+                target: target,
                 clean_build: document.getElementById('opt-clean').checked,
                 auto_deploy: document.getElementById('opt-deploy').checked,
                 backup_existing: document.getElementById('opt-backup').checked,
                 verify: document.getElementById('opt-verify').checked
             };
 
-            updateButtonState(true);
+            updateButtonState(true, isSetup);
             setStage(1);
-            setProgress(5, 'Initializing build environment...');
+            setProgress(5, isSetup ? 'Preparing setup installer build...' : 'Initializing build environment...');
             clearConsoleLogs();
-            appendLog('STAGE', '>>> PRE-FLIGHT: Validating spec and source tree...');
+            appendLog('STAGE', isSetup ? '>>> PRE-FLIGHT: Validating setup installer pipeline...' : '>>> PRE-FLIGHT: Validating spec and source tree...');
 
             try {
                 let started = false;
@@ -1033,21 +1036,34 @@
             }
         }
 
-        function updateButtonState(running) {
-            const btn = document.getElementById('btn-start');
-            const txt = document.getElementById('text-start');
-            const icon = document.getElementById('icon-start');
+        function updateButtonState(running, isSetup = false) {
+            const btnApp = document.getElementById('btn-start');
+            const txtApp = document.getElementById('text-start');
+            const iconApp = document.getElementById('icon-start');
+            const btnSetup = document.getElementById('btn-setup');
+            const txtSetup = document.getElementById('text-setup');
 
             if (running) {
-                btn.classList.add('compiling');
-                txt.innerText = 'Compiling... (Click to Abort)';
-                icon.innerHTML = '<circle cx="12" cy="12" r="10" stroke-width="2.5" stroke-dasharray="32" stroke-dashoffset="12" class="spin-icon"></circle>';
+                if (isSetup) {
+                    btnSetup.classList.add('compiling');
+                    txtSetup.innerText = 'Packaging Setup... (Abort)';
+                    btnApp.disabled = true;
+                } else {
+                    btnApp.classList.add('compiling');
+                    txtApp.innerText = 'Compiling App... (Abort)';
+                    btnSetup.disabled = true;
+                }
                 document.getElementById('target-status-badge').className = 'badge-pill badge-wn';
                 document.getElementById('target-status-badge').innerText = 'Building...';
             } else {
-                btn.classList.remove('compiling');
-                txt.innerText = 'Compile Standalone App';
-                icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+                btnApp.classList.remove('compiling');
+                btnApp.disabled = false;
+                txtApp.innerText = 'Compile Standalone App';
+                iconApp.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+
+                btnSetup.classList.remove('compiling');
+                btnSetup.disabled = false;
+                txtSetup.innerText = 'Build Setup Installer (.exe)';
             }
         }
 

@@ -87,7 +87,17 @@ def get_system_info():
         if res.returncode == 0 and res.stdout.strip():
             pyinstaller_ver = res.stdout.strip()
     except Exception:
-        pass
+    setup_exe = os.path.join(APP_DIR, "VS_Database_Setup.exe")
+    setup_size_str = "Not Found"
+    setup_date_str = "—"
+    if os.path.exists(setup_exe):
+        try:
+            sz = os.path.getsize(setup_exe) / (1024 * 1024)
+            setup_size_str = f"{sz:.1f} MB"
+            mtime = os.path.getmtime(setup_exe)
+            setup_date_str = datetime.fromtimestamp(mtime).strftime("%d %b, %H:%M")
+        except Exception:
+            pass
 
     return {
         "python_ver": sys.version.split()[0],
@@ -95,12 +105,17 @@ def get_system_info():
         "spec_exists": os.path.exists(SPEC_FILE),
         "exe_size": exe_size_str,
         "exe_date": exe_date_str,
+        "setup_size": setup_size_str,
+        "setup_date": setup_date_str,
         "root_dir": APP_DIR,
     }
 
 
 def run_compilation_worker(options: dict):
     global state
+    target_mode = options.get("target", "app")  # "app" or "setup"
+    is_setup = (target_mode == "setup")
+
     with state.lock:
         state.is_running = True
         state.is_done = False
@@ -109,7 +124,7 @@ def run_compilation_worker(options: dict):
         state.logs = []
         state.stage = 1
         state.percent = 5
-        state.status_text = "Pre-flight checks..."
+        state.status_text = "Building Setup Installer..." if is_setup else "Pre-flight checks..."
         state.start_time = time.time()
         state.final_size_str = ""
 
@@ -119,9 +134,12 @@ def run_compilation_worker(options: dict):
 
     try:
         # Pre-flight
-        state.add_log("STAGE", "[Stage 1/5] Pre-Flight Inspection & Dependency Verification")
-        if not os.path.exists(SPEC_FILE):
-            state.add_log("ERR", f"Specification file not found: {SPEC_FILE}")
+        title = "Setup Installer (VS_Database_Setup.exe)" if is_setup else "Standalone App (VS_Database.exe)"
+        state.add_log("STAGE", f"[Stage 1/5] Initializing Build for {title}")
+        
+        target_spec = os.path.join(APP_DIR, "VS_Database_Setup.spec") if is_setup else SPEC_FILE
+        if not os.path.exists(target_spec):
+            state.add_log("ERR", f"Specification file not found: {target_spec}")
             with state.lock:
                 state.is_running = False
                 state.is_done = True
@@ -129,7 +147,7 @@ def run_compilation_worker(options: dict):
                 state.exit_code = 1
             return
 
-        if clean_build:
+        if clean_build and not is_setup:
             state.add_log("INFO", "Purging previous build cache (build/ and dist/)...")
             build_dir = os.path.join(APP_DIR, "build")
             dist_dir = os.path.join(APP_DIR, "dist")
@@ -138,16 +156,21 @@ def run_compilation_worker(options: dict):
             if os.path.exists(dist_dir):
                 shutil.rmtree(dist_dir, ignore_errors=True)
 
-        if backup_existing and os.path.exists(ROOT_EXE):
-            bak_path = os.path.join(APP_DIR, "VS_Database.exe.bak")
-            state.add_log("INFO", f"Backing up existing binary to: {os.path.basename(bak_path)}")
-            try:
-                shutil.copy2(ROOT_EXE, bak_path)
-            except Exception as e:
-                state.add_log("WARN", f"Backup notice: {e}")
+        if is_setup:
+            state.update_progress(1, 15, "Invoking Setup Packager Engine...")
+            cmd = [sys.executable, "build_setup.py"]
+        else:
+            if backup_existing and os.path.exists(ROOT_EXE):
+                bak_path = os.path.join(APP_DIR, "VS_Database.exe.bak")
+                state.add_log("INFO", f"Backing up existing binary to: {os.path.basename(bak_path)}")
+                try:
+                    shutil.copy2(ROOT_EXE, bak_path)
+                except Exception as e:
+                    state.add_log("WARN", f"Backup notice: {e}")
 
-        state.update_progress(1, 15, "Spawning PyInstaller compiler...")
-        cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", SPEC_FILE]
+            state.update_progress(1, 15, "Spawning PyInstaller compiler...")
+            cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", SPEC_FILE]
+
         state.add_log("INFO", f"Executing: {' '.join(cmd)}")
 
         creation_flags = 0
@@ -209,9 +232,16 @@ def run_compilation_worker(options: dict):
             state.update_progress(5, 92, "Deploying binary to root directory...")
             state.add_log("STAGE", "[Stage 5/5] Root Deployment & Final Verification")
 
-            built_exe = DIST_EXE
-            if not os.path.exists(built_exe):
-                built_exe = os.path.join(APP_DIR, "dist", "VS_Database", "VS_Database.exe")
+            if is_setup:
+                built_exe = os.path.join(APP_DIR, "VS_Database_Setup.exe")
+                if not os.path.exists(built_exe):
+                    built_exe = os.path.join(APP_DIR, "dist", "VS_Database_Setup.exe")
+                target_dest = os.path.join(APP_DIR, "VS_Database_Setup.exe")
+            else:
+                built_exe = DIST_EXE
+                if not os.path.exists(built_exe):
+                    built_exe = os.path.join(APP_DIR, "dist", "VS_Database", "VS_Database.exe")
+                target_dest = ROOT_EXE
 
             if os.path.exists(built_exe):
                 sz_mb = os.path.getsize(built_exe) / (1024 * 1024)
@@ -219,10 +249,10 @@ def run_compilation_worker(options: dict):
                 state.final_size_str = sz_str
                 state.add_log("OK", f"Target executable generated: {built_exe} ({sz_str})")
 
-                if auto_deploy:
+                if auto_deploy and built_exe != target_dest:
                     try:
-                        shutil.copy2(built_exe, ROOT_EXE)
-                        state.add_log("OK", f"Deployed successfully to root: {ROOT_EXE}")
+                        shutil.copy2(built_exe, target_dest)
+                        state.add_log("OK", f"Deployed successfully to root: {target_dest}")
                     except Exception as dep_err:
                         state.add_log("WARN", f"Root copy notice: {dep_err}")
 
@@ -231,9 +261,9 @@ def run_compilation_worker(options: dict):
                     state.is_done = True
                     state.success = True
                     state.percent = 100
-                    state.status_text = "Build Succeeded!"
+                    state.status_text = "Setup Build Succeeded!" if is_setup else "Build Succeeded!"
             else:
-                state.add_log("ERR", f"Built executable not found in dist/: {built_exe}")
+                state.add_log("ERR", f"Built executable not found: {built_exe}")
                 with state.lock:
                     state.is_running = False
                     state.is_done = True
