@@ -14,6 +14,19 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 
+try:
+    import docx
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml import parse_xml, OxmlElement
+    from docx.oxml.ns import nsdecls, qn
+except ImportError:
+    docx = None
+    Inches = Pt = RGBColor = None
+    WD_ALIGN_PARAGRAPH = WD_TABLE_ALIGNMENT = WD_ALIGN_VERTICAL = None
+    parse_xml = OxmlElement = nsdecls = qn = None
+
 APP_ROOT = Path(__file__).resolve().parent
 DEFAULT_EXPORTS_DIR = APP_ROOT / "data" / "ai_exports"
 
@@ -612,6 +625,12 @@ def export_ai_document_docx(
 
 def _render_markdown_runs(paragraph, text: str, font_name: str, default_color):
     """Splits markdown text into bold, italic, and regular runs."""
+    global Pt, RGBColor
+    if Pt is None:
+        try:
+            from docx.shared import Pt, RGBColor
+        except Exception:
+            pass
     tokens = re.split(r'(\*\*[^*]+?\*\*|\*[^*]+?\*|`[^`]+?`)', text)
     for tok in tokens:
         if not tok:

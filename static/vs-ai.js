@@ -760,28 +760,28 @@
           fileExt = 'xlsx';
           fileIcon = '📈';
           badgeClass = 'xlsx';
-          badgeLabel = 'Google Sheet Compatible';
+          badgeLabel = 'Google Sheet';
           typeDesc = 'Direct Financial Dataset';
         } else if (wantsExcel || (isTableData && !wantsPdf && !wantsWord)) {
           fileType = 'xlsx';
           fileExt = 'xlsx';
           fileIcon = '📊';
           badgeClass = 'xlsx';
-          badgeLabel = 'openpyxl · Multi-Sheet';
+          badgeLabel = 'Excel · .xlsx';
           typeDesc = 'Direct Financial Spreadsheet';
         } else if (activeGenerationMode === 'docs') {
           fileType = 'docx';
           fileExt = 'docx';
           fileIcon = '📝';
           badgeClass = 'docx';
-          badgeLabel = 'Google Docs Ready';
+          badgeLabel = 'Google Docs';
           typeDesc = 'Structured Legal Draft';
         } else if (wantsWord) {
           fileType = 'docx';
           fileExt = 'docx';
           fileIcon = '📄';
           badgeClass = 'docx';
-          badgeLabel = 'python-docx';
+          badgeLabel = 'Word · .docx';
           typeDesc = 'Direct Executive Document';
         }
 
@@ -968,6 +968,11 @@
       renderAttachmentPreviewBar();
     }
 
+    let thinkingMsg = 'VS AI is thinking & analyzing statutory provisions...';
+    if (activeGenerationMode === 'pdf') thinkingMsg = 'VS AI is compiling statutory PDF document & citations...';
+    else if (activeGenerationMode === 'excel' || activeGenerationMode === 'gsheet') thinkingMsg = 'VS AI is generating financial spreadsheet & calculations...';
+    else if (activeGenerationMode === 'word' || activeGenerationMode === 'docs') thinkingMsg = 'VS AI is drafting executive legal document & clauses...';
+
     const loadingId = 'loading-' + Date.now();
     const loadingEl = document.createElement('div');
     loadingEl.className = 'msg vs-ai-message-row assistant';
@@ -975,7 +980,13 @@
     loadingEl.innerHTML = `
       <div class="av">VS</div>
       <div class="bub">
-        <div class="typing"><i></i><i></i><i></i></div>
+        <div class="vs-ai-thinking-card">
+          <div class="vs-ai-thinking-sparkle">✨</div>
+          <div class="vs-ai-thinking-content">
+            <span class="vs-ai-thinking-label">${escapeHtml(thinkingMsg)}</span>
+            <div class="typing"><i></i><i></i><i></i></div>
+          </div>
+        </div>
       </div>
     `;
 
@@ -1007,7 +1018,15 @@
       asstRow.innerHTML = `
         <div class="av">VS</div>
         <div class="bub">
-          <div class="vs-ai-asst-body"></div>
+          <div class="vs-ai-asst-body">
+            <div class="vs-ai-thinking-card">
+              <div class="vs-ai-thinking-sparkle">✨</div>
+              <div class="vs-ai-thinking-content">
+                <span class="vs-ai-thinking-label">${escapeHtml(thinkingMsg)}</span>
+                <div class="typing"><i></i><i></i><i></i></div>
+              </div>
+            </div>
+          </div>
           <div class="src vs-ai-asst-footer-row">
             <span class="chip vs-ai-sources-pill">
               <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#folder"/></svg>
@@ -3349,11 +3368,13 @@
     text = processedLines.join('\n');
 
     // 3. Process Standard Markdown Elements
-    // Replace raw horizontal rules (***, ---, ___ or * * *) with clean divider
-    text = text.replace(/^[ \t]*(\*{3,}|-{3,}|_{3,}|\*\s+\*\s+\*)[ \t]*$/gm, '<hr class="vs-ai-divider"/>');
-
-    // Escape HTML
+    // Escape HTML first
     let html = escapeHtml(text);
+
+    // Replace raw horizontal rules (***, ---, ___ or * * *) with clean real HTML divider
+    html = html.replace(/^[ \t]*(\*{3,}|-{3,}|_{3,}|\*\s+\*\s+\*)[ \t]*$/gm, '<hr class="vs-ai-divider"/>');
+    // Also catch and render any escaped <hr> tags
+    html = html.replace(/&lt;hr(?:\s+class="[^"]*")?\s*\/?&gt;/gi, '<hr class="vs-ai-divider"/>');
 
     // Headings - support h1 through h6 (Fixes raw #### and ##### completely!)
     html = html.replace(/^###### (.*$)/gim, '<h6 class="vs-ai-h6">$1</h6>');

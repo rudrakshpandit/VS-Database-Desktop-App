@@ -2374,16 +2374,20 @@ button#vs-ai-btn-new-chat:active {
   gap: 8px;
   font-size: 11px;
   color: #64748b;
+  white-space: nowrap;
+  flex-wrap: nowrap;
 }
 
 .vs-ai-file-badge {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 5px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  flex-shrink: 0;
 }
 
 .vs-ai-file-badge.pdf { background: #fee2e2; color: #b91c1c; }
@@ -2722,4 +2726,70 @@ button#vs-ai-btn-new-chat:active {
   background: #dcfce7 !important;
   border-color: #86efac !important;
   color: #14532d !important;
+}
+
+/* ============================================================
+   AI THINKING & STREAMING PROGRESS CARD
+   ============================================================ */
+
+.vs-ai-thinking-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.8), rgba(245, 243, 255, 0.8));
+  border: 1px solid rgba(191, 219, 254, 0.8);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08);
+  animation: vsAiThinkingPulse 2s ease-in-out infinite;
+  margin: 4px 0;
+}
+
+@keyframes vsAiThinkingPulse {
+  0% { border-color: rgba(191, 219, 254, 0.8); box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08); }
+  50% { border-color: rgba(167, 139, 250, 0.9); box-shadow: 0 6px 18px rgba(124, 58, 237, 0.15); }
+  100% { border-color: rgba(191, 219, 254, 0.8); box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08); }
+}
+
+.vs-ai-thinking-sparkle {
+  font-size: 18px;
+  line-height: 1;
+  animation: vsAiSparkleRotate 3s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 4px rgba(245, 158, 11, 0.3));
+}
+
+@keyframes vsAiSparkleRotate {
+  0% { transform: scale(1) rotate(0deg); }
+  50% { transform: scale(1.2) rotate(18deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+.vs-ai-thinking-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.vs-ai-thinking-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e3a8a;
+  letter-spacing: -0.01em;
+}
+
+.vs-ai-thinking-card .typing {
+  display: flex;
+  gap: 4px;
+  padding: 0;
+}
+
+.vs-ai-thinking-card .typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2563eb;
+  animation: b 1s infinite;
 }
