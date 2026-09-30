@@ -89,9 +89,11 @@ def clean_model_response(text: str) -> str:
     cleaned = re.sub(monologue_pattern, '', cleaned, flags=re.IGNORECASE)
     # 4. Clean any residual "This is the correct, authoritative, and helpful way to respond."
     cleaned = re.sub(r'This is the correct, authoritative, and helpful way to respond\.\s*', '', cleaned, flags=re.IGNORECASE)
-    # 5. Clean standalone raw *** or --- dividers or awkward asterisk dumps
+    # 5. Clean conversational boilerplate when generating documents
+    cleaned = re.sub(r'^(?:Yes!?\s+)?I\s+have\s+direct\s+inbuilt\s+generation[^\n]*\n+', '', cleaned, flags=re.IGNORECASE)
+    # 6. Clean standalone raw *** or --- dividers or awkward asterisk dumps
     cleaned = re.sub(r'(?m)^[ \t]*(\*{3,}|-{3,}|_{3,})[ \t]*$', '', cleaned)
-    # 6. Normalize excessive heading hashes (#### -> ###)
+    # 7. Normalize excessive heading hashes (#### -> ###)
     cleaned = re.sub(r'(?m)^#{4,}\s+', '### ', cleaned)
     return cleaned.strip()
 
@@ -436,7 +438,7 @@ class GeminiProvider:
                     headers=headers,
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with urllib.request.urlopen(req, timeout=45) as resp:
                     if resp.status == 200:
                         for raw_line in resp:
                             line = raw_line.decode("utf-8", errors="replace").strip()
@@ -1269,26 +1271,27 @@ EXECUTIVE TITLE:"""
             gm = generation_mode.lower()
             if gm == "pdf":
                 instructions.append(
-                    "TARGET FILE GENERATION MODE: DIRECT PDF DOCUMENT\n"
+                    "TARGET FILE GENERATION MODE: DIRECT STATUTORY PDF DOCUMENT\n"
                     "- The user has explicitly selected Direct PDF Generation.\n"
-                    "- Do NOT output an endless conversational chat dump.\n"
-                    "- Provide a 2-3 sentence executive briefing summarizing the document.\n"
-                    "- Present the complete, formal document with clear Markdown headings (# Title, ## Section) ready for ReportLab 300 DPI PDF compilation."
+                    "- Do NOT output conversational chat chatter (never say 'Yes! I have direct inbuilt generation...').\n"
+                    "- Provide a 1-sentence executive summary stating the document title.\n"
+                    "- Present the complete, formal document with clear Markdown headings (# Title, ## Section) formatted for ReportLab PDF compilation."
                 )
             elif gm in ("excel", "gsheet"):
                 instructions.append(
                     "TARGET FILE GENERATION MODE: SPREADSHEET (EXCEL / GSHEET)\n"
                     "- The user has explicitly selected Spreadsheet Generation.\n"
-                    "- Do NOT output conversational paragraphs.\n"
-                    "- Provide a 1-2 sentence overview of the financial model or dataset.\n"
+                    "- Do NOT output conversational paragraphs or chatter.\n"
+                    "- Provide a 1-sentence executive overview of the financial model or dataset.\n"
                     "- Present the data as a comprehensive, well-structured Markdown Table (| Col 1 | Col 2 | ...) with numbers, taxes, calculations, and grand totals ready for openpyxl .xlsx compilation."
                 )
             elif gm in ("word", "docs"):
                 instructions.append(
                     "TARGET FILE GENERATION MODE: WORD / LEGAL DOCUMENT\n"
                     "- The user has explicitly selected Word Document Generation.\n"
-                    "- Provide a 2-3 sentence executive brief.\n"
-                    "- Present the formal legal draft, notice reply, petition, or agreement with numbered clauses, recitals, and signature blocks ready for python-docx compilation."
+                    "- Do NOT output conversational chatter (never say 'Yes! I have direct inbuilt generation...').\n"
+                    "- Provide a 1-sentence executive brief stating the document title.\n"
+                    "- Present the formal legal draft, balance sheet, or agreement with numbered clauses, recitals, and tables ready for python-docx compilation."
                 )
 
         instructions.append(
@@ -1402,6 +1405,17 @@ EXECUTIVE TITLE:"""
     ):
         """Runs RAG search, formats statutory context, and streams Gemini tokens via generator."""
         t_start = time.time()
+
+        if not generation_mode:
+            p_low = prompt.lower()
+            if "pdf" in p_low:
+                generation_mode = "pdf"
+            elif any(k in p_low for k in ("excel", "xlsx", "spreadsheet", "gsheet")):
+                generation_mode = "excel"
+            elif any(k in p_low for k in ("word", "docx", "draft agreement", "deed", "petition")):
+                generation_mode = "word"
+            elif any(k in p_low for k in ("balance sheet", "p&l", "profit and loss", "financial statement")):
+                generation_mode = "word"
 
         has_attachments = bool(attachments and len(attachments) > 0)
         is_statutory = self.is_statutory_inquiry(prompt)

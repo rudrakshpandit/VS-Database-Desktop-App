@@ -813,9 +813,25 @@
         `;
 
         const asstBody = row.querySelector('.vs-ai-asst-body');
-        if (asstBody && (hasActiveMode || wantsPdf || wantsExcel || wantsWord)) {
+        const isDirectDocRequest = hasActiveMode || wantsPdf || wantsExcel || wantsWord || pLow.includes('generate') || pLow.includes('export') || pLow.includes('sample') || pLow.includes('balance sheet') || pLow.includes('p&l');
+
+        if (asstBody && isDirectDocRequest) {
           // If file explicitly targeted, position the File Card at the top of the message bubble
           asstBody.parentNode.insertBefore(card, asstBody);
+
+          // Clean executive confirmation + collapsible details: ONLY give the specific file not the chat answer dump!
+          asstBody.innerHTML = `
+            <div class="vs-ai-file-ready-note">
+              Your requested document <strong>${escapeHtml(cleanHeading)}</strong> has been compiled and is ready for preview, download, or editing in Document Canvas.
+            </div>
+            <details class="vs-ai-doc-outline-details">
+              <summary>
+                <span>📄 View Document Outline & Content</span>
+                <small class="muted" style="margin-left:auto;">Click to expand ▾</small>
+              </summary>
+              <div class="vs-ai-doc-outline-body">${renderMarkdown(content)}</div>
+            </details>
+          `;
         } else {
           const footerRow = row.querySelector('.vs-ai-asst-footer-row');
           if (footerRow) {
@@ -968,33 +984,46 @@
       renderAttachmentPreviewBar();
     }
 
-    let thinkingMsg = 'VS AI is thinking & analyzing statutory provisions...';
-    if (activeGenerationMode === 'pdf') thinkingMsg = 'VS AI is compiling statutory PDF document & citations...';
-    else if (activeGenerationMode === 'excel' || activeGenerationMode === 'gsheet') thinkingMsg = 'VS AI is generating financial spreadsheet & calculations...';
-    else if (activeGenerationMode === 'word' || activeGenerationMode === 'docs') thinkingMsg = 'VS AI is drafting executive legal document & clauses...';
+    let thinkingMsg = 'VS AI is analyzing statutory provisions & legal clauses...';
+    const pLow = (promptText || '').toLowerCase();
+    const isDocMode = Boolean(activeGenerationMode) || pLow.includes('pdf') || pLow.includes('excel') || pLow.includes('spreadsheet') || pLow.includes('sheet') || pLow.includes('word') || pLow.includes('doc') || pLow.includes('generate') || pLow.includes('balance sheet') || pLow.includes('p&l');
 
-    const loadingId = 'loading-' + Date.now();
-    const loadingEl = document.createElement('div');
-    loadingEl.className = 'msg vs-ai-message-row assistant';
-    loadingEl.id = loadingId;
-    loadingEl.innerHTML = `
+    if (activeGenerationMode === 'pdf' || pLow.includes('pdf')) thinkingMsg = 'VS AI is compiling statutory PDF document & citations...';
+    else if (activeGenerationMode === 'excel' || activeGenerationMode === 'gsheet' || pLow.includes('excel') || pLow.includes('sheet')) thinkingMsg = 'VS AI is generating financial spreadsheet & calculations...';
+    else if (activeGenerationMode === 'word' || activeGenerationMode === 'docs' || pLow.includes('word') || pLow.includes('doc')) thinkingMsg = 'VS AI is drafting executive legal document & clauses...';
+    else if (pLow.includes('balance sheet') || pLow.includes('p&l') || pLow.includes('financial')) thinkingMsg = 'VS AI is compiling Schedule III financial statements & calculations...';
+
+    // Directly create Assistant Row so loading is IMMEDIATELY visible without delay or flicker
+    const asstRow = document.createElement('div');
+    asstRow.className = 'msg vs-ai-message-row assistant vs-ai-message-fade-in';
+    asstRow.innerHTML = `
       <div class="av">VS</div>
-      <div class="bub">
-        <div class="vs-ai-thinking-card">
-          <div class="vs-ai-thinking-sparkle">✨</div>
-          <div class="vs-ai-thinking-content">
-            <span class="vs-ai-thinking-label">${escapeHtml(thinkingMsg)}</span>
-            <div class="typing"><i></i><i></i><i></i></div>
+      <div class="bub vs-ai-bubble-assistant">
+        <div class="vs-ai-asst-body">
+          <div class="vs-ai-thinking-card">
+            <div class="vs-ai-thinking-sparkle">✨</div>
+            <div class="vs-ai-thinking-content">
+              <span class="vs-ai-thinking-label">${escapeHtml(thinkingMsg)}</span>
+              <div class="typing"><i></i><i></i><i></i></div>
+              <small class="vs-ai-thinking-subtext" style="color:#64748b;font-size:11px;margin-top:2px;">Analyzing request & generating response...</small>
+            </div>
           </div>
         </div>
+        <div class="src vs-ai-asst-footer-row" style="display:none;">
+          <span class="chip vs-ai-sources-pill">
+            <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#folder"/></svg>
+            <span class="sources-pill-label">Income-tax Act, 2025</span>
+          </span>
+        </div>
+        ${renderAssistantActionsHtml()}
       </div>
     `;
 
     // If retrying, replace the error card in place
     if (existingErrorRow && existingErrorRow.parentNode) {
-      existingErrorRow.parentNode.replaceChild(loadingEl, existingErrorRow);
+      existingErrorRow.parentNode.replaceChild(asstRow, existingErrorRow);
     } else if (stream) {
-      stream.appendChild(loadingEl);
+      stream.appendChild(asstRow);
       stream.scrollTop = stream.scrollHeight;
     }
 
@@ -1002,54 +1031,21 @@
     currentAbortController = new AbortController();
     updateSendButtonState();
 
-    let asstRow = null;
-    let bodyEl = null;
-    let sourcesLabel = null;
-    let actionsRow = null;
+    const bodyEl = asstRow.querySelector('.vs-ai-asst-body');
+    const sourcesLabel = asstRow.querySelector('.sources-pill-label');
+    const sourcesFooter = asstRow.querySelector('.vs-ai-asst-footer-row');
+    const actionsRow = asstRow.querySelector('.vs-ai-msg-actions');
+    if (actionsRow) actionsRow.style.display = 'none';
+
     let accumulatedText = '';
     let currentCitations = [];
-
-    function ensureAssistantBubble() {
-      if (asstRow) return;
-      if (loadingEl.parentNode) loadingEl.remove();
-
-      asstRow = document.createElement('div');
-      asstRow.className = 'msg vs-ai-message-row assistant';
-      asstRow.innerHTML = `
-        <div class="av">VS</div>
-        <div class="bub">
-          <div class="vs-ai-asst-body">
-            <div class="vs-ai-thinking-card">
-              <div class="vs-ai-thinking-sparkle">✨</div>
-              <div class="vs-ai-thinking-content">
-                <span class="vs-ai-thinking-label">${escapeHtml(thinkingMsg)}</span>
-                <div class="typing"><i></i><i></i><i></i></div>
-              </div>
-            </div>
-          </div>
-          <div class="src vs-ai-asst-footer-row">
-            <span class="chip vs-ai-sources-pill">
-              <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#folder"/></svg>
-              <span class="sources-pill-label">Income-tax Act, 2025</span>
-            </span>
-          </div>
-          ${renderAssistantActionsHtml()}
-        </div>
-      `;
-
-      stream.appendChild(asstRow);
-      bodyEl = asstRow.querySelector('.vs-ai-asst-body');
-      sourcesLabel = asstRow.querySelector('.sources-pill-label');
-      actionsRow = asstRow.querySelector('.vs-ai-msg-actions');
-      if (actionsRow) actionsRow.style.display = 'none';
-      stream.scrollTop = stream.scrollHeight;
-    }
 
     function updateCitationsPill(cList) {
       if (!cList || cList.length === 0 || !sourcesLabel) return;
       const secList = cList.map(c => c.section || 'Statute').filter(Boolean);
       const text = secList.length > 0 ? secList.slice(0, 2).join(', ') : 'Income-tax Act, 2025';
       sourcesLabel.textContent = text;
+      if (sourcesFooter) sourcesFooter.style.display = 'flex';
     }
 
     function finalizeAssistantActions() {
@@ -1110,17 +1106,21 @@
                 }
               } else if (ev.type === 'meta') {
                 currentCitations = ev.citations || [];
-                ensureAssistantBubble();
                 updateCitationsPill(currentCitations);
               } else if (ev.type === 'token') {
-                ensureAssistantBubble();
                 accumulatedText += ev.delta || '';
-                bodyEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="vs-ai-type-cursor">▌</span>';
-
-                const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
-                if (distanceToBottom < 180) stream.scrollTop = stream.scrollHeight;
+                if (!isDocMode) {
+                  bodyEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="vs-ai-type-cursor">▌</span>';
+                  const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+                  if (distanceToBottom < 180) stream.scrollTop = stream.scrollHeight;
+                } else {
+                  const subtext = asstRow.querySelector('.vs-ai-thinking-subtext');
+                  if (subtext) {
+                    const wordEst = Math.max(1, Math.round(accumulatedText.length / 5));
+                    subtext.textContent = `Compiling structured document (${wordEst} words generated)...`;
+                  }
+                }
               } else if (ev.type === 'done') {
-                ensureAssistantBubble();
                 bodyEl.innerHTML = renderMarkdown(accumulatedText);
                 if (ev.citations && ev.citations.length > 0) {
                   currentCitations = ev.citations;
@@ -1135,16 +1135,10 @@
                 try { await reader.cancel(); } catch(e) {}
                 break;
               } else if (ev.type === 'error') {
-                if (!asstRow) {
-                  if (loadingEl.parentNode) loadingEl.remove();
-                  retryAttempts++;
-                  renderErrorCard(ev.error || 'Failed to generate response.', promptText, attachmentsToSend);
-                  if (ev.error && ev.error.toLowerCase().includes('key')) {
-                    showSettingsModal();
-                  }
-                } else {
-                  bodyEl.innerHTML = renderMarkdown(accumulatedText) + `<div style="color:#b91c1c;margin-top:12px;font-size:13px;display:flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#b91c1c;"><use href="#alert"/></svg>Stream interrupted: ${escapeHtml(ev.error)}</div>`;
-                  finalizeAssistantActions();
+                retryAttempts++;
+                renderErrorCard(ev.error || 'Failed to generate response.', promptText, attachmentsToSend, asstRow);
+                if (ev.error && ev.error.toLowerCase().includes('key')) {
+                  showSettingsModal();
                 }
                 streamFinished = true;
                 try { await reader.cancel(); } catch(e) {}
@@ -1164,20 +1158,15 @@
 
     } catch (err) {
       if (err.name === 'AbortError') {
-        if (loadingEl.parentNode) loadingEl.remove();
         if (asstRow && bodyEl) {
           bodyEl.innerHTML = renderMarkdown(accumulatedText) + '\n\n*(Generation stopped by user)*';
           finalizeAssistantActions();
         }
       } else {
-        if (loadingEl.parentNode) loadingEl.remove();
-        if (!asstRow) {
-          retryAttempts++;
-          renderErrorCard('VS AI servers are experiencing peak demand across model pools. Please retry.', promptText, attachmentsToSend);
-        }
+        retryAttempts++;
+        renderErrorCard('VS AI servers are experiencing peak demand across model pools. Please retry.', promptText, attachmentsToSend, asstRow);
       }
     } finally {
-      if (loadingEl.parentNode) loadingEl.remove();
       isRequestInFlight = false;
       currentAbortController = null;
       currentStreamReader = null;
@@ -1190,18 +1179,18 @@
   // ------------------------------------------------------------
   // RESILIENT SYSTEM ERROR CARD & RETRY COUNTDOWN
   // ------------------------------------------------------------
-  function renderErrorCard(errorMsg, originalPrompt, originalAtts) {
+  function renderErrorCard(errorMsg, originalPrompt, originalAtts, targetRow = null) {
     const stream = document.querySelector('#vs-ai-chat-stream');
     if (!stream) return;
 
     // Collapse any previous consecutive error cards
     const existingErrors = stream.querySelectorAll('.vs-ai-error-card');
     existingErrors.forEach(card => {
-      const row = card.closest('.vs-ai-message-row');
-      if (row) row.remove();
+      const r = card.closest('.vs-ai-message-row');
+      if (r && r !== targetRow) r.remove();
     });
 
-    row.className = 'msg vs-ai-message-row assistant';
+    const row = targetRow || document.createElement('div');
     row.innerHTML = `
       <div class="err vs-ai-error-card">
         <b>
@@ -1332,15 +1321,16 @@
       stream.scrollTop = stream.scrollHeight;
 
       const bodyEl = row.querySelector('.vs-ai-asst-body');
-      attachAssistantActionHandlers(row, promptTitle || 'Statutory Advisory Brief', content, citations);
 
       if (isNewResponse) {
         streamTypewriter(bodyEl, content, () => {
+          attachAssistantActionHandlers(row, promptTitle || 'Statutory Advisory Brief', content, citations);
           const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
           if (distanceToBottom < 200) stream.scrollTop = stream.scrollHeight;
         });
       } else {
         bodyEl.innerHTML = renderMarkdown(content);
+        attachAssistantActionHandlers(row, promptTitle || 'Statutory Advisory Brief', content, citations);
       }
     }
   }
