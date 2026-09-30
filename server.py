@@ -9309,8 +9309,8 @@ Return ONLY the revised replacement text without conversational preamble, introd
                 target_folder = payload.get("folder", "General").strip() or "General"
                 doc_title = payload.get("document_name") or filename
                 ext = os.path.splitext(filename)[1].lower() or ".pdf"
-                if not doc_title.lower().endswith(ext):
-                    doc_title += ext
+                clean_title = re.sub(r'\.(docx|xlsx|pdf|txt)+$', '', doc_title, flags=re.I)
+                doc_title = f"{clean_title}{ext}"
                 fname = os.path.basename(filename)
                 export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
                 if not export_file.is_file():
@@ -9342,6 +9342,20 @@ Return ONLY the revised replacement text without conversational preamble, introd
                     """, (cid, title, scope, t_now, t_now))
                     con.commit()
                 return self.send_json({"ok": True, "conversation_id": cid, "title": title})
+
+            if path.startswith("/api/ai/conversations/") and path.endswith("/auto-rename"):
+                parts = path.split("/")
+                cid = parts[4]
+                with db() as con:
+                    rows = con.execute("SELECT role, content FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 4", (cid,)).fetchall()
+                    if rows:
+                        user_p = rows[0]["content"] if rows[0]["role"] == "user" else ""
+                        asst_r = rows[1]["content"] if len(rows) > 1 and rows[1]["role"] == "assistant" else ""
+                        smart_title = ai_engine.generate_chat_title(user_p, asst_r)
+                        con.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (smart_title, time.strftime("%Y-%m-%d %H:%M:%S"), cid))
+                        con.commit()
+                        return self.send_json({"ok": True, "title": smart_title})
+                return self.send_json({"error": "No messages found to auto-rename"}, 404)
 
             if path.startswith("/api/ai/conversations/") and path.endswith("/rename"):
                 parts = path.split("/")
@@ -9376,8 +9390,10 @@ Return ONLY the revised replacement text without conversational preamble, introd
                 t_now = time.strftime("%Y-%m-%d %H:%M:%S")
 
                 with db() as con:
-                    if not cid:
-                        cid = f"conv_{uuid.uuid4().hex[:10]}"
+                    row_exists = con.execute("SELECT id FROM ai_conversations WHERE id = ?", (cid,)).fetchone() if cid else None
+                    if not cid or not row_exists:
+                        if not cid:
+                            cid = f"conv_{uuid.uuid4().hex[:10]}"
                         title = prompt[:30] + ("..." if len(prompt) > 30 else "")
                         con.execute("""
                             INSERT INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
@@ -9447,11 +9463,20 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         "model": asst_model,
                         "provider": "VS AI"
                     })
+                    auto_title = None
                     with db() as con:
                         con.execute("""
                             INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                             VALUES (?, ?, 'assistant', ?, ?, ?)
                         """, (asst_msg_id, cid, asst_text, asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
+                        
+                        conv_row = con.execute("SELECT title FROM ai_conversations WHERE id = ?", (cid,)).fetchone()
+                        msg_count = con.execute("SELECT count(*) as c FROM ai_messages WHERE conversation_id = ?", (cid,)).fetchone()["c"]
+                        # Auto-rename if first assistant message or title is raw prompt with newlines/dots
+                        if conv_row and (msg_count <= 2 or conv_row["title"].startswith("New Chat") or "\n" in conv_row["title"] or conv_row["title"].endswith("...")):
+                            auto_title = ai_engine.generate_chat_title(prompt, asst_text)
+                            if auto_title:
+                                con.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (auto_title, time.strftime("%Y-%m-%d %H:%M:%S"), cid))
                         con.commit()
 
                     send_sse({
@@ -9460,7 +9485,8 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         "message_id": asst_msg_id,
                         "full_text": asst_text,
                         "citations": asst_citations,
-                        "model": asst_model
+                        "model": asst_model,
+                        "auto_title": auto_title
                     })
                 except (BrokenPipeError, ConnectionResetError):
                     logging.info("SSE client disconnected")
@@ -9486,8 +9512,10 @@ Return ONLY the revised replacement text without conversational preamble, introd
                 t_now = time.strftime("%Y-%m-%d %H:%M:%S")
 
                 with db() as con:
-                    if not cid:
-                        cid = f"conv_{uuid.uuid4().hex[:10]}"
+                    row_exists = con.execute("SELECT id FROM ai_conversations WHERE id = ?", (cid,)).fetchone() if cid else None
+                    if not cid or not row_exists:
+                        if not cid:
+                            cid = f"conv_{uuid.uuid4().hex[:10]}"
                         title = prompt[:30] + ("..." if len(prompt) > 30 else "")
                         con.execute("""
                             INSERT INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
@@ -9525,13 +9553,22 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         "model": res.get("model", "VS AI Fast Core"),
                         "provider": "VS AI"
                     })
+                    auto_title = None
                     with db() as con:
                         con.execute("""
                             INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                             VALUES (?, ?, 'assistant', ?, ?, ?)
                         """, (asst_msg_id, cid, res.get("answer", ""), asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
+                        
+                        conv_row = con.execute("SELECT title FROM ai_conversations WHERE id = ?", (cid,)).fetchone()
+                        msg_count = con.execute("SELECT count(*) as c FROM ai_messages WHERE conversation_id = ?", (cid,)).fetchone()["c"]
+                        if conv_row and (msg_count <= 2 or conv_row["title"].startswith("New Chat") or "\n" in conv_row["title"] or conv_row["title"].endswith("...")):
+                            auto_title = ai_engine.generate_chat_title(prompt, res.get("answer", ""))
+                            if auto_title:
+                                con.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (auto_title, time.strftime("%Y-%m-%d %H:%M:%S"), cid))
                         con.commit()
                     res["message_id"] = asst_msg_id
+                    res["auto_title"] = auto_title
 
                 res["conversation_id"] = cid
                 return self.send_json(res)

@@ -295,9 +295,9 @@ class DesktopBridge:
             if not ext:
                 ext = ".pdf"
 
-            target_filename = default_name or source_filename
-            if not target_filename.lower().endswith(ext):
-                target_filename += ext
+            base = os.path.splitext(default_name or source_filename)[0]
+            base = re.sub(r'\.(docx|xlsx|pdf|txt)+$', '', base, flags=re.I)
+            target_filename = f"{base}{ext}"
 
             if ext == ".docx":
                 file_types = ("Word Documents (*.docx)", "All Files (*.*)")
@@ -315,6 +315,9 @@ class DesktopBridge:
                 return {"ok": False, "cancelled": True}
 
             dest_path = res[0]
+            # Ensure dest_path ends with the expected extension if user omitted it
+            if not os.path.splitext(dest_path)[1]:
+                dest_path += ext
             shutil.copy2(source_path, dest_path)
             return {"ok": True, "path": dest_path, "filename": os.path.basename(dest_path)}
         except Exception as exc:
@@ -332,9 +335,15 @@ class DesktopBridge:
             if not os.path.exists(source_path):
                 return {"ok": False, "error": f"Source file not found: {source_filename}"}
 
-            target_filename = default_name or source_filename
-            if not target_filename.lower().endswith(".pdf"):
-                target_filename += ".pdf"
+            ext = os.path.splitext(source_filename)[1].lower()
+            if not ext and default_name:
+                ext = os.path.splitext(default_name)[1].lower()
+            if not ext:
+                ext = ".pdf"
+
+            base = os.path.splitext(default_name or source_filename)[0]
+            base = re.sub(r'\.(docx|xlsx|pdf|txt)+$', '', base, flags=re.I)
+            target_filename = f"{base}{ext}"
 
             res = self._window.create_file_dialog(webview.FileDialog.FOLDER)
             if not res or len(res) == 0:

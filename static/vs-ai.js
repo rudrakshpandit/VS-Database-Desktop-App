@@ -535,10 +535,38 @@
     `;
   }
 
+  function extractCleanDocTitle(content, fallbackTitle) {
+    if (content) {
+      const lines = content.split('\n');
+      for (let i = 0; i < Math.min(lines.length, 6); i++) {
+        const l = lines[i].trim();
+        if (l.startsWith('#')) {
+          let clean = l.replace(/^[#\s*]+/, '').replace(/[*_`]/g, '').trim();
+          clean = clean.replace(/^\d+\.\s*/, '').replace(/[:\-–—\\/]+$/, '').trim();
+          if (clean.length > 3 && clean.length < 65 && !clean.toLowerCase().startsWith('table') && !clean.toLowerCase().startsWith('note') && !clean.toLowerCase().startsWith('disclaimer')) {
+            return clean;
+          }
+        }
+      }
+    }
+    if (fallbackTitle) {
+      let t = fallbackTitle.split('\n')[0].trim();
+      t = t.replace(/^(?:generate|create|draft|provide|explain|give me|what is|tell me about|how to)\s+(?:a\s+|an\s+|the\s+)?/i, '').trim();
+      t = t.replace(/[\\/*?:"<>|]/g, '').replace(/\.(docx|xlsx|pdf|txt)+$/i, '').trim();
+      t = t.replace(/\s+/g, ' ').trim();
+      if (t.length > 3) {
+        return t.length > 55 ? t.slice(0, 52) + '...' : t;
+      }
+    }
+    return 'Statutory Advisory Brief';
+  }
+
   function attachAssistantActionHandlers(row, title, content, citations) {
     const actionsRow = row.querySelector('.vs-ai-msg-actions');
     if (!actionsRow) return;
     actionsRow.style.display = 'flex';
+
+    const cleanHeading = extractCleanDocTitle(content, title);
 
     // Copy Text
     const copyBtn = actionsRow.querySelector('.btn-copy-text');
@@ -567,7 +595,7 @@
     if (canvasBtn) {
       canvasBtn.onclick = () => {
         showDocumentCanvasModal({
-          title: title || 'Statutory Advisory Draft',
+          title: cleanHeading,
           content: content,
           citations: citations
         });
@@ -590,7 +618,7 @@
       if (optExcel) {
         optExcel.onclick = () => {
           exportMenu.style.display = 'none';
-          handleExportExcel(title || 'Statutory Computations', content);
+          handleExportExcel(cleanHeading, content);
         };
       }
 
@@ -598,7 +626,7 @@
       if (optWord) {
         optWord.onclick = () => {
           exportMenu.style.display = 'none';
-          handleExportWord(title || 'Statutory Legal Brief', content, citations);
+          handleExportWord(cleanHeading, content, citations);
         };
       }
 
@@ -606,7 +634,7 @@
       if (optPdf) {
         optPdf.onclick = () => {
           exportMenu.style.display = 'none';
-          handlePreviewPdf(title || 'Statutory Legal Opinion & Advisory', content, citations);
+          handlePreviewPdf(cleanHeading, content, citations);
         };
       }
 
@@ -625,7 +653,7 @@
       if (optPrint) {
         optPrint.onclick = () => {
           exportMenu.style.display = 'none';
-          printFormattedContent(title || 'Statutory Advisory', content);
+          printFormattedContent(cleanHeading, content);
         };
       }
     }
@@ -794,6 +822,13 @@
                 if (ev.citations && ev.citations.length > 0) {
                   currentCitations = ev.citations;
                   updateCitationsPill(currentCitations);
+                }
+                if (ev.auto_title) {
+                  currentConversationTitle = ev.auto_title;
+                  const activeTitleEl = document.querySelector(`.vs-ai-history-item[data-id="${currentConvId}"] .vs-ai-history-title`);
+                  if (activeTitleEl) activeTitleEl.textContent = ev.auto_title;
+                  const cachedConv = allConversationsCache.find(c => c.id === currentConvId);
+                  if (cachedConv) cachedConv.title = ev.auto_title;
                 }
                 finalizeAssistantActions();
                 retryAttempts = 0;
@@ -1256,7 +1291,9 @@
     modal.className = 'vs-ai-modal-overlay';
     modal.style.zIndex = '10005';
 
-    const safeTitle = escapeHtml(title || 'Statutory Document');
+    let cleanBase = (title || fileData.filename || 'Statutory Document').trim();
+    cleanBase = cleanBase.replace(/\.(docx|xlsx|pdf|txt)+$/i, '');
+    const safeTitle = escapeHtml(cleanBase);
     const extLabel = fileType === 'xlsx' ? 'Excel Spreadsheet (.xlsx)' : (fileType === 'docx' ? 'Word Document (.docx)' : 'Statutory Document (.pdf)');
     const extIcon = fileType === 'xlsx' ? '📊' : (fileType === 'docx' ? '📄' : '📑');
 
@@ -1355,8 +1392,10 @@
   }
 
   async function executeSaveToWindowsLocation(fileData, title, fileType = 'pdf') {
-    const ext = fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`;
-    const defaultName = (title || 'VS_AI_Document').replace(/[/\\?%*:|"<>]/g, '_') + ext;
+    const ext = (fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`).toLowerCase();
+    let base = (title || fileData.filename || 'VS_AI_Document').replace(/[/\\?%*:|"<>]/g, '_').trim();
+    base = base.replace(/\.(docx|xlsx|pdf|txt)+$/i, '');
+    const defaultName = `${base}${ext}`;
     
     // In pywebview native desktop mode:
     if (window.pywebview && window.pywebview.api && window.pywebview.api.save_file_to_location) {
@@ -1460,8 +1499,10 @@
         confirmBtn.textContent = 'Saving to Vault...';
 
         try {
-          const ext = fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`;
-          const docName = (title || 'VS_AI_Statutory_Document').replace(/[/\\?%*:|"<>]/g, '_') + ext;
+          const ext = (fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`).toLowerCase();
+          let cleanDoc = (title || fileData.filename || 'VS_AI_Statutory_Document').replace(/[/\\?%*:|"<>]/g, '_').trim();
+          cleanDoc = cleanDoc.replace(/\.(docx|xlsx|pdf|txt)+$/i, '');
+          const docName = `${cleanDoc}${ext}`;
           const targetFolder = folderSelect.value || 'General';
 
           const saveResp = await fetch('/api/ai/save-to-client', {
