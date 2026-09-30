@@ -22,6 +22,90 @@
   let retryAttempts = 0;
   const MAX_AUTO_RETRIES = 3;
   let allConversationsCache = [];
+  let activeGenerationMode = null;
+
+  const GENERATION_MODE_CONFIG = {
+    pdf: {
+      title: 'PDF Document',
+      icon: '📑',
+      class: 'vs-mode-pdf',
+      badge: '📑 Direct PDF Mode',
+      desc: 'AI will generate a direct statutory PDF file',
+      placeholder: 'Describe the PDF document to generate (e.g., Notice reply under Section 148, Legal Advisory Brief)...'
+    },
+    excel: {
+      title: 'Excel Spreadsheet',
+      icon: '📊',
+      class: 'vs-mode-excel',
+      badge: '📊 Direct Excel Mode',
+      desc: 'AI will generate a multi-sheet .xlsx workbook with formulas & tables',
+      placeholder: 'Describe the Excel spreadsheet to generate (e.g., Footwear company 35 GST transactions, ITC ledger)...'
+    },
+    gsheet: {
+      title: 'Google Sheet',
+      icon: '📈',
+      class: 'vs-mode-gsheet',
+      badge: '📈 Direct Google Sheet Mode',
+      desc: 'AI will generate a structured cloud-ready financial dataset',
+      placeholder: 'Describe the Google Sheet dataset (e.g., Monthly TDS computation, Vendor reconciliation)...'
+    },
+    word: {
+      title: 'Word Document',
+      icon: '📄',
+      class: 'vs-mode-word',
+      badge: '📄 Direct Word Mode',
+      desc: 'AI will generate an executive .docx document with formal legal clauses',
+      placeholder: 'Describe the Word document to draft (e.g., Employment Agreement, Partnership Deed, Board Resolution)...'
+    },
+    docs: {
+      title: 'Google Docs',
+      icon: '📝',
+      class: 'vs-mode-docs',
+      badge: '📝 Direct Google Docs Mode',
+      desc: 'AI will generate a structured legal draft ready for Google Docs',
+      placeholder: 'Describe the Google Doc to draft (e.g., Statutory Appeal Petition, Legal Notice)...'
+    }
+  };
+
+  function setGenerationMode(mode) {
+    activeGenerationMode = mode;
+    renderActiveModeBar();
+    const promptInput = document.querySelector('#vs-ai-prompt-input');
+    if (promptInput) {
+      if (mode && GENERATION_MODE_CONFIG[mode]) {
+        promptInput.placeholder = GENERATION_MODE_CONFIG[mode].placeholder;
+      } else {
+        promptInput.placeholder = "Ask any Indian tax or statutory law question… (e.g. 'What are the conditions for ITC under Section 16 of CGST Act?')";
+      }
+      promptInput.focus();
+    }
+  }
+
+  function renderActiveModeBar() {
+    const bar = document.querySelector('#vs-ai-active-mode-bar');
+    if (!bar) return;
+    if (!activeGenerationMode || !GENERATION_MODE_CONFIG[activeGenerationMode]) {
+      bar.innerHTML = '';
+      bar.style.display = 'none';
+      return;
+    }
+    const conf = GENERATION_MODE_CONFIG[activeGenerationMode];
+    bar.style.display = 'flex';
+    bar.innerHTML = `
+      <div class="vs-ai-active-mode-pill ${conf.class}">
+        <span class="vs-ai-mode-pill-badge">${conf.badge}</span>
+        <span class="vs-ai-mode-pill-msg">${conf.desc}</span>
+        <button type="button" class="vs-ai-mode-pill-clear" title="Clear mode (regular chat)">✕</button>
+      </div>
+    `;
+    const clearBtn = bar.querySelector('.vs-ai-mode-pill-clear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setGenerationMode(null);
+      });
+    }
+  }
 
   // ------------------------------------------------------------
   // INITIALIZATION & DOM STRUCTURE
@@ -146,6 +230,7 @@
 
           <!-- Bottom Floating Glass Composer -->
           <div class="comp vs-ai-composer-wrapper">
+            <div class="vs-ai-active-mode-pill-bar" id="vs-ai-active-mode-bar" style="display:none;"></div>
             <div class="vs-ai-attachment-preview-bar" id="vs-ai-att-preview-bar" style="display:none;"></div>
 
             <textarea
@@ -158,6 +243,59 @@
 
             <div class="row" style="margin-top:8px;">
               <input type="file" id="vs-ai-file-picker" style="display:none;" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.docx,.txt">
+              
+              <!-- DropUp File Generation Selector -->
+              <div class="vs-ai-dropup-container" id="vs-ai-dropup-container">
+                <button type="button" class="btn vs-ai-btn-dropup-trigger" id="vs-ai-btn-dropup" title="Generate Direct File: PDF, Excel, Word, Sheet, Docs">
+                  <svg class="i" style="width:13px;height:13px;margin-right:2px;" aria-hidden="true"><use href="#plus"/></svg>
+                  <span>Generate</span>
+                  <svg class="i" style="width:10px;height:10px;margin-left:2px;opacity:0.7;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div class="vs-ai-dropup-menu" id="vs-ai-dropup-menu" style="display:none;">
+                  <div class="vs-ai-dropup-header">
+                    <span>Generate File</span>
+                    <span class="vs-ai-dropup-hint">Select format</span>
+                  </div>
+                  <div class="vs-ai-dropup-list">
+                    <button type="button" class="vs-ai-dropup-item" data-mode="pdf">
+                      <span class="vs-ai-dropup-icon vs-dropup-pdf">📑</span>
+                      <div class="vs-ai-dropup-item-text">
+                        <span class="vs-ai-dropup-item-title">PDF Document</span>
+                        <span class="vs-ai-dropup-item-desc">Statutory brief, notice reply, legal opinion (.pdf)</span>
+                      </div>
+                    </button>
+                    <button type="button" class="vs-ai-dropup-item" data-mode="excel">
+                      <span class="vs-ai-dropup-icon vs-dropup-excel">📊</span>
+                      <div class="vs-ai-dropup-item-text">
+                        <span class="vs-ai-dropup-item-title">Excel Spreadsheet</span>
+                        <span class="vs-ai-dropup-item-desc">Formulas, tables & calculations (.xlsx)</span>
+                      </div>
+                    </button>
+                    <button type="button" class="vs-ai-dropup-item" data-mode="gsheet">
+                      <span class="vs-ai-dropup-icon vs-dropup-gsheet">📈</span>
+                      <div class="vs-ai-dropup-item-text">
+                        <span class="vs-ai-dropup-item-title">Google Sheet</span>
+                        <span class="vs-ai-dropup-item-desc">Cloud spreadsheet & financial dataset</span>
+                      </div>
+                    </button>
+                    <button type="button" class="vs-ai-dropup-item" data-mode="word">
+                      <span class="vs-ai-dropup-icon vs-dropup-word">📄</span>
+                      <div class="vs-ai-dropup-item-text">
+                        <span class="vs-ai-dropup-item-title">Word Document</span>
+                        <span class="vs-ai-dropup-item-desc">Contract, formal petition, agreement (.docx)</span>
+                      </div>
+                    </button>
+                    <button type="button" class="vs-ai-dropup-item" data-mode="docs">
+                      <span class="vs-ai-dropup-icon vs-dropup-docs">📝</span>
+                      <div class="vs-ai-dropup-item-text">
+                        <span class="vs-ai-dropup-item-title">Google Docs</span>
+                        <span class="vs-ai-dropup-item-desc">Cloud-ready structured legal draft</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <button type="button" class="btn" id="vs-ai-btn-attach-file" title="Attach Document, Image, or Data Spreadsheet">
                 <svg class="i" aria-hidden="true"><use href="#clip"/></svg>
                 <span>Attach</span>
@@ -334,6 +472,37 @@
         promptInput.style.height = 'auto';
         promptInput.style.height = Math.min(promptInput.scrollHeight, 140) + 'px';
         updateSendButtonState();
+      });
+    }
+
+    // Generate DropUp Menu Trigger & Items
+    const dropupBtn = document.querySelector('#vs-ai-btn-dropup');
+    const dropupMenu = document.querySelector('#vs-ai-dropup-menu');
+    const dropupContainer = document.querySelector('#vs-ai-dropup-container');
+
+    if (dropupBtn && dropupMenu) {
+      dropupBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = dropupMenu.style.display !== 'none';
+        dropupMenu.style.display = isOpen ? 'none' : 'flex';
+        dropupBtn.classList.toggle('active', !isOpen);
+      });
+
+      document.querySelectorAll('.vs-ai-dropup-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const mode = item.getAttribute('data-mode');
+          setGenerationMode(mode);
+          dropupMenu.style.display = 'none';
+          dropupBtn.classList.remove('active');
+        });
+      });
+
+      document.addEventListener('click', (e) => {
+        if (dropupContainer && !dropupContainer.contains(e.target)) {
+          dropupMenu.style.display = 'none';
+          dropupBtn.classList.remove('active');
+        }
       });
     }
 
@@ -570,10 +739,11 @@
     // Direct Inbuilt Generated File Card
     const pLow = (title || lastSentPrompt || '').toLowerCase();
     const isTableData = content.includes('| ---') || content.includes('|:---') || content.includes('|---|') || (content.includes('|') && content.split('\n').filter(l => l.includes('|')).length >= 3);
-    const wantsPdf = pLow.includes('pdf');
-    const wantsExcel = pLow.includes('excel') || pLow.includes('spreadsheet') || pLow.includes('sheet') || pLow.includes('xlsx');
-    const wantsWord = pLow.includes('word') || pLow.includes('doc') || pLow.includes('docx');
-    const wantsFile = wantsPdf || wantsExcel || wantsWord || pLow.includes('generate') || pLow.includes('create') || pLow.includes('export');
+    const hasActiveMode = Boolean(activeGenerationMode);
+    const wantsPdf = activeGenerationMode === 'pdf' || pLow.includes('pdf');
+    const wantsExcel = activeGenerationMode === 'excel' || activeGenerationMode === 'gsheet' || pLow.includes('excel') || pLow.includes('spreadsheet') || pLow.includes('sheet') || pLow.includes('xlsx');
+    const wantsWord = activeGenerationMode === 'word' || activeGenerationMode === 'docs' || pLow.includes('word') || pLow.includes('doc') || pLow.includes('docx');
+    const wantsFile = hasActiveMode || wantsPdf || wantsExcel || wantsWord || pLow.includes('generate') || pLow.includes('create') || pLow.includes('export');
 
     if (wantsFile || isTableData) {
       let existingCard = row.querySelector('.vs-ai-direct-file-card');
@@ -585,13 +755,27 @@
         let badgeLabel = 'ReportLab 300 DPI';
         let typeDesc = 'Direct Statutory PDF';
 
-        if (wantsExcel || (isTableData && !wantsPdf && !wantsWord)) {
+        if (activeGenerationMode === 'gsheet') {
+          fileType = 'xlsx';
+          fileExt = 'xlsx';
+          fileIcon = '📈';
+          badgeClass = 'xlsx';
+          badgeLabel = 'Google Sheet Compatible';
+          typeDesc = 'Direct Financial Dataset';
+        } else if (wantsExcel || (isTableData && !wantsPdf && !wantsWord)) {
           fileType = 'xlsx';
           fileExt = 'xlsx';
           fileIcon = '📊';
           badgeClass = 'xlsx';
           badgeLabel = 'openpyxl · Multi-Sheet';
           typeDesc = 'Direct Financial Spreadsheet';
+        } else if (activeGenerationMode === 'docs') {
+          fileType = 'docx';
+          fileExt = 'docx';
+          fileIcon = '📝';
+          badgeClass = 'docx';
+          badgeLabel = 'Google Docs Ready';
+          typeDesc = 'Structured Legal Draft';
         } else if (wantsWord) {
           fileType = 'docx';
           fileExt = 'docx';
@@ -615,57 +799,44 @@
             </div>
           </div>
           <div class="vs-ai-file-actions-row">
-            <button type="button" class="btn primary btn-sm btn-card-download" title="Download / Save">
+            <button type="button" class="btn secondary btn-sm btn-card-preview" title="Preview Generated Document">
+              <span>👁️ Preview</span>
+            </button>
+            <button type="button" class="btn primary btn-sm btn-card-download" title="Download Generated File">
               <svg class="i" style="width:12px;height:12px;margin-right:3px;" aria-hidden="true"><use href="#dl"/></svg>
               <span>Download</span>
             </button>
-            <button type="button" class="btn secondary btn-sm btn-card-preview" title="Preview File">
-              <span>Preview</span>
-            </button>
-            <button type="button" class="btn secondary btn-sm btn-card-client" title="Save to Client Vault">
-              <span>Client</span>
+            <button type="button" class="btn secondary btn-sm btn-card-canvas" title="Make Changes / Edit in Document Canvas">
+              <span>✏️ Make Changes</span>
             </button>
           </div>
         `;
 
-        const footerRow = row.querySelector('.vs-ai-asst-footer-row');
-        if (footerRow) {
-          footerRow.parentNode.insertBefore(card, footerRow);
+        const asstBody = row.querySelector('.vs-ai-asst-body');
+        if (asstBody && (hasActiveMode || wantsPdf || wantsExcel || wantsWord)) {
+          // If file explicitly targeted, position the File Card at the top of the message bubble
+          asstBody.parentNode.insertBefore(card, asstBody);
         } else {
-          actionsRow.parentNode.insertBefore(card, actionsRow);
+          const footerRow = row.querySelector('.vs-ai-asst-footer-row');
+          if (footerRow) {
+            footerRow.parentNode.insertBefore(card, footerRow);
+          } else {
+            actionsRow.parentNode.insertBefore(card, actionsRow);
+          }
         }
 
-        card.querySelector('.btn-card-download').onclick = () => {
-          if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
-          else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
-          else handleSavePdf(cleanHeading, content, citations);
-        };
         card.querySelector('.btn-card-preview').onclick = () => {
           if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
           else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
           else handlePreviewPdf(cleanHeading, content, citations);
         };
-        card.querySelector('.btn-card-client').onclick = async () => {
-          if (fileType === 'xlsx') {
-            const resp = await fetch('/api/ai/export-xlsx', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: cleanHeading, content: content })
-            });
-            const data = await resp.json();
-            if (data.ok) showUniversalSaveOptionsModal(data, cleanHeading, 'xlsx', 'client');
-          } else if (fileType === 'docx') {
-            const resp = await fetch('/api/ai/export-docx', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: cleanHeading, content: content, citations: citations })
-            });
-            const data = await resp.json();
-            if (data.ok) showUniversalSaveOptionsModal(data, cleanHeading, 'docx', 'client');
-          } else {
-            const data = await ensurePdfExported(cleanHeading, content, citations);
-            showUniversalSaveOptionsModal(data, cleanHeading, 'pdf', 'client');
-          }
+        card.querySelector('.btn-card-download').onclick = () => {
+          if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
+          else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
+          else handleSavePdf(cleanHeading, content, citations);
+        };
+        card.querySelector('.btn-card-canvas').onclick = () => {
+          showDocumentCanvasModal({ title: cleanHeading, content: content, citations: citations });
         };
       }
     }
@@ -763,6 +934,12 @@
 
     cancelAutoRetry();
 
+    const stream = document.querySelector('#vs-ai-chat-stream');
+    if (stream) {
+      const heroEls = stream.querySelectorAll('.vs-ai-hero-wrap, .empty');
+      heroEls.forEach(el => el.remove());
+    }
+
     const input = document.querySelector('#vs-ai-prompt-input');
     const promptText = retryText !== null ? retryText : (input ? input.value.trim() : '');
     const attachmentsToSend = retryAtts !== null ? retryAtts : [...currentAttachments];
@@ -791,7 +968,6 @@
       renderAttachmentPreviewBar();
     }
 
-    const stream = document.querySelector('#vs-ai-chat-stream');
     const loadingId = 'loading-' + Date.now();
     const loadingEl = document.createElement('div');
     loadingEl.className = 'msg vs-ai-message-row assistant';
@@ -874,7 +1050,8 @@
           prompt: promptText,
           scope: activeScope,
           source_only: sourceOnly,
-          attachments: attachmentsToSend
+          attachments: attachmentsToSend,
+          generation_mode: activeGenerationMode
         })
       });
 
@@ -1078,8 +1255,8 @@
     const stream = document.querySelector('#vs-ai-chat-stream');
     if (!stream) return;
 
-    const hero = stream.querySelector('.vs-ai-hero-wrap');
-    if (hero) hero.remove();
+    const heroEls = stream.querySelectorAll('.vs-ai-hero-wrap, .empty');
+    heroEls.forEach(el => el.remove());
 
     const row = document.createElement('div');
     row.className = `vs-ai-message-row ${role} vs-ai-message-fade-in`;
@@ -2268,6 +2445,7 @@
     currentAttachments = [];
     renderAttachmentPreviewBar();
     updateSendButtonState();
+    setGenerationMode(null);
   }
 
   function promptRenameConversation(cid, currentTitle) {
@@ -3084,7 +3262,7 @@
     const placeholders = [];
     let text = md;
 
-    // 1. Extract and process Code Blocks (including ```chart)
+    // 1. Extract and process Code Blocks (including ```chart, ```mermaid)
     text = text.replace(/```([a-zA-Z0-9_\-]*)\s*([\s\S]*?)```/g, (match, lang, code) => {
       const cleanLang = (lang || '').trim().toLowerCase();
       const cleanCode = code.trim();
@@ -3095,12 +3273,12 @@
           const chartHtml = generateSvgChart(config);
           const idx = placeholders.length;
           placeholders.push(chartHtml);
-          return `@@@VSAI_PH_${idx}@@@`;
+          return `\n\n@@@VSAI_PH_${idx}@@@\n\n`;
         } catch (err) {
           const fallback = `<div class="vs-ai-chart-card"><div class="vs-ai-chart-title">📊 Visualizing Chart...</div><pre style="font-size:11px;color:#64748b;">${escapeHtml(cleanCode)}</pre></div>`;
           const idx = placeholders.length;
           placeholders.push(fallback);
-          return `@@@VSAI_PH_${idx}@@@`;
+          return `\n\n@@@VSAI_PH_${idx}@@@\n\n`;
         }
       }
 
@@ -3120,13 +3298,13 @@
         `;
         const idx = placeholders.length;
         placeholders.push(diagramHtml);
-        return `@@@VSAI_PH_${idx}@@@`;
+        return `\n\n@@@VSAI_PH_${idx}@@@\n\n`;
       }
 
       const codeHtml = `<pre style="background:#0f172a;color:#e2e8f0;padding:12px 16px;border-radius:10px;overflow-x:auto;font-size:12.5px;margin:10px 0;position:relative;"><code>${escapeHtml(cleanCode)}</code></pre>`;
       const idx = placeholders.length;
       placeholders.push(codeHtml);
-      return `@@@VSAI_PH_${idx}@@@`;
+      return `\n\n@@@VSAI_PH_${idx}@@@\n\n`;
     });
 
     // 2. Extract and process Tables
@@ -3170,30 +3348,49 @@
 
     text = processedLines.join('\n');
 
-    // 3. Process Standard Markdown
+    // 3. Process Standard Markdown Elements
+    // Replace raw horizontal rules (***, ---, ___ or * * *) with clean divider
+    text = text.replace(/^[ \t]*(\*{3,}|-{3,}|_{3,}|\*\s+\*\s+\*)[ \t]*$/gm, '<hr class="vs-ai-divider"/>');
+
+    // Escape HTML
     let html = escapeHtml(text);
 
-    // Headers
+    // Headings - support h1 through h6 (Fixes raw #### and ##### completely!)
+    html = html.replace(/^###### (.*$)/gim, '<h6 class="vs-ai-h6">$1</h6>');
+    html = html.replace(/^##### (.*$)/gim, '<h5 class="vs-ai-h5">$1</h5>');
+    html = html.replace(/^#### (.*$)/gim, '<h4 class="vs-ai-h4">$1</h4>');
     html = html.replace(/^### (.*$)/gim, '<h3 class="vs-ai-h3">$1</h3>');
     html = html.replace(/^## (.*$)/gim, '<h2 class="vs-ai-h2">$1</h2>');
     html = html.replace(/^# (.*$)/gim, '<h1 class="vs-ai-h1">$1</h1>');
 
-    // Bold & Italic
+    // Bold-italic ***text***, bold **text**, italic *text*
+    html = html.replace(/\*\*\*(.*?)\*\*\*/gim, '<strong><em>$1</em></strong>');
     html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
-    html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+    html = html.replace(/\*([^*\n]+)\*/gim, '<em>$1</em>');
+    // Remove any leftover stray asterisks
+    html = html.replace(/\*{2,}/g, '');
 
     // Blockquotes
     html = html.replace(/^\&gt; (.*$)/gim, '<blockquote style="margin:10px 0;padding:8px 14px;border-left:3px solid #3b82f6;background:rgba(239,246,255,0.7);border-radius:0 8px 8px 0;color:#1e3a8a;">$1</blockquote>');
 
-    // Lists
-    html = html.replace(/^[\-\*] (.*$)/gim, '<li>$1</li>');
-    html = html.replace(/(<li>.*<\/li>)/gim, '<ul>$1</ul>');
+    // Lists - Group contiguous items cleanly
+    html = html.replace(/^[ \t]*[\-\*•] (.*$)/gim, '<li class="vs-ai-bullet-item">$1</li>');
+    html = html.replace(/((?:<li class="vs-ai-bullet-item">.*?<\/li>(?:\n|<br\/>)?)+)/gim, '<ul class="vs-ai-list">$1</ul>');
+
+    html = html.replace(/^[ \t]*(\d+)\. (.*$)/gim, '<li class="vs-ai-num-item" value="$1">$2</li>');
+    html = html.replace(/((?:<li class="vs-ai-num-item"[^>]*>.*?<\/li>(?:\n|<br\/>)?)+)/gim, '<ol class="vs-ai-list">$1</ol>');
 
     // Inline code
-    html = html.replace(/`([^`]+)`/gim, '<code style="background:rgba(241,245,249,0.95);border:1px solid #cbd5e1;color:#0f172a;padding:1px 6px;border-radius:5px;font-size:12px;">$1</code>');
+    html = html.replace(/`([^`]+)`/gim, '<code class="vs-ai-inline-code">$1</code>');
 
-    // Line breaks
-    html = html.replace(/\n/gim, '<br/>');
+    // Clean line breaks (<br/>) - Smooth transitions without raw broken lines
+    html = html.replace(/\n{3,}/g, '\n\n');
+    html = html.replace(/<\/h[1-6]>\n+/gi, (m) => m.replace(/\n+/g, ''));
+    html = html.replace(/<\/(?:ul|ol|blockquote|div)>\n+/gi, (m) => m.replace(/\n+/g, ''));
+    html = html.replace(/<hr[^>]*>\n+/gi, '<hr class="vs-ai-divider"/>');
+    html = html.replace(/\n+<(?:h[1-6]|ul|ol|blockquote|hr|div)/gi, (m) => m.replace(/^\n+/, ''));
+    html = html.replace(/\n\n/g, '<br/><br/>');
+    html = html.replace(/\n/g, '<br/>');
 
     // 4. Restore Placeholders
     placeholders.forEach((ph, idx) => {

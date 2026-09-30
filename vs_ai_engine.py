@@ -89,6 +89,10 @@ def clean_model_response(text: str) -> str:
     cleaned = re.sub(monologue_pattern, '', cleaned, flags=re.IGNORECASE)
     # 4. Clean any residual "This is the correct, authoritative, and helpful way to respond."
     cleaned = re.sub(r'This is the correct, authoritative, and helpful way to respond\.\s*', '', cleaned, flags=re.IGNORECASE)
+    # 5. Clean standalone raw *** or --- dividers or awkward asterisk dumps
+    cleaned = re.sub(r'(?m)^[ \t]*(\*{3,}|-{3,}|_{3,})[ \t]*$', '', cleaned)
+    # 6. Normalize excessive heading hashes (#### -> ###)
+    cleaned = re.sub(r'(?m)^#{4,}\s+', '### ', cleaned)
     return cleaned.strip()
 
 
@@ -1198,7 +1202,7 @@ EXECUTIVE TITLE:"""
         ]
         return any(re.search(pat, p) for pat in statutory_patterns)
 
-    def build_system_instruction(self, source_only: bool, has_attachments: bool, is_statutory: bool) -> str:
+    def build_system_instruction(self, source_only: bool, has_attachments: bool, is_statutory: bool, generation_mode: Optional[str] = None) -> str:
         """Builds context-adaptive system instructions tailored to whether files or statutes are targeted."""
         instructions = [
             "You are 'VS AI', an authoritative, highly capable legal, tax, and practice copilot designed for "
@@ -1261,9 +1265,37 @@ EXECUTIVE TITLE:"""
             "- When processes, corporate structures, litigation appeals hierarchies, or transaction workflows are requested or beneficial, provide a Mermaid diagram using a ```mermaid code block (e.g. flowchart TD or sequenceDiagram). The app natively compiles and renders Mermaid diagrams into interactive visual graphics."
         )
 
+        if generation_mode:
+            gm = generation_mode.lower()
+            if gm == "pdf":
+                instructions.append(
+                    "TARGET FILE GENERATION MODE: DIRECT PDF DOCUMENT\n"
+                    "- The user has explicitly selected Direct PDF Generation.\n"
+                    "- Do NOT output an endless conversational chat dump.\n"
+                    "- Provide a 2-3 sentence executive briefing summarizing the document.\n"
+                    "- Present the complete, formal document with clear Markdown headings (# Title, ## Section) ready for ReportLab 300 DPI PDF compilation."
+                )
+            elif gm in ("excel", "gsheet"):
+                instructions.append(
+                    "TARGET FILE GENERATION MODE: SPREADSHEET (EXCEL / GSHEET)\n"
+                    "- The user has explicitly selected Spreadsheet Generation.\n"
+                    "- Do NOT output conversational paragraphs.\n"
+                    "- Provide a 1-2 sentence overview of the financial model or dataset.\n"
+                    "- Present the data as a comprehensive, well-structured Markdown Table (| Col 1 | Col 2 | ...) with numbers, taxes, calculations, and grand totals ready for openpyxl .xlsx compilation."
+                )
+            elif gm in ("word", "docs"):
+                instructions.append(
+                    "TARGET FILE GENERATION MODE: WORD / LEGAL DOCUMENT\n"
+                    "- The user has explicitly selected Word Document Generation.\n"
+                    "- Provide a 2-3 sentence executive brief.\n"
+                    "- Present the formal legal draft, notice reply, petition, or agreement with numbered clauses, recitals, and signature blocks ready for python-docx compilation."
+                )
+
         instructions.append(
-            "FORMATTING GUIDELINE:\n"
-            "- Structure your response cleanly using concise headings, bold key terms, and bullet points.\n"
+            "CLEAN PROFESSIONAL TYPOGRAPHY GUIDELINE:\n"
+            "- Strictly NEVER output raw '***' divider lines or markdown horizontal rules across lines. Use clean spacing.\n"
+            "- Strictly NEVER use excessive heading hashes like '####' or '#####'. Limit headings to clean '#' or '##' or '###'.\n"
+            "- Avoid awkward fragmented line breaks; write in clean, continuous executive paragraphs.\n"
             "- Avoid unnecessary fluff; provide sharp, actionable professional output."
         )
 
@@ -1365,7 +1397,8 @@ EXECUTIVE TITLE:"""
         source_only: bool = False,
         attachments: Optional[List[Dict[str, Any]]] = None,
         client_context: Optional[Dict[str, Any]] = None,
-        history: Optional[List[Dict[str, str]]] = None
+        history: Optional[List[Dict[str, str]]] = None,
+        generation_mode: Optional[str] = None
     ):
         """Runs RAG search, formats statutory context, and streams Gemini tokens via generator."""
         t_start = time.time()
@@ -1410,7 +1443,8 @@ EXECUTIVE TITLE:"""
         system_instruction = self.build_system_instruction(
             source_only=source_only,
             has_attachments=has_attachments,
-            is_statutory=is_statutory
+            is_statutory=is_statutory,
+            generation_mode=generation_mode
         )
 
         # Yield grounding metadata event first

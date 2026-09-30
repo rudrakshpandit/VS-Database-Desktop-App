@@ -2447,3 +2447,279 @@ button#vs-ai-btn-new-chat:active {
   50% { color: #7c3aed; }
   100% { color: inherit; transform: scale(1); }
 }
+
+/* ============================================================
+   DROPUP GENERATE MENU & ACTIVE GENERATION MODE PILL
+   ============================================================ */
+
+.vs-ai-dropup-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.vs-ai-btn-dropup-trigger {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  background: linear-gradient(135deg, #f8fafc, #f1f5f9) !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+  border-radius: 8px !important;
+  padding: 6px 11px !important;
+  transition: all 0.15s ease !important;
+  cursor: pointer;
+}
+
+.vs-ai-btn-dropup-trigger:hover,
+.vs-ai-btn-dropup-trigger.active {
+  background: #ffffff !important;
+  border-color: #3b82f6 !important;
+  color: #1d4ed8 !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12) !important;
+}
+
+.vs-ai-dropup-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 14px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.15), 0 4px 12px rgba(0, 0, 0, 0.05);
+  padding: 8px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: vsDropupFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes vsDropupFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.vs-ai-dropup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.vs-ai-dropup-hint {
+  font-weight: 500;
+  text-transform: none;
+  color: #94a3b8;
+  font-size: 10.5px;
+}
+
+.vs-ai-dropup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vs-ai-dropup-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  width: 100%;
+}
+
+.vs-ai-dropup-item:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.vs-ai-dropup-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.vs-dropup-pdf { background: #fef2f2; border: 1px solid #fecaca; }
+.vs-dropup-excel { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.vs-dropup-gsheet { background: #ecfdf5; border: 1px solid #a7f3d0; }
+.vs-dropup-word { background: #eff6ff; border: 1px solid #bfdbfe; }
+.vs-dropup-docs { background: #f5f3ff; border: 1px solid #ddd6fe; }
+
+.vs-ai-dropup-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vs-ai-dropup-item-title {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.vs-ai-dropup-item-desc {
+  font-size: 10.5px;
+  color: #64748b;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+/* Active Mode Pill Bar */
+.vs-ai-active-mode-pill-bar {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px 8px 6px;
+  margin-bottom: 4px;
+}
+
+.vs-ai-active-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  animation: vsPillPop 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes vsPillPop {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.vs-ai-active-mode-pill.vs-mode-pdf {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.vs-ai-active-mode-pill.vs-mode-excel {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #15803d;
+}
+
+.vs-ai-active-mode-pill.vs-mode-gsheet {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #047857;
+}
+
+.vs-ai-active-mode-pill.vs-mode-word {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+}
+
+.vs-ai-active-mode-pill.vs-mode-docs {
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  color: #6d28d9;
+}
+
+.vs-ai-mode-pill-badge {
+  font-weight: 700;
+}
+
+.vs-ai-mode-pill-msg {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.vs-ai-mode-pill-clear {
+  border: none;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  cursor: pointer;
+  color: inherit;
+  transition: all 0.15s ease;
+  margin-left: 2px;
+}
+
+.vs-ai-mode-pill-clear:hover {
+  background: rgba(0, 0, 0, 0.14);
+  transform: scale(1.1);
+}
+
+/* Typography Enhancements (No raw *** or ####) */
+.vs-ai-h1 { font-size: 18px; font-weight: 700; color: #0f172a; margin: 16px 0 8px 0; }
+.vs-ai-h2 { font-size: 16px; font-weight: 700; color: #1e293b; margin: 14px 0 6px 0; }
+.vs-ai-h3 { font-size: 14.5px; font-weight: 600; color: #334155; margin: 12px 0 6px 0; }
+.vs-ai-h4 { font-size: 13.5px; font-weight: 600; color: #475569; margin: 10px 0 4px 0; }
+.vs-ai-h5, .vs-ai-h6 { font-size: 12.5px; font-weight: 600; color: #64748b; margin: 8px 0 4px 0; }
+
+.vs-ai-divider {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 14px 0;
+  width: 100%;
+}
+
+.vs-ai-list {
+  margin: 8px 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vs-ai-list li {
+  line-height: 1.5;
+  color: #1e293b;
+}
+
+.vs-ai-inline-code {
+  background: rgba(241, 245, 249, 0.95);
+  border: 1px solid #cbd5e1;
+  color: #0f172a;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Button Make Changes in Direct File Card */
+.btn-card-canvas {
+  background: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+  color: #166534 !important;
+  font-weight: 600 !important;
+}
+
+.btn-card-canvas:hover {
+  background: #dcfce7 !important;
+  border-color: #86efac !important;
+  color: #14532d !important;
+}

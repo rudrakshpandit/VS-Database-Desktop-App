@@ -6541,6 +6541,7 @@ def revert_save_job(job_id, actor="Host"):
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     server_version = "CAOfficeAutomation/0.2"
 
     def log_message(self, *_): pass
@@ -9381,6 +9382,7 @@ Return ONLY the revised replacement text without conversational preamble, introd
                 prompt = (payload.get("prompt") or "").strip()
                 scope = payload.get("scope", "All Knowledge")
                 source_only = bool(payload.get("source_only", False))
+                generation_mode = (payload.get("generation_mode") or "").strip().lower()
                 attachments = payload.get("attachments", [])
                 client_ctx = payload.get("client_context")
 
@@ -9394,7 +9396,11 @@ Return ONLY the revised replacement text without conversational preamble, introd
                     if not cid or not row_exists:
                         if not cid:
                             cid = f"conv_{uuid.uuid4().hex[:10]}"
-                        title = (payload.get("title") or "").strip() or ai_engine.generate_chat_title(prompt)
+                        title = (payload.get("title") or "").strip()
+                        if not title:
+                            # Quick responsive heuristic title to ensure instant SSE dispatch without Gemini blocking!
+                            first_line = prompt.splitlines()[0].strip()
+                            title = first_line[:35].strip() if len(first_line) > 3 else "Statutory Consultation"
                         con.execute("""
                             INSERT INTO ai_conversations (id, title, user_id, source_scope, is_archived, created_at, updated_at)
                             VALUES (?, ?, 'User', ?, 0, ?, ?)
@@ -9404,7 +9410,7 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         con.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (t_now, cid))
 
                     user_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
-                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only})
+                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only, "generation_mode": generation_mode})
                     con.execute("""
                         INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                         VALUES (?, ?, 'user', ?, ?, ?)
@@ -9441,7 +9447,8 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         source_only=source_only,
                         attachments=attachments,
                         client_context=client_ctx,
-                        history=history
+                        history=history,
+                        generation_mode=generation_mode
                     ):
                         ev_type = ev.get("type")
                         if ev_type == "meta":
