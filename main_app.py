@@ -289,11 +289,23 @@ class DesktopBridge:
             if not os.path.exists(source_path):
                 return {"ok": False, "error": f"Source file not found: {source_filename}"}
 
-            target_filename = default_name or source_filename
-            if not target_filename.lower().endswith(".pdf"):
-                target_filename += ".pdf"
+            ext = os.path.splitext(source_filename)[1].lower()
+            if not ext and default_name:
+                ext = os.path.splitext(default_name)[1].lower()
+            if not ext:
+                ext = ".pdf"
 
-            file_types = ("PDF Files (*.pdf)", "All Files (*.*)")
+            target_filename = default_name or source_filename
+            if not target_filename.lower().endswith(ext):
+                target_filename += ext
+
+            if ext == ".docx":
+                file_types = ("Word Documents (*.docx)", "All Files (*.*)")
+            elif ext == ".xlsx":
+                file_types = ("Excel Workbooks (*.xlsx)", "All Files (*.*)")
+            else:
+                file_types = ("PDF Files (*.pdf)", "All Files (*.*)")
+
             res = self._window.create_file_dialog(
                 webview.FileDialog.SAVE,
                 save_filename=target_filename,

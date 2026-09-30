@@ -467,6 +467,170 @@
     `;
   }
 
+  function triggerMermaidRender() {
+    if (window.mermaid && typeof mermaid.run === 'function') {
+      try {
+        mermaid.run({ querySelector: '.mermaid' }).catch(() => {});
+      } catch(e) {}
+    }
+  }
+
+  function renderAssistantActionsHtml() {
+    return `
+      <div class="row vs-ai-msg-actions" style="margin-top:8px;gap:6px;align-items:center;">
+        <button type="button" class="btn ib tip btn-copy-text" data-t="Copy text" aria-label="Copy">
+          <svg class="i" aria-hidden="true"><use href="#copy"/></svg>
+        </button>
+        <button type="button" class="btn ib tip btn-regenerate" data-t="Regenerate answer" aria-label="Regenerate">
+          <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
+        </button>
+        <button type="button" class="btn tip btn-open-canvas" data-t="Edit & Enhance in Document Canvas" aria-label="Edit in Canvas" style="font-size:12px;gap:5px;background:#f0fdf4;border-color:#bbf7d0;color:#166534;">
+          <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#setup"/></svg>
+          <span>Open in Canvas</span>
+        </button>
+        
+        <div class="vs-ai-export-dropdown-wrap" style="position:relative;display:inline-block;">
+          <button type="button" class="btn tip primary btn-export-dropdown-toggle" data-t="Export Options" aria-label="Export to" style="font-size:12px;gap:5px;">
+            <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#dl"/></svg>
+            <span>Export to ▾</span>
+          </button>
+          <div class="vs-ai-export-menu" style="display:none;">
+            <button type="button" class="vs-ai-export-item export-opt-excel">
+              <span class="export-icon">📊</span>
+              <div class="export-text">
+                <div class="export-title">Excel Spreadsheet (.xlsx)</div>
+                <div class="export-desc">Financial models, formulas & tables</div>
+              </div>
+            </button>
+            <button type="button" class="vs-ai-export-item export-opt-word">
+              <span class="export-icon">📄</span>
+              <div class="export-text">
+                <div class="export-title">Word Document (.docx)</div>
+                <div class="export-desc">Executive draft with active typography</div>
+              </div>
+            </button>
+            <button type="button" class="vs-ai-export-item export-opt-pdf">
+              <span class="export-icon">📑</span>
+              <div class="export-text">
+                <div class="export-title">Branded PDF (.pdf)</div>
+                <div class="export-desc">In-app preview & 300 DPI layout</div>
+              </div>
+            </button>
+            <div class="vs-ai-export-divider"></div>
+            <button type="button" class="vs-ai-export-item export-opt-copy">
+              <span class="export-icon">📋</span>
+              <div class="export-text">
+                <div class="export-title">Copy Formatted Text</div>
+              </div>
+            </button>
+            <button type="button" class="vs-ai-export-item export-opt-print">
+              <span class="export-icon">🖨️</span>
+              <div class="export-text">
+                <div class="export-title">Print Document</div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function attachAssistantActionHandlers(row, title, content, citations) {
+    const actionsRow = row.querySelector('.vs-ai-msg-actions');
+    if (!actionsRow) return;
+    actionsRow.style.display = 'flex';
+
+    // Copy Text
+    const copyBtn = actionsRow.querySelector('.btn-copy-text');
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(content);
+        copyBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#check"/></svg>';
+        setTimeout(() => {
+          copyBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#copy"/></svg>';
+        }, 2000);
+      };
+    }
+
+    // Regenerate
+    const regenBtn = actionsRow.querySelector('.btn-regenerate');
+    if (regenBtn) {
+      regenBtn.onclick = () => {
+        if (lastSentPrompt) {
+          handleSendQuery(lastSentPrompt, lastSentAttachments);
+        }
+      };
+    }
+
+    // Open in Canvas
+    const canvasBtn = actionsRow.querySelector('.btn-open-canvas');
+    if (canvasBtn) {
+      canvasBtn.onclick = () => {
+        showDocumentCanvasModal({
+          title: title || 'Statutory Advisory Draft',
+          content: content,
+          citations: citations
+        });
+      };
+    }
+
+    // Export Dropdown
+    const exportToggle = actionsRow.querySelector('.btn-export-dropdown-toggle');
+    const exportMenu = actionsRow.querySelector('.vs-ai-export-menu');
+    if (exportToggle && exportMenu) {
+      exportToggle.onclick = (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.vs-ai-export-menu').forEach(m => {
+          if (m !== exportMenu) m.style.display = 'none';
+        });
+        exportMenu.style.display = exportMenu.style.display === 'block' ? 'none' : 'block';
+      };
+
+      const optExcel = exportMenu.querySelector('.export-opt-excel');
+      if (optExcel) {
+        optExcel.onclick = () => {
+          exportMenu.style.display = 'none';
+          handleExportExcel(title || 'Statutory Computations', content);
+        };
+      }
+
+      const optWord = exportMenu.querySelector('.export-opt-word');
+      if (optWord) {
+        optWord.onclick = () => {
+          exportMenu.style.display = 'none';
+          handleExportWord(title || 'Statutory Legal Brief', content, citations);
+        };
+      }
+
+      const optPdf = exportMenu.querySelector('.export-opt-pdf');
+      if (optPdf) {
+        optPdf.onclick = () => {
+          exportMenu.style.display = 'none';
+          handlePreviewPdf(title || 'Statutory Legal Opinion & Advisory', content, citations);
+        };
+      }
+
+      const optCopy = exportMenu.querySelector('.export-opt-copy');
+      if (optCopy) {
+        optCopy.onclick = () => {
+          exportMenu.style.display = 'none';
+          navigator.clipboard.writeText(content);
+          if (typeof showNativeToast === 'function') {
+            showNativeToast('Formatted content copied to clipboard', 'success', 2000);
+          }
+        };
+      }
+
+      const optPrint = exportMenu.querySelector('.export-opt-print');
+      if (optPrint) {
+        optPrint.onclick = () => {
+          exportMenu.style.display = 'none';
+          printFormattedContent(title || 'Statutory Advisory', content);
+        };
+      }
+    }
+  }
+
   // ------------------------------------------------------------
   // SEND QUERY & RECEIVE ANSWER (REAL-TIME SSE STREAMING)
   // ------------------------------------------------------------
@@ -543,22 +707,7 @@
               <span class="sources-pill-label">Income-tax Act, 2025</span>
             </span>
           </div>
-          <div class="row vs-ai-msg-actions" style="display:none;margin-top:8px;">
-            <button type="button" class="btn ib tip btn-copy-text" data-t="Copy" aria-label="Copy">
-              <svg class="i" aria-hidden="true"><use href="#copy"/></svg>
-            </button>
-            <button type="button" class="btn ib tip btn-regenerate" data-t="Regenerate" aria-label="Regenerate">
-              <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
-            </button>
-            <button type="button" class="btn tip btn-preview-pdf" data-t="Preview Branded PDF" aria-label="Preview PDF" style="font-size:12px;">
-              <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#search"/></svg>
-              <span>Preview PDF</span>
-            </button>
-            <button type="button" class="btn tip primary btn-export-pdf" data-t="Download & Save Options" aria-label="Save PDF" style="font-size:12px;">
-              <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#dl"/></svg>
-              <span>Save / Download</span>
-            </button>
-          </div>
+          ${renderAssistantActionsHtml()}
         </div>
       `;
 
@@ -566,6 +715,7 @@
       bodyEl = asstRow.querySelector('.vs-ai-asst-body');
       sourcesLabel = asstRow.querySelector('.sources-pill-label');
       actionsRow = asstRow.querySelector('.vs-ai-msg-actions');
+      if (actionsRow) actionsRow.style.display = 'none';
       stream.scrollTop = stream.scrollHeight;
     }
 
@@ -577,42 +727,9 @@
     }
 
     function finalizeAssistantActions() {
-      if (!actionsRow) return;
-      actionsRow.style.display = 'flex';
-
-      const previewPdfBtn = actionsRow.querySelector('.btn-preview-pdf');
-      if (previewPdfBtn) {
-        previewPdfBtn.addEventListener('click', () => {
-          handlePreviewPdf(promptText || 'Statutory Legal Opinion & Advisory', accumulatedText, currentCitations);
-        });
-      }
-
-      const exportPdfBtn = actionsRow.querySelector('.btn-export-pdf');
-      if (exportPdfBtn) {
-        exportPdfBtn.addEventListener('click', () => {
-          handleSavePdf(promptText || 'Statutory Legal Opinion & Advisory', accumulatedText, currentCitations);
-        });
-      }
-
-      const copyBtn = actionsRow.querySelector('.btn-copy-text');
-      if (copyBtn) {
-        copyBtn.addEventListener('click', () => {
-          navigator.clipboard.writeText(accumulatedText);
-          copyBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#check"/></svg>';
-          setTimeout(() => {
-            copyBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#copy"/></svg>';
-          }, 2000);
-        });
-      }
-
-      const regenBtn = actionsRow.querySelector('.btn-regenerate');
-      if (regenBtn) {
-        regenBtn.addEventListener('click', () => {
-          if (lastSentPrompt) {
-            handleSendQuery(lastSentPrompt, lastSentAttachments);
-          }
-        });
-      }
+      if (!asstRow) return;
+      attachAssistantActionHandlers(asstRow, promptText || 'Statutory Advisory Brief', accumulatedText, currentCitations);
+      triggerMermaidRender();
     }
 
     try {
@@ -874,22 +991,7 @@
               <span class="sources-pill-label">${escapeHtml(sourcesText)}</span>
             </span>
           </div>
-          <div class="row vs-ai-msg-actions" style="margin-top:8px;">
-            <button type="button" class="btn ib tip btn-copy-text" data-t="Copy" aria-label="Copy">
-              <svg class="i" aria-hidden="true"><use href="#copy"/></svg>
-            </button>
-            <button type="button" class="btn ib tip btn-regenerate" data-t="Regenerate" aria-label="Regenerate">
-              <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
-            </button>
-            <button type="button" class="btn tip btn-preview-pdf" data-t="Preview Branded PDF" aria-label="Preview PDF" style="font-size:12px;">
-              <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#search"/></svg>
-              <span>Preview PDF</span>
-            </button>
-            <button type="button" class="btn tip primary btn-export-pdf" data-t="Download & Save Options" aria-label="Save PDF" style="font-size:12px;">
-              <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#dl"/></svg>
-              <span>Save / Download</span>
-            </button>
-          </div>
+          ${renderAssistantActionsHtml()}
         </div>
       `;
 
@@ -897,38 +999,7 @@
       stream.scrollTop = stream.scrollHeight;
 
       const bodyEl = row.querySelector('.vs-ai-asst-body');
-
-      const previewPdfBtn = row.querySelector('.btn-preview-pdf');
-      if (previewPdfBtn) {
-        previewPdfBtn.addEventListener('click', () => {
-          handlePreviewPdf(promptTitle || 'Statutory Legal Opinion & Advisory', content, citations);
-        });
-      }
-
-      const exportPdfBtn = row.querySelector('.btn-export-pdf');
-      if (exportPdfBtn) {
-        exportPdfBtn.addEventListener('click', () => {
-          handleSavePdf(promptTitle || 'Statutory Legal Opinion & Advisory', content, citations);
-        });
-      }
-
-      const copyBtn = row.querySelector('.btn-copy-text');
-      if (copyBtn) {
-        copyBtn.addEventListener('click', () => {
-          navigator.clipboard.writeText(content);
-          copyBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#check"/></svg>';
-          setTimeout(() => { copyBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#copy"/></svg>'; }, 2000);
-        });
-      }
-
-      const regenBtn = row.querySelector('.btn-regenerate');
-      if (regenBtn) {
-        regenBtn.addEventListener('click', () => {
-          if (lastSentPrompt) {
-            handleSendQuery(lastSentPrompt, lastSentAttachments);
-          }
-        });
-      }
+      attachAssistantActionHandlers(row, promptTitle || 'Statutory Advisory Brief', content, citations);
 
       if (isNewResponse) {
         streamTypewriter(bodyEl, content, () => {
@@ -981,6 +1052,7 @@
         clearInterval(timer);
         cursorSpan.remove();
         container.innerHTML = renderMarkdown(fullText);
+        triggerMermaidRender();
         if (onComplete) onComplete();
         if (stream) {
           const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
@@ -991,7 +1063,7 @@
   }
 
   // ------------------------------------------------------------
-  // BRANDED STATUTORY PDF PREVIEW & NATIVE SAVE / DOWNLOAD FLOW
+  // UNIVERSAL DOCUMENT, SPREADSHEET & PDF EXPORT SUITE
   // ------------------------------------------------------------
   const pdfExportCache = new Map();
 
@@ -1035,10 +1107,86 @@
         showNativeToast('Preparing Document for Save...', 'info', 1500);
       }
       const data = await ensurePdfExported(title, content, citations);
-      showPdfSaveOptionsModal(data, title);
+      showUniversalSaveOptionsModal(data, title, 'pdf');
     } catch (err) {
       alert('Failed to generate PDF: ' + err.message);
     }
+  }
+
+  async function handleExportWord(title, content, citations, fontName = 'Plus Jakarta Sans') {
+    try {
+      if (typeof showNativeToast === 'function') {
+        showNativeToast('Generating Microsoft Word (.docx)...', 'info', 2000);
+      }
+      const resp = await fetch('/api/ai/export-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title || 'Statutory Legal Opinion & Advisory',
+          content: content || '',
+          citations: citations || [],
+          font_name: fontName
+        })
+      });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to generate Word document');
+      showUniversalSaveOptionsModal(data, title, 'docx');
+    } catch (err) {
+      alert('Word export error: ' + err.message);
+    }
+  }
+
+  async function handleExportExcel(title, content) {
+    try {
+      if (typeof showNativeToast === 'function') {
+        showNativeToast('Generating Microsoft Excel (.xlsx)...', 'info', 2000);
+      }
+      const resp = await fetch('/api/ai/export-xlsx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title || 'Statutory Statement & Computations',
+          content: content || ''
+        })
+      });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to generate Excel spreadsheet');
+      showUniversalSaveOptionsModal(data, title, 'xlsx');
+    } catch (err) {
+      alert('Excel export error: ' + err.message);
+    }
+  }
+
+  function printFormattedContent(title, content) {
+    const printWin = window.open('', '_blank');
+    if (!printWin) {
+      window.print();
+      return;
+    }
+    printWin.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${escapeHtml(title || 'Statutory Document')}</title>
+          <style>
+            body { font-family: 'Plus Jakarta Sans', Segoe UI, Arial, sans-serif; line-height: 1.6; color: #0f172a; padding: 40px; margin: 0; }
+            h1, h2, h3 { color: #1e3a8a; }
+            table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+            th, td { border: 1px solid #cbd5e1; padding: 8px 12px; font-size: 13px; }
+            th { background: #f1f5f9; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <h2>${escapeHtml(title || 'Statutory Document')}</h2>
+          <hr style="border: 0; border-top: 2px solid #2563eb; margin-bottom: 20px;" />
+          ${renderMarkdown(content)}
+          <script>
+            window.onload = function() { window.print(); window.close(); };
+          <\/script>
+        </body>
+      </html>
+    `);
+    printWin.document.close();
   }
 
   function showInAppPdfPreview(pdfData, title) {
@@ -1087,19 +1235,19 @@
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
     modal.querySelector('#vs-ai-pdf-btn-save-options').onclick = () => {
-      showPdfSaveOptionsModal(pdfData, title);
+      showUniversalSaveOptionsModal(pdfData, title, 'pdf');
     };
     modal.querySelector('#vs-ai-pdf-btn-save-client').onclick = () => {
-      showPdfSaveOptionsModal(pdfData, title, 'client');
+      showUniversalSaveOptionsModal(pdfData, title, 'pdf', 'client');
     };
     modal.querySelector('#vs-ai-pdf-btn-save-location').onclick = () => {
-      executeSaveToWindowsLocation(pdfData, title);
+      executeSaveToWindowsLocation(pdfData, title, 'pdf');
     };
   }
 
   let cachedClientsList = null;
 
-  function showPdfSaveOptionsModal(pdfData, title, initialOption = null) {
+  function showUniversalSaveOptionsModal(fileData, title, fileType = 'pdf', initialOption = null) {
     const existing = document.getElementById('vs-ai-save-options-modal');
     if (existing) existing.remove();
 
@@ -1108,14 +1256,16 @@
     modal.className = 'vs-ai-modal-overlay';
     modal.style.zIndex = '10005';
 
-    const safeTitle = escapeHtml(title || 'Statutory Legal Opinion & Advisory');
+    const safeTitle = escapeHtml(title || 'Statutory Document');
+    const extLabel = fileType === 'xlsx' ? 'Excel Spreadsheet (.xlsx)' : (fileType === 'docx' ? 'Word Document (.docx)' : 'Statutory Document (.pdf)');
+    const extIcon = fileType === 'xlsx' ? '📊' : (fileType === 'docx' ? '📄' : '📑');
 
     modal.innerHTML = `
       <div class="vs-ai-save-options-card glass">
         <div class="vs-ai-modal-header">
           <div style="display:flex;align-items:center;gap:8px;">
-            <svg class="i" style="width:20px;height:20px;color:#2563eb;" aria-hidden="true"><use href="#dl"/></svg>
-            <h3 class="vs-ai-modal-title" style="margin:0;font-size:17px;">Save Statutory Document</h3>
+            <span style="font-size:20px;">${extIcon}</span>
+            <h3 class="vs-ai-modal-title" style="margin:0;font-size:17px;">Save ${extLabel}</h3>
           </div>
           <button type="button" class="vs-ai-modal-close" id="vs-ai-save-modal-close">✕</button>
         </div>
@@ -1183,7 +1333,7 @@
 
     modal.querySelector('#opt-save-location').onclick = async () => {
       modal.remove();
-      await executeSaveToWindowsLocation(pdfData, title);
+      await executeSaveToWindowsLocation(fileData, title, fileType);
     };
 
     const clientBox = modal.querySelector('#opt-save-client');
@@ -1192,21 +1342,26 @@
       clientBox.classList.add('active');
       modal.querySelector('#opt-save-location').classList.remove('active');
       pickerWrap.style.display = 'flex';
-      setupClientPicker(modal, pdfData, title);
+      setupClientPicker(modal, fileData, title, fileType);
     };
 
     if (initialOption === 'client') {
-      setupClientPicker(modal, pdfData, title);
+      setupClientPicker(modal, fileData, title, fileType);
     }
   }
 
-  async function executeSaveToWindowsLocation(pdfData, title) {
-    const defaultName = (title || 'VS_AI_Legal_Opinion').replace(/[/\\?%*:|"<>]/g, '_') + '.pdf';
+  function showPdfSaveOptionsModal(pdfData, title, initialOption = null) {
+    showUniversalSaveOptionsModal(pdfData, title, 'pdf', initialOption);
+  }
+
+  async function executeSaveToWindowsLocation(fileData, title, fileType = 'pdf') {
+    const ext = fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`;
+    const defaultName = (title || 'VS_AI_Document').replace(/[/\\?%*:|"<>]/g, '_') + ext;
     
     // In pywebview native desktop mode:
     if (window.pywebview && window.pywebview.api && window.pywebview.api.save_file_to_location) {
       try {
-        const res = await window.pywebview.api.save_file_to_location(pdfData.filename, defaultName);
+        const res = await window.pywebview.api.save_file_to_location(fileData.filename, defaultName);
         if (res && res.ok) {
           const msg = `✓ Document saved successfully to:\n${res.path}`;
           if (typeof showNativeToast === 'function') {
@@ -1227,7 +1382,7 @@
 
     // In-browser fallback: trigger clean native download without redirecting
     const a = document.createElement('a');
-    a.href = `/api/ai/exports/${encodeURIComponent(pdfData.filename)}`;
+    a.href = `/api/ai/exports/${encodeURIComponent(fileData.filename)}`;
     a.download = defaultName;
     document.body.appendChild(a);
     a.click();
@@ -1237,7 +1392,7 @@
     }
   }
 
-  async function setupClientPicker(modal, pdfData, title) {
+  async function setupClientPicker(modal, fileData, title, fileType = 'pdf') {
     const resultsContainer = modal.querySelector('#vs-ai-client-results');
     const countBadge = modal.querySelector('#vs-ai-client-count-badge');
     const searchInput = modal.querySelector('#vs-ai-client-search');
@@ -1305,14 +1460,15 @@
         confirmBtn.textContent = 'Saving to Vault...';
 
         try {
-          const docName = (title || 'VS_AI_Statutory_Opinion').replace(/[/\\?%*:|"<>]/g, '_') + '.pdf';
+          const ext = fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`;
+          const docName = (title || 'VS_AI_Statutory_Document').replace(/[/\\?%*:|"<>]/g, '_') + ext;
           const targetFolder = folderSelect.value || 'General';
 
           const saveResp = await fetch('/api/ai/save-to-client', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              filename: pdfData.filename,
+              filename: fileData.filename,
               client_file_no: selectedClient.file_no,
               document_name: docName,
               folder: targetFolder
@@ -1340,6 +1496,320 @@
     } catch (e) {
       resultsContainer.innerHTML = `<div style="padding:14px;color:#ef4444;text-align:center;">Could not load clients: ${escapeHtml(e.message)}</div>`;
     }
+  }
+
+  // ------------------------------------------------------------
+  // INTERACTIVE IN-APP DOCUMENT CANVAS MODAL & LIVE AI ENHANCER
+  // ------------------------------------------------------------
+  function showDocumentCanvasModal({ title, content, citations, clientName }) {
+    const existing = document.getElementById('vs-ai-canvas-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'vs-ai-canvas-modal';
+    modal.className = 'vs-ai-modal-overlay';
+    modal.style.zIndex = '10002';
+
+    const safeTitle = escapeHtml(title || 'Document Canvas & Editor');
+
+    modal.innerHTML = `
+      <div class="vs-ai-canvas-card glass">
+        <!-- Canvas Header & Formatting Toolbar -->
+        <div class="vs-ai-canvas-toolbar">
+          <div class="vs-ai-canvas-title-group">
+            <svg class="i" style="width:20px;height:20px;color:#2563eb;" aria-hidden="true"><use href="#setup"/></svg>
+            <input type="text" id="vs-ai-canvas-doc-title" value="${safeTitle}" class="vs-ai-canvas-title-input" title="Click to rename document" />
+          </div>
+
+          <div class="vs-ai-canvas-tools-group">
+            <!-- Font Family Selector (Google Fonts) -->
+            <div class="vs-ai-canvas-tool-item">
+              <label for="vs-ai-canvas-font-select" class="vs-ai-tool-label">Font:</label>
+              <select id="vs-ai-canvas-font-select" class="vs-ai-canvas-select">
+                <option value="'Plus Jakarta Sans', sans-serif" selected>Plus Jakarta Sans</option>
+                <option value="'Inter', sans-serif">Inter</option>
+                <option value="'Roboto Slab', serif">Roboto Slab</option>
+                <option value="'Merriweather', serif">Merriweather</option>
+                <option value="'Montserrat', sans-serif">Montserrat</option>
+                <option value="'Playfair Display', serif">Playfair Display</option>
+                <option value="'Fira Code', monospace">Fira Code</option>
+                <option value="'Source Serif 4', serif">Source Serif 4</option>
+              </select>
+            </div>
+
+            <!-- Font Size Selector -->
+            <div class="vs-ai-canvas-tool-item">
+              <select id="vs-ai-canvas-size-select" class="vs-ai-canvas-select" style="width:72px;">
+                <option value="13px">13px</option>
+                <option value="14px">14px</option>
+                <option value="15px" selected>15px</option>
+                <option value="16px">16px</option>
+                <option value="18px">18px</option>
+              </select>
+            </div>
+
+            <div class="vs-ai-canvas-divider"></div>
+
+            <!-- Format Buttons -->
+            <div class="vs-ai-canvas-btn-group">
+              <button type="button" class="vs-ai-canvas-btn" id="canvas-btn-bold" title="Bold (Ctrl+B)"><b>B</b></button>
+              <button type="button" class="vs-ai-canvas-btn" id="canvas-btn-italic" title="Italic (Ctrl+I)"><i>I</i></button>
+              <button type="button" class="vs-ai-canvas-btn" id="canvas-btn-underline" title="Underline (Ctrl+U)"><u>U</u></button>
+              <button type="button" class="vs-ai-canvas-btn" id="canvas-btn-ul" title="Bullet List">• List</button>
+            </div>
+
+            <div class="vs-ai-canvas-divider"></div>
+
+            <!-- Ask AI to Enhance Selected Area -->
+            <button type="button" class="btn vs-ai-enhance-selection-btn" id="vs-ai-btn-enhance-selection" title="Highlight any section below and click to instruct AI to improve it">
+              <svg class="i" style="width:14px;height:14px;color:#2563eb;" aria-hidden="true"><use href="#ai"/></svg>
+              <span>✨ Ask AI to Enhance</span>
+            </button>
+
+            <div class="vs-ai-canvas-divider"></div>
+
+            <!-- Export to ▾ Dropdown -->
+            <div class="vs-ai-export-dropdown-wrap" style="position:relative;display:inline-block;">
+              <button type="button" class="btn primary btn-sm btn-canvas-export-toggle" style="gap:5px;">
+                <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#dl"/></svg>
+                <span>Export to ▾</span>
+              </button>
+              <div class="vs-ai-export-menu" id="vs-ai-canvas-export-menu" style="display:none;right:0;left:auto;">
+                <button type="button" class="vs-ai-export-item canvas-export-excel">
+                  <span class="export-icon">📊</span>
+                  <div class="export-text">
+                    <div class="export-title">Excel Spreadsheet (.xlsx)</div>
+                    <div class="export-desc">Financial models & structured tables</div>
+                  </div>
+                </button>
+                <button type="button" class="vs-ai-export-item canvas-export-word">
+                  <span class="export-icon">📄</span>
+                  <div class="export-text">
+                    <div class="export-title">Word Document (.docx)</div>
+                    <div class="export-desc">Executive draft with active typography</div>
+                  </div>
+                </button>
+                <button type="button" class="vs-ai-export-item canvas-export-pdf">
+                  <span class="export-icon">📑</span>
+                  <div class="export-text">
+                    <div class="export-title">Branded PDF (.pdf)</div>
+                    <div class="export-desc">In-app preview & 300 DPI layout</div>
+                  </div>
+                </button>
+                <div class="vs-ai-export-divider"></div>
+                <button type="button" class="vs-ai-export-item canvas-export-copy">
+                  <span class="export-icon">📋</span>
+                  <div class="export-text">
+                    <div class="export-title">Copy Formatted Text</div>
+                  </div>
+                </button>
+                <button type="button" class="vs-ai-export-item canvas-export-print">
+                  <span class="export-icon">🖨️</span>
+                  <div class="export-text">
+                    <div class="export-title">Print Document</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <button type="button" class="vs-ai-modal-close" id="vs-ai-canvas-btn-close" aria-label="Close Canvas">✕</button>
+          </div>
+        </div>
+
+        <!-- AI Enhance Floating Tool Popover -->
+        <div id="vs-ai-enhance-popover" class="vs-ai-enhance-popover" style="display:none;">
+          <div class="vs-ai-enhance-popover-header">
+            <span>✨ Instruct VS AI to Enhance / Change Area</span>
+            <button type="button" class="vs-ai-enhance-popover-close" id="popover-close">&times;</button>
+          </div>
+          <div class="vs-ai-enhance-preview-text" id="vs-ai-enhance-selected-preview"></div>
+          <div class="vs-ai-enhance-input-wrap">
+            <input type="text" id="vs-ai-enhance-instruction" placeholder="e.g., 'Make it more formal', 'Add penalty Section 271', 'Convert to computation table'..." />
+            <button type="button" class="btn primary btn-sm" id="vs-ai-btn-apply-enhance">
+              <span>Apply Change</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Editable Document Surface -->
+        <div class="vs-ai-canvas-body-container">
+          <div id="vs-ai-canvas-editor" contenteditable="true" spellcheck="false" class="vs-ai-canvas-editor"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const editor = modal.querySelector('#vs-ai-canvas-editor');
+    const fontSelect = modal.querySelector('#vs-ai-canvas-font-select');
+    const sizeSelect = modal.querySelector('#vs-ai-canvas-size-select');
+    const docTitleInput = modal.querySelector('#vs-ai-canvas-doc-title');
+    const popover = modal.querySelector('#vs-ai-enhance-popover');
+    const popoverClose = modal.querySelector('#popover-close');
+    const enhancePreview = modal.querySelector('#vs-ai-enhance-selected-preview');
+    const instructionInput = modal.querySelector('#vs-ai-enhance-instruction');
+    const applyEnhanceBtn = modal.querySelector('#vs-ai-btn-apply-enhance');
+
+    // Populate formatted HTML into canvas editor
+    editor.innerHTML = renderMarkdown(content);
+    triggerMermaidRender();
+
+    // Close handlers
+    modal.querySelector('#vs-ai-canvas-btn-close').onclick = () => modal.remove();
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+    // Font family changer
+    fontSelect.onchange = () => {
+      editor.style.fontFamily = fontSelect.value;
+    };
+
+    // Font size changer
+    sizeSelect.onchange = () => {
+      editor.style.fontSize = sizeSelect.value;
+    };
+
+    // Formatting buttons
+    modal.querySelector('#canvas-btn-bold').onclick = () => document.execCommand('bold', false, null);
+    modal.querySelector('#canvas-btn-italic').onclick = () => document.execCommand('italic', false, null);
+    modal.querySelector('#canvas-btn-underline').onclick = () => document.execCommand('underline', false, null);
+    modal.querySelector('#canvas-btn-ul').onclick = () => document.execCommand('insertUnorderedList', false, null);
+
+    // Selection tracking for Ask AI
+    let currentSelectionRange = null;
+
+    function updateSelection() {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        if (editor.contains(range.commonAncestorContainer)) {
+          currentSelectionRange = range.cloneRange();
+          return sel.toString().trim();
+        }
+      }
+      return '';
+    }
+
+    editor.addEventListener('mouseup', () => {
+      const text = updateSelection();
+      if (text) {
+        enhancePreview.textContent = `"${text.length > 140 ? text.slice(0, 140) + '...' : text}"`;
+      }
+    });
+
+    editor.addEventListener('keyup', () => {
+      updateSelection();
+    });
+
+    const enhanceBtn = modal.querySelector('#vs-ai-btn-enhance-selection');
+    enhanceBtn.onclick = (e) => {
+      e.stopPropagation();
+      const selText = updateSelection();
+      if (!selText && (!currentSelectionRange || currentSelectionRange.toString().trim() === '')) {
+        alert('Please highlight the text or section in the document that you would like AI to enhance or change.');
+        return;
+      }
+      const textToShow = selText || currentSelectionRange.toString().trim();
+      enhancePreview.textContent = `"${textToShow.length > 140 ? textToShow.slice(0, 140) + '...' : textToShow}"`;
+      popover.style.display = 'block';
+      instructionInput.value = '';
+      instructionInput.focus();
+    };
+
+    popoverClose.onclick = () => {
+      popover.style.display = 'none';
+    };
+
+    applyEnhanceBtn.onclick = async () => {
+      const instr = instructionInput.value.trim();
+      if (!instr) {
+        alert('Please describe what AI should change or improve.');
+        return;
+      }
+      if (!currentSelectionRange) {
+        alert('No section currently selected.');
+        return;
+      }
+
+      const selectedText = currentSelectionRange.toString();
+      applyEnhanceBtn.disabled = true;
+      applyEnhanceBtn.innerHTML = '<span>Enhancing...</span>';
+
+      try {
+        const resp = await fetch('/api/ai/enhance-selection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            selected_text: selectedText,
+            instruction: instr,
+            full_document: editor.innerText,
+            client_name: clientName || ''
+          })
+        });
+        const res = await resp.json();
+        if (!res.ok) {
+          throw new Error(res.error || 'Failed to enhance section');
+        }
+
+        currentSelectionRange.deleteContents();
+        const div = document.createElement('div');
+        div.innerHTML = renderMarkdown(res.enhanced_text);
+        const frag = document.createDocumentFragment();
+        while (div.firstChild) {
+          frag.appendChild(div.firstChild);
+        }
+        currentSelectionRange.insertNode(frag);
+
+        popover.style.display = 'none';
+        if (typeof showNativeToast === 'function') {
+          showNativeToast('✓ Section enhanced successfully with VS AI', 'success', 3000);
+        }
+      } catch (err) {
+        alert('Enhancement error: ' + err.message);
+      } finally {
+        applyEnhanceBtn.disabled = false;
+        applyEnhanceBtn.innerHTML = '<span>Apply Change</span>';
+      }
+    };
+
+    // Canvas Export Dropdown Toggle
+    const exportToggle = modal.querySelector('.btn-canvas-export-toggle');
+    const exportMenu = modal.querySelector('#vs-ai-canvas-export-menu');
+    exportToggle.onclick = (e) => {
+      e.stopPropagation();
+      exportMenu.style.display = exportMenu.style.display === 'block' ? 'none' : 'block';
+    };
+
+    const getCanvasContent = () => editor.innerText || editor.textContent || '';
+    const getCanvasTitle = () => docTitleInput.value.trim() || 'Document';
+
+    modal.querySelector('.canvas-export-excel').onclick = () => {
+      exportMenu.style.display = 'none';
+      handleExportExcel(getCanvasTitle(), getCanvasContent());
+    };
+
+    modal.querySelector('.canvas-export-word').onclick = () => {
+      exportMenu.style.display = 'none';
+      const chosenFont = fontSelect.options[fontSelect.selectedIndex].text;
+      handleExportWord(getCanvasTitle(), getCanvasContent(), citations, chosenFont);
+    };
+
+    modal.querySelector('.canvas-export-pdf').onclick = () => {
+      exportMenu.style.display = 'none';
+      handlePreviewPdf(getCanvasTitle(), getCanvasContent(), citations);
+    };
+
+    modal.querySelector('.canvas-export-copy').onclick = () => {
+      exportMenu.style.display = 'none';
+      navigator.clipboard.writeText(getCanvasContent());
+      if (typeof showNativeToast === 'function') {
+        showNativeToast('Document text copied to clipboard', 'success', 2000);
+      }
+    };
+
+    modal.querySelector('.canvas-export-print').onclick = () => {
+      exportMenu.style.display = 'none';
+      printFormattedContent(getCanvasTitle(), getCanvasContent());
+    };
   }
 
   // ------------------------------------------------------------
@@ -1525,6 +1995,7 @@
         data.messages.forEach(m => {
           appendMessage(m.role, m.content, m.meta ? m.meta.citations : null, null, null, false);
         });
+        triggerMermaidRender();
       } else {
         renderWelcomeHero();
       }
@@ -2384,6 +2855,25 @@
         }
       }
 
+      if (cleanLang === 'mermaid') {
+        const uniqueId = 'mermaid-' + Math.random().toString(36).substring(2, 9);
+        const diagramHtml = `
+          <div class="vs-ai-mermaid-wrap">
+            <div class="vs-ai-mermaid-header">
+              <span class="vs-ai-mermaid-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                Statutory / Process Flowchart
+              </span>
+              <button type="button" class="btn-copy-mermaid" data-code="${escapeHtml(cleanCode)}" title="Copy Diagram Code">Copy Code</button>
+            </div>
+            <div class="mermaid" id="${uniqueId}">${escapeHtml(cleanCode)}</div>
+          </div>
+        `;
+        const idx = placeholders.length;
+        placeholders.push(diagramHtml);
+        return `@@@VSAI_PH_${idx}@@@`;
+      }
+
       const codeHtml = `<pre style="background:#0f172a;color:#e2e8f0;padding:12px 16px;border-radius:10px;overflow-x:auto;font-size:12.5px;margin:10px 0;position:relative;"><code>${escapeHtml(cleanCode)}</code></pre>`;
       const idx = placeholders.length;
       placeholders.push(codeHtml);
@@ -2541,6 +3031,21 @@
           const orig = copyChartBtn.innerHTML;
           copyChartBtn.innerHTML = '<svg class="i" style="width:12px;height:12px;"><use href="#check"/></svg> Copied!';
           setTimeout(() => { copyChartBtn.innerHTML = orig; }, 2000);
+        });
+      }
+      return;
+    }
+
+    // Copy Mermaid Diagram Code
+    const copyMermaidBtn = e.target.closest('.btn-copy-mermaid');
+    if (copyMermaidBtn) {
+      e.preventDefault();
+      const code = copyMermaidBtn.getAttribute('data-code');
+      if (code) {
+        navigator.clipboard.writeText(code).then(() => {
+          const orig = copyMermaidBtn.innerHTML;
+          copyMermaidBtn.innerHTML = 'Copied!';
+          setTimeout(() => { copyMermaidBtn.innerHTML = orig; }, 2000);
         });
       }
       return;

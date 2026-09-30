@@ -76,6 +76,22 @@ def detect_system_hardware() -> Dict[str, Any]:
     return res
 
 
+def clean_model_response(text: str) -> str:
+    """Strips internal reasoning tokens, leaked chain-of-thought, and thinking tags."""
+    if not text:
+        return ""
+    # 1. Strip explicit <thought>...</thought> tags
+    cleaned = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.IGNORECASE)
+    # 2. Strip thinking markdown block markers if present
+    cleaned = re.sub(r'```(?:thought|thinking)[\s\S]*?```', '', cleaned, flags=re.IGNORECASE)
+    # 3. Strip monologue/reasoning prefixes if the model leaked its internal check before responding
+    monologue_pattern = r'^(?:\s*Wait,\s+I\s+should\s+check|\s*Let\'s\s+provide|\s*Response\s+Construction:|\s*Thinking\s+Process:)[\s\S]*?(?=(?:###\s+[A-Z]|\*\*|\b[A-Z][a-zA-Z\s]{2,20}:|\n\n[1-9]\.))'
+    cleaned = re.sub(monologue_pattern, '', cleaned, flags=re.IGNORECASE)
+    # 4. Clean any residual "This is the correct, authoritative, and helpful way to respond."
+    cleaned = re.sub(r'This is the correct, authoritative, and helpful way to respond\.\s*', '', cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
 # ============================================================
 # 2. VS AI ENGINE API PROVIDER
 # ============================================================
@@ -83,15 +99,12 @@ def detect_system_hardware() -> Dict[str, Any]:
 class GeminiProvider:
     """Direct, lightweight HTTPS connector for the VS AI Statutory Intelligence Engine."""
 
-    DEFAULT_MODEL = "gemini-3.5-flash"
+    DEFAULT_MODEL = "gemini-flash-lite-latest"
     FALLBACK_MODELS = [
-        "gemini-3.5-flash",
-        "gemma-4-26b-a4b-it",
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.7-flash",
-        "gemini-3.8-flash",
-        "gemini-flash-latest"
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-pro-latest"
     ]
     API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -336,7 +349,8 @@ class GeminiProvider:
                             cands = data.get("candidates", [])
                             if cands and "content" in cands[0]:
                                 parts = cands[0]["content"].get("parts", [])
-                                text = "".join([p.get("text", "") for p in parts])
+                                text = "".join([p.get("text", "") for p in parts if not p.get("thought", False)])
+                                text = clean_model_response(text)
                             if candidate != active_model:
                                 self.set_active_model(candidate)
                             return {"ok": True, "text": text, "model": candidate}
@@ -348,7 +362,7 @@ class GeminiProvider:
                         msg = str(h_err)
                     last_error = msg
 
-                    if h_err.code in (503, 429, 404) or "demand" in msg.lower() or "exhausted" in msg.lower() or "rate" in msg.lower():
+                    if h_err.code in (500, 502, 503, 504, 429, 404) or "demand" in msg.lower() or "exhausted" in msg.lower() or "rate" in msg.lower() or "internal" in msg.lower():
                         logger.info(f"Model {candidate} busy/throttled ({h_err.code}: {msg}). Trying next candidate...")
                         if attempt == 0:
                             time.sleep(0.3)
@@ -436,6 +450,8 @@ class GeminiProvider:
                             if cands and "content" in cands[0]:
                                 parts = cands[0]["content"].get("parts", [])
                                 for p in parts:
+                                    if p.get("thought", False):
+                                        continue
                                     t = p.get("text", "")
                                     if t:
                                         token_yielded = True
@@ -1270,21 +1286,25 @@ class AIModelOrchestrator:
                 "- Adhere strictly to the facts, figures, financial statements, and text found in the attached files."
             )
 
-        if source_only:
-            instructions.append(
-                "AVAILABLE SOURCES ONLY RESTRICTION ACTIVE:\n"
-                "- You MUST restrict your reasoning and advisory strictly to the provided Sources (statutory knowledge chunks) "
-                "and/or the attached documents.\n"
-                "- Do NOT invent or assume external facts, hypothetical provisions, or unsubstantiated rules not present in the available sources."
-            )
+        instructions.append(
+            "COMPREHENSIVE STATUTORY KNOWLEDGE & ZERO-REFUSAL DIRECT ANSWERS:\n"
+            "- You possess exhaustive mastery of Indian Tax Laws: the new Income-tax Act, 2025 (Act No. 30 of 2025), "
+            "Income-tax Rules, 2026, the legacy Income-tax Act, 1961, the CGST Act, 2017, IGST Act, and relevant Case Laws/Rulings.\n"
+            "- The provided reference excerpts (if present) are supplementary aids for page-exact citations. "
+            "If a queried section or topic (e.g., Section 194BB, Section 80C, Section 194C, Section 115BAC, etc.) is not present in the excerpts, "
+            "NEVER state 'NOT FOUND IN PROVIDED TEXT' and NEVER refuse to answer. "
+            "Seamlessly provide a complete, authoritative, and accurate legal analysis from your extensive tax law knowledge.\n"
+            "- NEVER output internal reasoning, thinking monologue, audit of chunks, or 'Response Construction' headers. "
+            "Deliver clean, authoritative, immediate professional advice."
+        )
 
         if is_statutory or source_only:
             instructions.append(
                 "STATUTORY APPLICABILITY & DIRECT TAX CITATIONS:\n"
-                "1. DEFAULT INCOME TAX STATUTE: By default, you MUST interpret, reason, and cite the new **Income-tax Act, 2025 (Act No. 30 of 2025)** "
+                "1. DEFAULT INCOME TAX STATUTE: By default, interpret, reason, and cite the new **Income-tax Act, 2025 (Act No. 30 of 2025)** "
                 "and the **Income-tax Rules, 2026** as the primary governing direct tax law in India.\n"
-                "2. LEGACY 1961 ACT: Only cite or apply the legacy Income-tax Act, 1961 if the user explicitly specifies '1961', refers to historic "
-                "assessment years/periods prior to the 2025 Act, or asks for a comparative transition analysis.\n"
+                "2. LEGACY 1961 ACT: When the user refers to the legacy law, historic assessment years, or well-known sections (e.g. Section 194BB TDS on horse racing/lottery, Section 80C, Section 54), "
+                "clearly explain the position under the Income-tax Act, 1961 and compare/clarify its status or equivalent regime under the Income-tax Act, 2025.\n"
                 "3. GST & CORPORATE LAW: Ground queries in the Central Goods and Services Tax Act, 2017 (CGST Act), SGST Acts, CGST Rules, and Companies Act, 2013.\n"
                 "4. STRICT CITATIONS: Accurately cite the exact Section, Sub-section, Clause, Rule, or Schedule."
             )
@@ -1296,20 +1316,12 @@ class AIModelOrchestrator:
             )
 
         instructions.append(
-            "TABLES & CHARTS / GRAPHS GUIDELINES:\n"
-            "- When presenting comparisons, tax slabs, rate schedules, penalty tariffs, turnover brackets, deductions, financial statements, computations, or structured records, ALWAYS format them as structured Markdown tables with clear column headers (using '| Header 1 | Header 2 |' syntax).\n"
-            "- When visual trends, comparisons, or proportional distributions are requested or beneficial (e.g. tax regimes comparison, turnover trends, revenue vs expenses, deductions breakdown, GST rate distribution), provide a visual chart using a ```chart code block with valid JSON formatted as:\n"
-            "```chart\n"
-            "{\n"
-            '  "type": "bar" | "line" | "pie" | "doughnut",\n'
-            '  "title": "Descriptive Chart Title",\n'
-            '  "labels": ["Category A", "Category B", ...],\n'
-            '  "datasets": [\n'
-            '    {"label": "Series 1", "data": [12.5, 30.0, 45.2]}\n'
-            '  ]\n'
-            "}\n"
-            "```\n"
-            "The chat UI natively compiles and renders these into interactive visual graphics."
+            "TABLES, SPREADSHEETS & WORD DOCUMENT STRUCTURING:\n"
+            "- When presenting calculations, comparisons, tax slabs, rate schedules, penalty tariffs, turnover brackets, deductions, financial statements, computations, or structured records:\n"
+            "  * ALWAYS format them as structured Markdown tables with clear column headers (using '| Header 1 | Header 2 |' syntax) and proper numeric/currency alignments.\n"
+            "  * The desktop application automatically converts your Markdown tables into formatted Microsoft Excel (.xlsx) workbooks and Microsoft Word (.docx) documents.\n"
+            "- When visual trends or distributions are requested or beneficial, provide a visual chart using a ```chart code block.\n"
+            "- When processes, corporate structures, litigation appeals hierarchies, or transaction workflows are requested or beneficial, provide a Mermaid diagram using a ```mermaid code block (e.g. flowchart TD or sequenceDiagram). The app natively compiles and renders Mermaid diagrams into interactive visual graphics."
         )
 
         instructions.append(
@@ -1364,17 +1376,17 @@ class AIModelOrchestrator:
         # 2. Build Injected Prompt
         client_info = ""
         if client_context:
-            client_info = f"\nCLIENT CONTEXT: Name: {client_context.get('name', 'N/A')}, File No: {client_context.get('file_no', 'N/A')}, PAN: {client_context.get('pan', 'N/A')}\n"
+            client_info = f"CLIENT CONTEXT: Name: {client_context.get('name', 'N/A')}, File No: {client_context.get('file_no', 'N/A')}, PAN: {client_context.get('pan', 'N/A')}"
 
         full_prompt = prompt
         if grounding_text or client_info:
             parts = []
-            if grounding_text:
-                parts.append(grounding_text)
             if client_info:
-                parts.append(client_info)
-            parts.append(f"USER INQUIRY: {prompt}")
-            full_prompt = "\n".join(parts)
+                parts.append(client_info.strip())
+            if grounding_text:
+                parts.append(f"[SUPPLEMENTARY STATUTORY EXCERPTS (Cite if relevant, but answer from full statutory knowledge)]:\n{grounding_text.strip()}")
+            parts.append(f"USER QUERY: {prompt}")
+            full_prompt = "\n\n".join(parts)
 
         system_instruction = self.build_system_instruction(
             source_only=source_only,
@@ -1446,17 +1458,17 @@ class AIModelOrchestrator:
         # 2. Build Injected Prompt
         client_info = ""
         if client_context:
-            client_info = f"\nCLIENT CONTEXT: Name: {client_context.get('name', 'N/A')}, File No: {client_context.get('file_no', 'N/A')}, PAN: {client_context.get('pan', 'N/A')}\n"
+            client_info = f"CLIENT CONTEXT: Name: {client_context.get('name', 'N/A')}, File No: {client_context.get('file_no', 'N/A')}, PAN: {client_context.get('pan', 'N/A')}"
 
         full_prompt = prompt
         if grounding_text or client_info:
             parts = []
-            if grounding_text:
-                parts.append(grounding_text)
             if client_info:
-                parts.append(client_info)
-            parts.append(f"USER INQUIRY: {prompt}")
-            full_prompt = "\n".join(parts)
+                parts.append(client_info.strip())
+            if grounding_text:
+                parts.append(f"[SUPPLEMENTARY STATUTORY EXCERPTS (Cite if relevant, but answer from full statutory knowledge)]:\n{grounding_text.strip()}")
+            parts.append(f"USER QUERY: {prompt}")
+            full_prompt = "\n\n".join(parts)
 
         system_instruction = self.build_system_instruction(
             source_only=source_only,
@@ -1494,7 +1506,7 @@ class AIModelOrchestrator:
                 return
 
         latency_ms = round((time.time() - t_start) * 1000, 2)
-        full_text = "".join(accumulated_text)
+        full_text = clean_model_response("".join(accumulated_text))
 
         yield {
             "type": "done",

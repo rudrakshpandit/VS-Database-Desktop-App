@@ -75,6 +75,7 @@ from pdf_studio_engine import PDFStudioEngine
 staging_mgr = StagingSessionManager(APP_ROOT, application_id="vs_desktop_app")
 pdf_engine = PDFStudioEngine(APP_ROOT, application_id="vs_desktop_app")
 import vs_ai_engine
+import vs_ai_doc_generator
 
 class SafeStream:
     def __init__(self, log_path):
@@ -9184,15 +9185,22 @@ class Handler(BaseHTTPRequestHandler):
                 export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
                 if export_file.is_file():
                     with open(export_file, "rb") as f:
-                        pdf_bytes = f.read()
+                        file_bytes = f.read()
                     self.send_response(200)
-                    self.send_header("Content-Type", "application/pdf")
+                    mime_type = "application/pdf"
+                    if fname.lower().endswith(".docx"):
+                        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    elif fname.lower().endswith(".xlsx"):
+                        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    elif fname.lower().endswith(".txt"):
+                        mime_type = "text/plain; charset=utf-8"
+                    self.send_header("Content-Type", mime_type)
                     self.send_header("Content-Disposition", f'inline; filename="{fname}"')
-                    self.send_header("Content-Length", str(len(pdf_bytes)))
+                    self.send_header("Content-Length", str(len(file_bytes)))
                     self.end_headers()
-                    self.wfile.write(pdf_bytes)
+                    self.wfile.write(file_bytes)
                     return
-                return self.send_json({"error": "Exported PDF not found"}, 404)
+                return self.send_json({"error": "Exported file not found"}, 404)
 
             return self.send_json({"error": "Unknown AI GET endpoint"}, 404)
         except Exception as e:
@@ -9225,15 +9233,84 @@ class Handler(BaseHTTPRequestHandler):
                 citations = payload.get("citations", [])
                 cl_name = payload.get("client_name")
                 res = vs_ai_engine.export_ai_opinion_pdf(title, content, citations, client_name=cl_name)
+                if res.get("ok"):
+                    res["download_url"] = f"/api/ai/exports/{res['filename']}"
                 return self.send_json(res)
+
+            if path == "/api/ai/export-docx":
+                title = payload.get("title", "Statutory Legal Opinion & Advisory")
+                content = payload.get("content", "")
+                citations = payload.get("citations", [])
+                cl_name = payload.get("client_name")
+                font_name = payload.get("font_name", "Plus Jakarta Sans")
+                res = vs_ai_doc_generator.export_ai_document_docx(
+                    title=title,
+                    content=content,
+                    citations=citations,
+                    client_name=cl_name,
+                    font_name=font_name
+                )
+                if res.get("ok"):
+                    res["download_url"] = f"/api/ai/exports/{res['filename']}"
+                return self.send_json(res)
+
+            if path == "/api/ai/export-xlsx":
+                title = payload.get("title", "Statutory Statement & Computations")
+                content = payload.get("content", "")
+                cl_name = payload.get("client_name")
+                res = vs_ai_doc_generator.export_ai_spreadsheet_xlsx(
+                    title=title,
+                    content=content,
+                    client_name=cl_name
+                )
+                if res.get("ok"):
+                    res["download_url"] = f"/api/ai/exports/{res['filename']}"
+                return self.send_json(res)
+
+            if path == "/api/ai/enhance-selection":
+                selected_text = payload.get("selected_text", "").strip()
+                instruction = payload.get("instruction", "").strip()
+                full_document = payload.get("full_document", "")
+                client_name = payload.get("client_name", "")
+
+                if not selected_text or not instruction:
+                    return self.send_json({"ok": False, "error": "Both selected_text and instruction are required"}, 400)
+
+                enhance_prompt = f"""You are VS AI, an expert Chartered Accountant and legal practice copilot.
+The user is editing a document inside the VS Document Canvas.
+They have highlighted a specific section and requested the following revision/enhancement:
+
+USER INSTRUCTION:
+"{instruction}"
+
+SELECTED TEXT TO REVISE:
+\"\"\"{selected_text}\"\"\"
+
+DOCUMENT CONTEXT (FOR TONE AND COHERENCE):
+\"\"\"{full_document[:3000]}\"\"\"
+
+TASK:
+Rewrite and improve ONLY the selected section following the user's instructions.
+Maintain statutory accuracy, professional CA vocabulary, clean bullet points, or structured table layout if appropriate.
+Return ONLY the revised replacement text without conversational preamble, introductory text, or surrounding quotes."""
+
+                res = ai_engine.gemini.generate_content(
+                    prompt=enhance_prompt,
+                    temperature=0.2
+                )
+                if res.get("ok"):
+                    enhanced = vs_ai_engine.clean_model_response(res.get("text", "").strip())
+                    return self.send_json({"ok": True, "enhanced_text": enhanced})
+                return self.send_json({"ok": False, "error": res.get("error", "AI enhancement failed")})
 
             if path == "/api/ai/save-to-client":
                 filename = payload.get("filename", "").strip()
                 client_file_no = payload.get("client_file_no", "").strip()
                 target_folder = payload.get("folder", "General").strip() or "General"
                 doc_title = payload.get("document_name") or filename
-                if not doc_title.lower().endswith(".pdf"):
-                    doc_title += ".pdf"
+                ext = os.path.splitext(filename)[1].lower() or ".pdf"
+                if not doc_title.lower().endswith(ext):
+                    doc_title += ext
                 fname = os.path.basename(filename)
                 export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
                 if not export_file.is_file():
