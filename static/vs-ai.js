@@ -477,7 +477,7 @@
 
   function renderAssistantActionsHtml() {
     return `
-      <div class="row vs-ai-msg-actions" style="margin-top:8px;gap:6px;align-items:center;">
+      <div class="row vs-ai-msg-actions" style="margin-top:8px;gap:6px;align-items:center;flex-wrap:wrap;">
         <button type="button" class="btn ib tip btn-copy-text" data-t="Copy text" aria-label="Copy">
           <svg class="i" aria-hidden="true"><use href="#copy"/></svg>
         </button>
@@ -486,37 +486,25 @@
         </button>
         <button type="button" class="btn tip btn-open-canvas" data-t="Edit & Enhance in Document Canvas" aria-label="Edit in Canvas" style="font-size:12px;gap:5px;background:#f0fdf4;border-color:#bbf7d0;color:#166534;">
           <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#setup"/></svg>
-          <span>Open in Canvas</span>
+          <span>Canvas</span>
         </button>
         
+        <!-- DIRECT ONE-CLICK GENERATION & DOWNLOAD BUTTONS -->
+        <button type="button" class="btn tip vs-ai-btn-direct-export vs-ai-btn-direct-pdf btn-direct-pdf" data-t="Generate & Preview PDF" aria-label="Direct PDF">
+          <span>📑 PDF</span>
+        </button>
+        <button type="button" class="btn tip vs-ai-btn-direct-export vs-ai-btn-direct-excel btn-direct-excel" data-t="Generate & Download Excel (.xlsx)" aria-label="Direct Excel">
+          <span>📊 Excel</span>
+        </button>
+        <button type="button" class="btn tip vs-ai-btn-direct-export vs-ai-btn-direct-word btn-direct-word" data-t="Generate & Download Word (.docx)" aria-label="Direct Word">
+          <span>📄 Word</span>
+        </button>
+
         <div class="vs-ai-export-dropdown-wrap" style="position:relative;display:inline-block;">
-          <button type="button" class="btn tip primary btn-export-dropdown-toggle" data-t="Export Options" aria-label="Export to" style="font-size:12px;gap:5px;">
-            <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#dl"/></svg>
-            <span>Export to ▾</span>
+          <button type="button" class="btn tip secondary btn-export-dropdown-toggle" data-t="More Export & Print Options" aria-label="More" style="font-size:12px;gap:4px;">
+            <span>More ▾</span>
           </button>
           <div class="vs-ai-export-menu" style="display:none;">
-            <button type="button" class="vs-ai-export-item export-opt-excel">
-              <span class="export-icon">📊</span>
-              <div class="export-text">
-                <div class="export-title">Excel Spreadsheet (.xlsx)</div>
-                <div class="export-desc">Financial models, formulas & tables</div>
-              </div>
-            </button>
-            <button type="button" class="vs-ai-export-item export-opt-word">
-              <span class="export-icon">📄</span>
-              <div class="export-text">
-                <div class="export-title">Word Document (.docx)</div>
-                <div class="export-desc">Executive draft with active typography</div>
-              </div>
-            </button>
-            <button type="button" class="vs-ai-export-item export-opt-pdf">
-              <span class="export-icon">📑</span>
-              <div class="export-text">
-                <div class="export-title">Branded PDF (.pdf)</div>
-                <div class="export-desc">In-app preview & 300 DPI layout</div>
-              </div>
-            </button>
-            <div class="vs-ai-export-divider"></div>
             <button type="button" class="vs-ai-export-item export-opt-copy">
               <span class="export-icon">📋</span>
               <div class="export-text">
@@ -551,11 +539,22 @@
     }
     if (fallbackTitle) {
       let t = fallbackTitle.split('\n')[0].trim();
-      t = t.replace(/^(?:generate|create|draft|provide|explain|give me|what is|tell me about|how to)\s+(?:a\s+|an\s+|the\s+)?/i, '').trim();
+      const low = t.toLowerCase();
+      if (low.includes('pdf') && (low.includes('generate') || low.includes('can you') || low.includes('create') || low.includes('export') || low.includes('make') || low.includes('download'))) {
+        return 'PDF Generation and Document Export';
+      }
+      if (low.includes('excel') || low.includes('spreadsheet') || low.includes('xlsx')) {
+        return 'Excel Spreadsheet Generation';
+      }
+      if (low.includes('word') || low.includes('docx')) {
+        return 'Word Document Drafting';
+      }
+      t = t.replace(/^(?:okay|hey|hi|hello|please|tell me|can you|could you|i want to|i need to|how to|what is|what are|explain|draft|create|generate|genrate|make|show me|provide)\s+(?:a\s+|an\s+|the\s+)?/i, '').trim();
+      t = t.replace(/^(?:okay|hey|hi|hello|please|tell me|can you|could you|i want to|i need to|how to|what is|what are|explain|draft|create|generate|genrate|make|show me|provide)\s+(?:a\s+|an\s+|the\s+)?/i, '').trim();
       t = t.replace(/[\\/*?:"<>|]/g, '').replace(/\.(docx|xlsx|pdf|txt)+$/i, '').trim();
       t = t.replace(/\s+/g, ' ').trim();
       if (t.length > 3) {
-        return t.length > 55 ? t.slice(0, 52) + '...' : t;
+        return t.length > 55 ? t.slice(0, 52) + '...' : t.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
       }
     }
     return 'Statutory Advisory Brief';
@@ -567,6 +566,127 @@
     actionsRow.style.display = 'flex';
 
     const cleanHeading = extractCleanDocTitle(content, title);
+
+    // Direct Inbuilt Generated File Card
+    const pLow = (title || lastSentPrompt || '').toLowerCase();
+    const isTableData = content.includes('| ---') || content.includes('|:---') || content.includes('|---|') || (content.includes('|') && content.split('\n').filter(l => l.includes('|')).length >= 3);
+    const wantsPdf = pLow.includes('pdf');
+    const wantsExcel = pLow.includes('excel') || pLow.includes('spreadsheet') || pLow.includes('sheet') || pLow.includes('xlsx');
+    const wantsWord = pLow.includes('word') || pLow.includes('doc') || pLow.includes('docx');
+    const wantsFile = wantsPdf || wantsExcel || wantsWord || pLow.includes('generate') || pLow.includes('create') || pLow.includes('export');
+
+    if (wantsFile || isTableData) {
+      let existingCard = row.querySelector('.vs-ai-direct-file-card');
+      if (!existingCard) {
+        let fileType = 'pdf';
+        let fileExt = 'pdf';
+        let fileIcon = '📑';
+        let badgeClass = 'pdf';
+        let badgeLabel = 'ReportLab 300 DPI';
+        let typeDesc = 'Direct Statutory PDF';
+
+        if (wantsExcel || (isTableData && !wantsPdf && !wantsWord)) {
+          fileType = 'xlsx';
+          fileExt = 'xlsx';
+          fileIcon = '📊';
+          badgeClass = 'xlsx';
+          badgeLabel = 'openpyxl · Multi-Sheet';
+          typeDesc = 'Direct Financial Spreadsheet';
+        } else if (wantsWord) {
+          fileType = 'docx';
+          fileExt = 'docx';
+          fileIcon = '📄';
+          badgeClass = 'docx';
+          badgeLabel = 'python-docx';
+          typeDesc = 'Direct Executive Document';
+        }
+
+        const safeFilename = cleanHeading.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '.' + fileExt;
+
+        const card = document.createElement('div');
+        card.className = 'vs-ai-direct-file-card';
+        card.innerHTML = `
+          <div class="vs-ai-file-icon-box ${badgeClass}">${fileIcon}</div>
+          <div class="vs-ai-file-meta-col">
+            <div class="vs-ai-file-meta-name" title="${escapeHtml(safeFilename)}">${escapeHtml(safeFilename)}</div>
+            <div class="vs-ai-file-meta-sub">
+              <span class="vs-ai-file-badge ${badgeClass}">${badgeLabel}</span>
+              <span>${typeDesc}</span>
+            </div>
+          </div>
+          <div class="vs-ai-file-actions-row">
+            <button type="button" class="btn primary btn-sm btn-card-download" title="Download / Save">
+              <svg class="i" style="width:12px;height:12px;margin-right:3px;" aria-hidden="true"><use href="#dl"/></svg>
+              <span>Download</span>
+            </button>
+            <button type="button" class="btn secondary btn-sm btn-card-preview" title="Preview File">
+              <span>Preview</span>
+            </button>
+            <button type="button" class="btn secondary btn-sm btn-card-client" title="Save to Client Vault">
+              <span>Client</span>
+            </button>
+          </div>
+        `;
+
+        const footerRow = row.querySelector('.vs-ai-asst-footer-row');
+        if (footerRow) {
+          footerRow.parentNode.insertBefore(card, footerRow);
+        } else {
+          actionsRow.parentNode.insertBefore(card, actionsRow);
+        }
+
+        card.querySelector('.btn-card-download').onclick = () => {
+          if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
+          else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
+          else handleSavePdf(cleanHeading, content, citations);
+        };
+        card.querySelector('.btn-card-preview').onclick = () => {
+          if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
+          else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
+          else handlePreviewPdf(cleanHeading, content, citations);
+        };
+        card.querySelector('.btn-card-client').onclick = async () => {
+          if (fileType === 'xlsx') {
+            const resp = await fetch('/api/ai/export-xlsx', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: cleanHeading, content: content })
+            });
+            const data = await resp.json();
+            if (data.ok) showUniversalSaveOptionsModal(data, cleanHeading, 'xlsx', 'client');
+          } else if (fileType === 'docx') {
+            const resp = await fetch('/api/ai/export-docx', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: cleanHeading, content: content, citations: citations })
+            });
+            const data = await resp.json();
+            if (data.ok) showUniversalSaveOptionsModal(data, cleanHeading, 'docx', 'client');
+          } else {
+            const data = await ensurePdfExported(cleanHeading, content, citations);
+            showUniversalSaveOptionsModal(data, cleanHeading, 'pdf', 'client');
+          }
+        };
+      }
+    }
+
+    // Direct 1-Click PDF Button
+    const directPdfBtn = actionsRow.querySelector('.btn-direct-pdf');
+    if (directPdfBtn) {
+      directPdfBtn.onclick = () => handlePreviewPdf(cleanHeading, content, citations);
+    }
+
+    // Direct 1-Click Excel Button
+    const directExcelBtn = actionsRow.querySelector('.btn-direct-excel');
+    if (directExcelBtn) {
+      directExcelBtn.onclick = () => handleExportExcel(cleanHeading, content);
+    }
+
+    // Direct 1-Click Word Button
+    const directWordBtn = actionsRow.querySelector('.btn-direct-word');
+    if (directWordBtn) {
+      directWordBtn.onclick = () => handleExportWord(cleanHeading, content, citations);
+    }
 
     // Copy Text
     const copyBtn = actionsRow.querySelector('.btn-copy-text');
@@ -614,30 +734,6 @@
         exportMenu.style.display = exportMenu.style.display === 'block' ? 'none' : 'block';
       };
 
-      const optExcel = exportMenu.querySelector('.export-opt-excel');
-      if (optExcel) {
-        optExcel.onclick = () => {
-          exportMenu.style.display = 'none';
-          handleExportExcel(cleanHeading, content);
-        };
-      }
-
-      const optWord = exportMenu.querySelector('.export-opt-word');
-      if (optWord) {
-        optWord.onclick = () => {
-          exportMenu.style.display = 'none';
-          handleExportWord(cleanHeading, content, citations);
-        };
-      }
-
-      const optPdf = exportMenu.querySelector('.export-opt-pdf');
-      if (optPdf) {
-        optPdf.onclick = () => {
-          exportMenu.style.display = 'none';
-          handlePreviewPdf(cleanHeading, content, citations);
-        };
-      }
-
       const optCopy = exportMenu.querySelector('.export-opt-copy');
       if (optCopy) {
         optCopy.onclick = () => {
@@ -676,6 +772,13 @@
     // Cache last sent query for retries
     lastSentPrompt = promptText;
     lastSentAttachments = [...attachmentsToSend];
+
+    // Immediate Smooth Chat Generation in the Chats Tab
+    const cleanPromptTitle = extractCleanDocTitle(null, promptText);
+    if (!currentConvId) {
+      currentConvId = 'conv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      insertNewChatToSidebar(currentConvId, cleanPromptTitle);
+    }
 
     // If NOT a retry, append the User message bubble to the stream
     if (!existingErrorRow) {
@@ -767,6 +870,7 @@
         signal: currentAbortController.signal,
         body: JSON.stringify({
           conversation_id: currentConvId,
+          title: cleanPromptTitle,
           prompt: promptText,
           scope: activeScope,
           source_only: sourceOnly,
@@ -805,6 +909,9 @@
 
               if (ev.type === 'start') {
                 if (ev.conversation_id) currentConvId = ev.conversation_id;
+                if (ev.auto_title) {
+                  updateSidebarChatTitle(currentConvId, ev.auto_title);
+                }
               } else if (ev.type === 'meta') {
                 currentCitations = ev.citations || [];
                 ensureAssistantBubble();
@@ -824,15 +931,10 @@
                   updateCitationsPill(currentCitations);
                 }
                 if (ev.auto_title) {
-                  currentConversationTitle = ev.auto_title;
-                  const activeTitleEl = document.querySelector(`.vs-ai-history-item[data-id="${currentConvId}"] .vs-ai-history-title`);
-                  if (activeTitleEl) activeTitleEl.textContent = ev.auto_title;
-                  const cachedConv = allConversationsCache.find(c => c.id === currentConvId);
-                  if (cachedConv) cachedConv.title = ev.auto_title;
+                  updateSidebarChatTitle(currentConvId, ev.auto_title);
                 }
                 finalizeAssistantActions();
                 retryAttempts = 0;
-                loadConversations();
                 streamFinished = true;
                 try { await reader.cancel(); } catch(e) {}
                 break;
@@ -1901,6 +2003,112 @@
     }
   }
 
+  function insertNewChatToSidebar(convId, initialTitle) {
+    const list = document.querySelector('#vs-ai-history-container');
+    if (!list) return;
+
+    // Deselect any currently active conversation
+    list.querySelectorAll('.vs-ai-history-item').forEach(it => it.classList.remove('active', 'on'));
+
+    // Check if an item for this convId already exists
+    let existingItem = list.querySelector(`.vs-ai-history-item[data-id="${convId}"]`);
+    if (existingItem) {
+      existingItem.classList.add('active', 'on');
+      const titleSpan = existingItem.querySelector('.vs-ai-item-title');
+      if (titleSpan) titleSpan.textContent = initialTitle;
+      return;
+    }
+
+    const itemEl = document.createElement('div');
+    itemEl.className = 'vs-ai-history-item active on';
+    itemEl.setAttribute('data-id', convId);
+    itemEl.title = initialTitle;
+    itemEl.innerHTML = `
+      <div class="vs-ai-item-content">
+        <div class="vs-ai-item-top" style="display:flex;align-items:center;gap:6px;">
+          <span class="vs-ai-item-title" style="flex:1;">${escapeHtml(initialTitle)}</span>
+          <div class="vs-ai-item-actions">
+            <button type="button" class="vs-ai-item-btn rename" data-id="${convId}" title="Rename conversation" aria-label="Rename conversation">
+              <svg class="i" style="width:12px;height:12px;" aria-hidden="true"><use href="#edit"/></svg>
+            </button>
+            <button type="button" class="vs-ai-item-btn delete" data-id="${convId}" title="Delete conversation" aria-label="Delete conversation">
+              <svg class="i" style="width:12px;height:12px;" aria-hidden="true"><use href="#trash"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="vs-ai-item-time"><small class="muted">Just now</small></div>
+      </div>
+    `;
+
+    // Bind item click
+    itemEl.addEventListener('click', (e) => {
+      if (e.target.closest('.vs-ai-item-btn')) return;
+      loadConversation(convId);
+    });
+
+    // Bind rename
+    const renameBtn = itemEl.querySelector('.vs-ai-item-btn.rename');
+    if (renameBtn) {
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const conv = allConversationsCache.find(x => x.id === convId);
+        promptRenameConversation(convId, conv ? conv.title : initialTitle);
+      });
+    }
+
+    // Bind delete
+    const deleteBtn = itemEl.querySelector('.vs-ai-item-btn.delete');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const conv = allConversationsCache.find(x => x.id === convId);
+        confirmDeleteConversation(convId, conv ? conv.title : initialTitle);
+      });
+    }
+
+    // Clear "No chats found" message if present
+    if (list.innerHTML.includes('No chats found')) {
+      list.innerHTML = '';
+    }
+
+    let todayGroup = list.querySelector('.vs-ai-history-group-title');
+    if (todayGroup && todayGroup.textContent.trim().toLowerCase() === 'today') {
+      todayGroup.insertAdjacentElement('afterend', itemEl);
+    } else {
+      const todayHeader = document.createElement('div');
+      todayHeader.className = 'vs-ai-history-group-title';
+      todayHeader.textContent = 'Today';
+      list.prepend(itemEl);
+      list.prepend(todayHeader);
+    }
+
+    // Add to allConversationsCache at top
+    allConversationsCache.unshift({
+      id: convId,
+      title: initialTitle,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      msg_count: 1
+    });
+  }
+
+  function updateSidebarChatTitle(convId, newTitle) {
+    if (!convId || !newTitle) return;
+    currentConversationTitle = newTitle;
+    const itemEl = document.querySelector(`.vs-ai-history-item[data-id="${convId}"]`);
+    if (itemEl) {
+      itemEl.title = newTitle;
+      const titleSpan = itemEl.querySelector('.vs-ai-item-title');
+      if (titleSpan && titleSpan.textContent !== newTitle) {
+        titleSpan.textContent = newTitle;
+        titleSpan.classList.add('vs-ai-title-updated');
+        setTimeout(() => titleSpan.classList.remove('vs-ai-title-updated'), 1500);
+      }
+    }
+    const cached = allConversationsCache.find(c => c.id === convId);
+    if (cached) cached.title = newTitle;
+  }
+
   function renderConversationList(conversations) {
     const list = document.querySelector('#vs-ai-history-container');
     if (!list) return;
@@ -2049,7 +2257,7 @@
     if (isRequestInFlight) return;
     cancelAutoRetry();
     currentConvId = null;
-    document.querySelectorAll('.vs-ai-history-item').forEach(it => it.classList.remove('active'));
+    document.querySelectorAll('.vs-ai-history-item').forEach(it => it.classList.remove('active', 'on'));
     renderWelcomeHero();
     const input = document.querySelector('#vs-ai-prompt-input');
     if (input) {

@@ -1113,7 +1113,7 @@ class AIModelOrchestrator:
     """Central manager handling RAG grounding, prompt composition, and Gemini execution."""
 
     def generate_chat_title(self, prompt: str, assistant_response: str = "") -> str:
-        """Generates an executive, professional 3-6 word title for a conversation or document."""
+        """Analyzes user requirement and generates an executive 3-6 word title."""
         # 1. Check if assistant response starts with a clear markdown heading
         if assistant_response:
             for line in assistant_response.splitlines()[:6]:
@@ -1122,35 +1122,47 @@ class AIModelOrchestrator:
                     clean_h = re.sub(r'^[#\s*]+', '', line).strip()
                     clean_h = re.sub(r'[*_`]', '', clean_h).strip()
                     clean_h = re.sub(r'^\d+\.\s*', '', clean_h).strip()
-                    if 4 < len(clean_h) < 55 and not clean_h.lower().startswith(("table", "note", "disclaimer", "overview of", "analysis of", "schedule")):
+                    if 4 < len(clean_h) < 55 and not clean_h.lower().startswith(("table", "note", "disclaimer", "overview of", "analysis of", "schedule", "summary")):
                         return clean_h
 
-        # 2. Use Gemini Flash Lite for instantaneous executive title generation
-        title_prompt = f"""Generate a concise, professional title (3 to 6 words maximum) for this Chartered Accountant / Tax Advisory conversation.
-Rules:
-- Title Case only
-- No quotation marks, no punctuation, no conversational preamble
-- Capture the specific business / statutory subject matter (e.g., 'Footwear Manufacturing Accounts & GST' or 'Section 194BB Horse Racing TDS Advisory')
+        # 2. Use Gemini Flash Lite to analyze the requirement and output a clean executive title
+        title_prompt = f"""You are an executive legal and financial practice assistant.
+Analyze this user's question and statutory / business requirement:
+1. Identify the core subject, legal statute, or document task (e.g., 'PDF Generation and Document Export', 'Footwear Company 35 GST Transactions', 'Section 194BB TDS Advisory', 'GST Notice DRC 01 Reply').
+2. Produce a professional 3 to 6 word title in Title Case.
+3. Strictly NO conversational preamble, NO quotes, NO punctuation, and NO prompt verbs like 'can you', 'please', 'generate', 'okay'.
 
 USER INQUIRY:
-{prompt[:350]}
+{prompt[:400]}
 
-TITLE:"""
+EXECUTIVE TITLE:"""
         try:
             res = self.gemini.generate_content(title_prompt, temperature=0.1)
             if res.get("ok"):
                 raw_title = res.get("text", "").strip().splitlines()[0]
-                raw_title = re.sub(r'["\'\*\#\`\:\.]', '', raw_title).strip()
+                raw_title = re.sub(r'["\'\*\#\`\:\.\?]', '', raw_title).strip()
+                raw_title = re.sub(r'^(?:Title|Executive Title|Subject)\s*[:\-]\s*', '', raw_title, flags=re.I).strip()
                 if 3 < len(raw_title) < 60:
                     return raw_title
         except Exception as e:
             logger.debug(f"AI auto-rename notice: {e}")
 
-        # 3. Fallback heuristic
-        clean_p = re.sub(r'^(?:generate|create|draft|explain|what is|tell me|give me|how to)\s+(?:a\s+|an\s+|the\s+)?', '', prompt.splitlines()[0], flags=re.I).strip()
-        clean_p = re.sub(r'[\\/*?:"<>|]', '', clean_p).strip()
+        # 3. Robust Local NLP Requirement Extraction Heuristic
+        p_clean = prompt.strip()
+        low = p_clean.lower()
+        if 'pdf' in low and any(w in low for w in ['generate', 'can you', 'export', 'create', 'make', 'download']):
+            return 'PDF Generation and Document Export'
+        if any(w in low for w in ['excel', 'spreadsheet', 'xlsx']):
+            return 'Excel Spreadsheet Generation'
+        if any(w in low for w in ['word', 'docx']):
+            return 'Word Document Drafting'
+
+        # Strip conversational and prompt request prefixes
+        clean_p = re.sub(r'^(?:okay|hey|hi|hello|please|tell me|can you|could you|i want to|i need to|how to|what is|what are|explain|draft|create|generate|genrate|make|show me|provide)\s+(?:a\s+|an\s+|the\s+)?', '', p_clean, flags=re.I).strip()
+        clean_p = re.sub(r'^(?:okay|hey|hi|hello|please|tell me|can you|could you|i want to|i need to|how to|what is|what are|explain|draft|create|generate|genrate|make|show me|provide)\s+(?:a\s+|an\s+|the\s+)?', '', clean_p, flags=re.I).strip()
+        clean_p = re.sub(r'[\\/*?:\'\"|.]', '', clean_p).strip()
         clean_p = re.sub(r'\s+', ' ', clean_p)
-        return clean_p[:40].title() if clean_p else "Statutory Advisory Brief"
+        return clean_p[:45].title() if clean_p else "Statutory Advisory Brief"
 
     @staticmethod
     def is_statutory_inquiry(prompt: str) -> bool:
@@ -1231,10 +1243,20 @@ TITLE:"""
             )
 
         instructions.append(
-            "TABLES, SPREADSHEETS & WORD DOCUMENT STRUCTURING:\n"
-            "- When presenting calculations, comparisons, tax slabs, rate schedules, penalty tariffs, turnover brackets, deductions, financial statements, computations, or structured records:\n"
+            "NATIVE INBUILT FILE GENERATION CAPABILITIES (PDF, EXCEL, WORD):\n"
+            "- You are equipped with a FULL INBUILT DIRECT DOCUMENT AND SPREADSHEET GENERATION ENGINE.\n"
+            "- You can and do directly generate downloadable:\n"
+            "  1. Adobe PDF (.pdf) documents via the built-in ReportLab engine (high-resolution 300 DPI, corporate dark-navy headers, dynamic 'Page X of Y' pagination, running headers, and statutory citations).\n"
+            "  2. Microsoft Excel (.xlsx) workbooks via openpyxl (multi-sheet workbooks, formula-enabled, pinned header freeze panes at A5, accounting double-underline totals, INR currency formatting, and auto-fitted columns).\n"
+            "  3. Microsoft Word (.docx) documents via python-docx (executive briefs, custom typography, table styles with repeating headers, and callout quote boxes).\n"
+            "- CRITICAL ZERO-REFUSAL DIRECTIVES FOR FILE INQUIRIES & GENERATION:\n"
+            "  * If the user asks 'can you generate PDF's?', 'can you create excel files?', 'can you draft word documents?', or asks to generate/create/draft any PDF, Excel spreadsheet, Word document, or calculation:\n"
+            "    - NEVER say: 'While I cannot directly output a downloadable .pdf file binary in our chat window' or 'I cannot generate files directly' or anything similar!\n"
+            "    - Affirm immediately, clearly, and authoritatively: 'Yes! I have direct inbuilt generation for PDF documents, Microsoft Excel spreadsheets (.xlsx), and Microsoft Word documents (.docx).'\n"
+            "    - Provide the complete, structured statutory / financial / legal content requested.\n"
+            "- When presenting calculations, comparisons, tax slabs, rate schedules, penalty tariffs, turnover brackets, deductions, financial statements, transactions, or structured records:\n"
             "  * ALWAYS format them as structured Markdown tables with clear column headers (using '| Header 1 | Header 2 |' syntax) and proper numeric/currency alignments.\n"
-            "  * The desktop application automatically converts your Markdown tables into formatted Microsoft Excel (.xlsx) workbooks and Microsoft Word (.docx) documents.\n"
+            "  * The desktop application automatically renders direct download and preview cards for native Excel (.xlsx), PDF, and Word (.docx) files.\n"
             "- When visual trends or distributions are requested or beneficial, provide a visual chart using a ```chart code block.\n"
             "- When processes, corporate structures, litigation appeals hierarchies, or transaction workflows are requested or beneficial, provide a Mermaid diagram using a ```mermaid code block (e.g. flowchart TD or sequenceDiagram). The app natively compiles and renders Mermaid diagrams into interactive visual graphics."
         )
@@ -1439,7 +1461,7 @@ _GLOBAL_AI_LOCK = threading.Lock()
 def get_ai_engine(db_path: Union[str, Path] = None) -> AIModelOrchestrator:
     global _GLOBAL_AI_ENGINE
     if db_path is None:
-        db_path = Path(__file__).resolve().parent / "data" / "office_database.db"
+        db_path = Path(__file__).resolve().parent / "data" / "vs_database_desktop.db"
     else:
         db_path = Path(db_path)
 
@@ -1456,4 +1478,9 @@ def get_ai_engine(db_path: Union[str, Path] = None) -> AIModelOrchestrator:
                 daemon=True,
                 name="AI-Sources-Indexer"
             ).start()
+        else:
+            if db_path and db_path != _GLOBAL_AI_ENGINE.db_path:
+                _GLOBAL_AI_ENGINE.db_path = db_path
+                _GLOBAL_AI_ENGINE.gemini.db_path = db_path
+                _GLOBAL_AI_ENGINE.kb.db_path = db_path
         return _GLOBAL_AI_ENGINE
