@@ -76,6 +76,7 @@ staging_mgr = StagingSessionManager(APP_ROOT, application_id="vs_desktop_app")
 pdf_engine = PDFStudioEngine(APP_ROOT, application_id="vs_desktop_app")
 import vs_ai_engine
 import vs_ai_doc_generator
+import vs_ai_rename
 
 class SafeStream:
     def __init__(self, log_path):
@@ -100,7 +101,87 @@ if sys.stderr is None or not hasattr(sys.stderr, "write"):
     sys.stderr = SafeStream(DATA_ROOT / "stderr.log")
 
 DB_PATH = DATA_ROOT / "vs_database_desktop.db"
-ai_engine = vs_ai_engine.get_ai_engine(DB_PATH)
+
+class _LazyAIEngineProxy:
+    def __init__(self, db_path):
+        self._db_path = db_path
+        self._instance = None
+        self._lock = threading.Lock()
+
+    def _get(self):
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    self._instance = vs_ai_engine.get_ai_engine(self._db_path)
+        return self._instance
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+ai_engine = _LazyAIEngineProxy(DB_PATH)
+
+from automation_db import init_automation_tables
+from automation_engine import AutomationEngine
+init_automation_tables(DB_PATH)
+automation_engine = AutomationEngine.get_instance(DB_PATH)
+
+import concurrent.futures
+
+class AIJobQueue:
+    """Thread-safe background job worker backed by SQLite ai_jobs table."""
+    def __init__(self, max_workers: int = 3):
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ai_worker")
+
+    def enqueue(self, operation: str, task_fn, *args, user_id: str = "User", priority: str = "Normal", **kwargs) -> str:
+        job_id = f"job_{uuid.uuid4().hex[:10]}"
+        t_now = now()
+        try:
+            with db() as con:
+                con.execute("""
+                    INSERT INTO ai_jobs (job_id, user_id, operation, status, priority, progress, created_at, updated_at)
+                    VALUES (?, ?, ?, 'Queued', ?, 0, ?, ?)
+                """, (job_id, user_id, operation, priority, t_now, t_now))
+                con.commit()
+        except Exception as exc:
+            logging.warning("Could not record ai_job in DB: %s", exc)
+
+        def _runner():
+            try:
+                try:
+                    with db() as con:
+                        con.execute("UPDATE ai_jobs SET status = 'Running', updated_at = ? WHERE job_id = ?", (now(), job_id))
+                        con.commit()
+                except Exception:
+                    pass
+
+                task_fn(job_id, *args, **kwargs)
+
+                try:
+                    with db() as con:
+                        con.execute("UPDATE ai_jobs SET status = 'Completed', progress = 100, updated_at = ? WHERE job_id = ?", (now(), job_id))
+                        con.commit()
+                except Exception:
+                    pass
+            except Exception as exc:
+                logging.exception("AI background job %s (%s) failed: %s", job_id, operation, exc)
+                try:
+                    with db() as con:
+                        con.execute("UPDATE ai_jobs SET status = 'Failed', error_msg = ?, updated_at = ? WHERE job_id = ?", (str(exc)[:400], now(), job_id))
+                        con.commit()
+                except Exception:
+                    pass
+
+        self.executor.submit(_runner)
+        return job_id
+
+def _bg_generate_chat_title(job_id: str, cid: str, prompt: str, asst_text: str):
+    refined = ai_engine.generate_chat_title(prompt, asst_text)
+    if refined:
+        with db() as con:
+            con.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (refined, now(), cid))
+            con.commit()
+
+ai_job_queue = AIJobQueue(max_workers=3)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8767"))
 PORTAL_LOCK = threading.RLock()
 _CLIENT_LOCKS = {}
@@ -664,6 +745,10 @@ def initialise():
                 pass
 
         initialise_ai_tables(con)
+    try:
+        ensure_server_autostart_registered()
+    except Exception:
+        pass
 
 
 def initialise_ai_tables(con):
@@ -830,6 +915,53 @@ def initialise_ai_tables(con):
             con.execute(f"ALTER TABLE ai_model_registry ADD COLUMN {col_def[0]} {col_def[1]}")
         except sqlite3.OperationalError:
             pass
+
+    try:
+        con.execute("ALTER TABLE ai_conversations ADD COLUMN state_json TEXT DEFAULT '{}'")
+    except sqlite3.OperationalError:
+        pass
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS ai_conversation_facts (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            fact_key TEXT NOT NULL,
+            fact_value TEXT NOT NULL,
+            fact_type TEXT NOT NULL DEFAULT 'string',
+            source TEXT NOT NULL DEFAULT 'user_explicit',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            raw_text TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(conversation_id, fact_key) ON CONFLICT REPLACE
+        );
+    """)
+    try:
+        con.execute("ALTER TABLE ai_conversation_facts ADD COLUMN raw_text TEXT")
+    except sqlite3.OperationalError:
+        pass
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ai_conv_facts_cid ON ai_conversation_facts(conversation_id);")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ai_conv_facts_key ON ai_conversation_facts(fact_key);")
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS ai_clarification_sessions (
+            session_id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            message_id TEXT,
+            round_number INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'active',
+            domain TEXT,
+            known_facts_json TEXT NOT NULL DEFAULT '{}',
+            missing_facts_json TEXT NOT NULL DEFAULT '[]',
+            questions_json TEXT NOT NULL DEFAULT '[]',
+            answers_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ai_clarif_cid ON ai_clarification_sessions(conversation_id);")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ai_clarif_status ON ai_clarification_sessions(status);")
+
 
     # Seed knowledge sources from real Act PDFs in Sources/ if empty
     c_count = con.execute("SELECT count(*) as c FROM ai_sources").fetchone()["c"]
@@ -1219,6 +1351,8 @@ def settings_payload(con=None):
         "backup_retention_days": get_setting("backup_retention_days", "60", con=con),
         "last_backup_time": get_setting("last_backup_time", "", con=con),
         "last_backup_status": get_setting("last_backup_status", "Never", con=con),
+        "app_autostart": get_setting("app_autostart", "0", con=con) == "1",
+        "server_autostart": True,
     }
 
 
@@ -2859,6 +2993,30 @@ def clean_stale_temp_and_duplicate_portal_files():
                 if itm.is_dir() and itm.name not in ("Client Access Links", "Office", ".scratch", "data") and not itm.name.startswith("."):
                     try: shutil.rmtree(str(itm), ignore_errors=True)
                     except Exception: pass
+
+        # 8. Prune stale PDF Studio sessions (> 24 hours)
+        pdf_sessions_dir = DATA_ROOT / "pdf_studio_sessions"
+        if pdf_sessions_dir.is_dir():
+            t_cutoff = time.time() - 86400  # 24 hours
+            for sdir in pdf_sessions_dir.iterdir():
+                if sdir.is_dir():
+                    try:
+                        if sdir.stat().st_mtime < t_cutoff:
+                            shutil.rmtree(str(sdir), ignore_errors=True)
+                    except Exception:
+                        pass
+
+        # 9. Prune stale staging sessions (> 48 hours)
+        staging_dir = DATA_ROOT / "staging"
+        if staging_dir.is_dir():
+            t_staging_cutoff = time.time() - (86400 * 2)  # 48 hours
+            for sdir in staging_dir.iterdir():
+                if sdir.is_dir():
+                    try:
+                        if sdir.stat().st_mtime < t_staging_cutoff:
+                            shutil.rmtree(str(sdir), ignore_errors=True)
+                    except Exception:
+                        pass
     except Exception as exc:
         logging.warning("Stale temp file cleanup error: %s", exc)
 
@@ -4660,6 +4818,110 @@ def apply_system_update():
         local_p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=5)
         new_sha = local_p.stdout.strip()[:7] if local_p.stdout else "Latest"
         return {"ok": True, "message": f"Successfully updated to {new_sha}!", "commit": new_sha}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ==============================================================================
+# WINDOWS AUTOSTART & BACKGROUND SYSTEM SERVICE MANAGER
+# ==============================================================================
+def get_windows_autostart_paths():
+    """Returns resolved paths for Server background launch and Desktop App launch."""
+    app_dir = Path(__file__).resolve().parent
+    vbs_path = app_dir / "launch_background.vbs"
+    server_cmd = f'wscript.exe "{vbs_path}"'
+
+    exe_path = app_dir / "VS_Database.exe"
+    if exe_path.is_file():
+        app_cmd = f'"{exe_path}"'
+    else:
+        pythonw_path = Path(sys.executable).parent / "pythonw.exe"
+        if not pythonw_path.is_file():
+            pythonw_path = Path("pythonw.exe")
+        main_script = app_dir / "main_app.py"
+        app_cmd = f'"{pythonw_path}" "{main_script}"'
+    return {
+        "server_cmd": server_cmd,
+        "app_cmd": app_cmd,
+        "app_dir": str(app_dir),
+    }
+
+
+def ensure_server_autostart_registered():
+    """Guarantees VSDatabaseServer is registered in HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        paths = get_windows_autostart_paths()
+        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "VSDatabaseServer", 0, winreg.REG_SZ, paths["server_cmd"])
+        return True
+    except Exception as exc:
+        print(f"[Autostart] Notice ensuring server autostart: {exc}", flush=True)
+        return False
+
+
+def get_autostart_status():
+    """Checks the Windows Registry to determine current autostart status of Server and App."""
+    server_active = False
+    app_active = False
+    paths = get_windows_autostart_paths()
+    if sys.platform == "win32":
+        try:
+            import winreg
+            run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_READ) as key:
+                try:
+                    val, _ = winreg.QueryValueEx(key, "VSDatabaseServer")
+                    server_active = bool(val and "launch_background.vbs" in val)
+                except OSError:
+                    server_active = False
+                try:
+                    val, _ = winreg.QueryValueEx(key, "VSDatabaseApp")
+                    app_active = bool(val)
+                except OSError:
+                    app_active = False
+        except Exception:
+            pass
+    # If server autostart was missing or pointed to obsolete path, register it now
+    if not server_active:
+        server_active = ensure_server_autostart_registered()
+    return {
+        "ok": True,
+        "server_autostart": True,
+        "app_autostart": app_active,
+        "paths": paths
+    }
+
+
+def set_app_autostart(enabled: bool):
+    """Enables or disables desktop app window autostart on Windows boot."""
+    if sys.platform != "win32":
+        return {"ok": False, "error": "Autostart is only supported on Windows"}
+    try:
+        import winreg
+        paths = get_windows_autostart_paths()
+        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_ALL_ACCESS) as key:
+            if enabled:
+                winreg.SetValueEx(key, "VSDatabaseApp", 0, winreg.REG_SZ, paths["app_cmd"])
+            else:
+                try:
+                    winreg.DeleteValue(key, "VSDatabaseApp")
+                except OSError:
+                    pass
+        with db() as con:
+            con.execute("INSERT INTO settings(key,value) VALUES('app_autostart', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        ("1" if enabled else "0",))
+        ensure_server_autostart_registered()
+        return {
+            "ok": True,
+            "app_autostart": enabled,
+            "server_autostart": True,
+            "message": "Desktop App will launch on Windows startup." if enabled else "Desktop App startup disabled (server remains active in background)."
+        }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -6540,9 +6802,76 @@ def revert_save_job(job_id, actor="Host"):
     }
 
 
+def secure_resolve_ai_path(file_path_str: str, client_file_no: str = None, user_id: str = None, role: str = "host") -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Validates that a file path is safely contained within approved application sandboxes.
+    Blocks directory traversal, UNC escapes, arbitrary OS filesystem reads, and unauthorized cross-client access.
+    Returns: (is_valid: bool, resolved_path: Optional[str], error_message: Optional[str])
+    """
+    if not file_path_str or not isinstance(file_path_str, str):
+        return False, None, "File path is required"
+
+    raw_path = file_path_str.strip()
+    if raw_path.startswith(("\\\\", "//")):
+        return False, None, "Access denied: Network UNC paths are forbidden"
+
+    try:
+        p = Path(raw_path).resolve()
+    except Exception as exc:
+        return False, None, f"Invalid path syntax: {exc}"
+
+    # Approved application sandbox roots
+    settings = settings_payload()
+    allowed_roots = [
+        (Path(APP_ROOT) / "data" / "ai_exports").resolve(),
+        (Path(APP_ROOT) / "data" / "ai_artifacts").resolve(),
+        (Path(APP_ROOT) / "data" / "staging").resolve(),
+        (Path(APP_ROOT) / "data" / "clients").resolve(),
+    ]
+    if settings.get("local_root"):
+        try:
+            allowed_roots.append(Path(settings["local_root"]).resolve())
+        except Exception:
+            pass
+    if settings.get("drive_root"):
+        try:
+            allowed_roots.append(Path(settings["drive_root"]).resolve())
+        except Exception:
+            pass
+
+    matched_root = None
+    for root in allowed_roots:
+        try:
+            p.relative_to(root)
+            matched_root = root
+            break
+        except ValueError:
+            continue
+
+    if not matched_root:
+        return False, None, "Access denied: Path is outside authorized workspace sandbox"
+
+    if not p.is_file():
+        return False, None, f"File not found: {p.name}"
+
+    # Enforce client isolation for staff users
+    if client_file_no and role != "host" and user_id:
+        with db() as con:
+            client_row = con.execute("SELECT users FROM clients WHERE file_no = ?", (client_file_no,)).fetchone()
+            if client_row and client_row["users"]:
+                assigned_users = [u.strip().lower() for u in client_row["users"].split(",") if u.strip()]
+                if user_id.lower() not in assigned_users:
+                    return False, None, f"Access denied: User {user_id} is not authorized for client {client_file_no}"
+
+    return True, str(p), None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "CAOfficeAutomation/0.2"
+
+    def address_string(self):
+        return self.client_address[0]
 
     def log_message(self, *_): pass
 
@@ -6668,6 +6997,10 @@ class Handler(BaseHTTPRequestHandler):
             if ctx.get("role") != "host":
                 self.reject(403, "Access restricted to Host administrator.")
                 return False
+        if self.command in ("POST", "PUT", "DELETE") and (path == "/api/ai/settings" or path.startswith("/api/ai/sources/")):
+            if ctx.get("role") != "host":
+                self.reject(403, "Access restricted: Host administrator privileges required to modify AI configuration or statutory sources.")
+                return False
         return True
 
     def send_json(self, data, status=200):
@@ -6700,6 +7033,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/ai/"):
             return self.handle_ai_get(path)
+
+        if path.startswith("/api/automation/"):
+            return self.handle_automation_get(path)
 
         if path == "/api/staging/incoming":
             query = parse_qs(urlparse(self.path).query)
@@ -6777,10 +7113,11 @@ class Handler(BaseHTTPRequestHandler):
             session = pdf_engine.get_session(sess_id)
             if not session or not session.working_pdf_path.exists():
                 return self.send_json({"error": "Document not found."}, 404)
-            raw = session.working_pdf_path.read_bytes()
+            raw = session.rebuild_working_pdf()
             download_name = session.meta.get("current_name") or "document_processed.pdf"
-            if not download_name.lower().endswith(".pdf"):
-                download_name += ".pdf"
+            base, _ = os.path.splitext(download_name)
+            base = re.sub(r'(\.(docx|xlsx|pdf|txt|csv))+$', '', base, flags=re.I).strip() or "document_processed"
+            download_name = f"{base}.pdf"
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
             self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
@@ -7055,6 +7392,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/system/check-updates":
             return self.send_json(check_for_system_updates())
 
+        if path == "/api/system/autostart":
+            return self.send_json(get_autostart_status())
+
         if path == "/api/rules":
             with db() as con:
                 row = dict(con.execute("SELECT * FROM folder_rules WHERE id=1").fetchone())
@@ -7318,17 +7658,65 @@ class Handler(BaseHTTPRequestHandler):
         clean_path = unquote(path)
         target = (STATIC_ROOT / ("index.html" if clean_path == "/" else clean_path.lstrip("/"))).resolve()
         if target.is_file() and target.is_relative_to(STATIC_ROOT.resolve()):
-            raw = target.read_bytes()
+            file_size = target.stat().st_size
             mime, _ = mimetypes.guess_type(target.name)
             if not mime:
-                mime = "text/html" if target.suffix == ".html" else "text/javascript" if target.suffix == ".js" else "text/css" if target.suffix == ".css" else "application/octet-stream"
+                mime = "text/html" if target.suffix == ".html" else "text/javascript" if target.suffix == ".js" else "text/css" if target.suffix == ".css" else ("video/mp4" if target.suffix == ".mp4" else "application/octet-stream")
             content_type = mime + ("; charset=utf-8" if mime.startswith("text/") or mime in ("application/json", "application/javascript") else "")
+            cache_header = "public, max-age=3600" if target.suffix in ('.mp4', '.png', '.jpg', '.jpeg', '.ico', '.svg', '.woff2', '.ttf') else "no-store, max-age=0"
+
+            # Support HTTP Range requests (vital for video streaming/scrubbing in Chromium/WebView2)
+            range_header = self.headers.get("Range")
+            if range_header and range_header.startswith("bytes="):
+                try:
+                    ranges = range_header[6:].split("-")
+                    start = int(ranges[0]) if ranges[0] else 0
+                    end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else file_size - 1
+                    start = max(0, min(start, file_size - 1))
+                    end = max(start, min(end, file_size - 1))
+                    content_length = end - start + 1
+
+                    self.send_response(206)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                    self.send_header("Content-Length", str(content_length))
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Cache-Control", cache_header)
+                    self.end_headers()
+
+                    with open(target, "rb") as f:
+                        f.seek(start)
+                        remaining = content_length
+                        while remaining > 0:
+                            chunk = f.read(min(remaining, 65536))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                    return
+                except Exception as range_exc:
+                    logger.warning(f"Range request handling exception: {range_exc}")
+
+            # Standard 200 OK delivery with streaming chunks
             self.send_response(200)
             self.send_header("Content-Type", content_type)
-            self.send_header("Cache-Control", "no-store, max-age=0")
-            self.send_header("Content-Length", len(raw))
+            self.send_header("Content-Length", str(file_size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", cache_header)
             self.end_headers()
-            return self.wfile.write(raw)
+
+            try:
+                with open(target, "rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                pass
+            return
 
         self.send_json({"error": "Not found"}, 404)
 
@@ -7340,6 +7728,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if path.startswith("/api/ai/"):
                 return self.handle_ai_post(path, payload)
+
+            if path.startswith("/api/automation/"):
+                return self.handle_automation_post(path, payload)
 
             if path == "/api/auth/setup-host":
                 if has_host_user():
@@ -8408,6 +8799,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/system/apply-update":
                 return self.send_json(apply_system_update())
 
+            if path == "/api/system/autostart":
+                app_autostart = bool(payload.get("app_autostart", False))
+                return self.send_json(set_app_autostart(app_autostart))
+
             if path == "/api/desktop/close":
                 threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
                 return self.send_json({"ok": True, "action": "close"})
@@ -8833,9 +9228,9 @@ class Handler(BaseHTTPRequestHandler):
                             pdf_engine.execute_tool(session.session_id, "merge_pdf", {"additional_files": [extra_bytes]})
                     else:
                         session = pdf_engine.create_session(first_name, first_bytes, source_files=source_files)
-                elif payload.get("file_base64"):
+                elif payload.get("file_base64") or payload.get("data") or payload.get("base64"):
                     orig_name = payload.get("original_name") or "document.pdf"
-                    b64_data = payload.get("file_base64")
+                    b64_data = payload.get("file_base64") or payload.get("data") or payload.get("base64")
                     if b64_data.startswith("data:"):
                         b64_data = b64_data.split(",", 1)[1]
                     f_bytes = base64.b64decode(b64_data)
@@ -8901,7 +9296,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not replace_staged_ids:
                     replace_staged_ids = [sf["staged_file_id"] for sf in session.meta.get("source_files", []) if isinstance(sf, dict) and sf.get("staged_file_id")]
 
-                final_bytes = session.working_pdf_path.read_bytes()
+                final_bytes = session.rebuild_working_pdf()
                 final_name = result_name or session.meta.get("current_name") or "Processed_Document.pdf"
                 if not final_name.lower().endswith(".pdf"):
                     final_name += ".pdf"
@@ -9065,7 +9460,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": str(exc)}, 400)
         except Exception:
             logging.exception("Unhandled request error")
-            self.send_json({"error": "Unexpected server error. Check the server log for details."}, 500)
 
     def handle_ai_get(self, path: str):
         try:
@@ -9093,9 +9487,12 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/ai/settings":
                 gemini_health = ai_engine.gemini.check_health()
+                raw_k = ai_engine.gemini.get_api_key() or ""
+                masked_k = (raw_k[:4] + "..." + raw_k[-4:]) if len(raw_k) > 8 else ("****" if raw_k else "")
                 return self.send_json({
                     "ok": True,
                     "has_api_key": gemini_health.get("has_api_key", False),
+                    "masked_key": masked_k,
                     "has_oauth": gemini_health.get("has_oauth", False),
                     "active_model": "VS AI Fast Core",
                     "status": gemini_health.get("status", "Key Required"),
@@ -9103,13 +9500,24 @@ class Handler(BaseHTTPRequestHandler):
                 })
 
             if path == "/api/ai/conversations":
+                query_params = parse_qs(urlparse(self.path).query)
+                limit = int(query_params.get("limit", [50])[0])
+                offset = int(query_params.get("offset", [0])[0])
+                search = query_params.get("search", [""])[0].strip()
+
                 with db() as con:
-                    convs = [dict(r) for r in con.execute("SELECT * FROM ai_conversations WHERE is_archived = 0 ORDER BY updated_at DESC").fetchall()]
+                    where_clause = "WHERE is_archived = 0"
+                    params = []
+                    if search:
+                        where_clause += " AND title LIKE ?"
+                        params.append(f"%{search}%")
+                    total_count = con.execute(f"SELECT count(*) as c FROM ai_conversations {where_clause}", params).fetchone()["c"]
+                    convs = [dict(r) for r in con.execute(f"SELECT * FROM ai_conversations {where_clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()]
                     for cv in convs:
                         last_msg = con.execute("SELECT content FROM ai_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1", (cv["id"],)).fetchone()
                         cv["preview"] = last_msg["content"][:120] if last_msg else ""
                         cv["msg_count"] = con.execute("SELECT count(*) as c FROM ai_messages WHERE conversation_id = ?", (cv["id"],)).fetchone()["c"]
-                return self.send_json({"ok": True, "conversations": convs})
+                return self.send_json({"ok": True, "conversations": convs, "total": total_count, "limit": limit, "offset": offset})
 
             if path.startswith("/api/ai/conversations/"):
                 parts = path.split("/")
@@ -9182,8 +9590,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "path": folder_str})
 
             if path.startswith("/api/ai/exports/"):
-                fname = os.path.basename(path.replace("/api/ai/exports/", ""))
+                raw_fname = path.split("?")[0].replace("/api/ai/exports/", "")
+                fname = urllib.parse.unquote(os.path.basename(raw_fname)).strip()
                 export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
+                if not export_file.is_file():
+                    # Fallback check variants (underscores vs spaces vs quotes)
+                    for alt in [fname.replace("_", " "), fname.replace(" ", "_"), fname.replace("'", "")]:
+                        cand = (Path(APP_ROOT) / "data" / "ai_exports" / alt).resolve()
+                        if cand.is_file():
+                            export_file = cand
+                            break
+                if not export_file.is_file():
+                    # Fallback check by timestamp suffix in data/ai_exports
+                    match = re.search(r'(_\d+\.[a-zA-Z0-9]+)$', fname)
+                    if match:
+                        suffix = match.group(1)
+                        for existing in (Path(APP_ROOT) / "data" / "ai_exports").glob(f"*{suffix}"):
+                            if existing.is_file():
+                                export_file = existing.resolve()
+                                break
+                if not export_file.is_file():
+                    # Fallback check in data/ai_artifacts subdirectories
+                    try:
+                        cand_art = list((Path(APP_ROOT) / "data" / "ai_artifacts").glob(f"*/{fname}"))
+                        if cand_art:
+                            export_file = cand_art[0].resolve()
+                    except Exception:
+                        pass
+                if not export_file.is_file():
+                    # Fallback check in ai_artifacts database table
+                    try:
+                        with db() as con:
+                            row = con.execute("SELECT storage_path FROM ai_artifacts WHERE filename = ? ORDER BY created_at DESC LIMIT 1", (fname,)).fetchone()
+                            if row and Path(row["storage_path"]).is_file():
+                                export_file = Path(row["storage_path"]).resolve()
+                    except Exception:
+                        pass
                 if export_file.is_file():
                     with open(export_file, "rb") as f:
                         file_bytes = f.read()
@@ -9195,13 +9637,138 @@ class Handler(BaseHTTPRequestHandler):
                         mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     elif fname.lower().endswith(".txt"):
                         mime_type = "text/plain; charset=utf-8"
+                    elif fname.lower().endswith(".csv"):
+                        mime_type = "text/csv; charset=utf-8"
+                    disp_mode = "attachment" if "download=1" in str(self.path) else "inline"
                     self.send_header("Content-Type", mime_type)
-                    self.send_header("Content-Disposition", f'inline; filename="{fname}"')
+                    self.send_header("Content-Disposition", f'{disp_mode}; filename="{fname}"')
                     self.send_header("Content-Length", str(len(file_bytes)))
+                    self.send_cors_headers()
                     self.end_headers()
                     self.wfile.write(file_bytes)
                     return
                 return self.send_json({"error": "Exported file not found"}, 404)
+
+            if path.startswith("/api/ai/artifacts/"):
+                parts = path.split("/")
+                art_id = parts[4]
+                sub_action = parts[5] if len(parts) > 5 else None
+
+                with db() as con:
+                    art = con.execute("SELECT * FROM ai_artifacts WHERE artifact_id = ?", (art_id,)).fetchone()
+                if not art:
+                    return self.send_json({"error": "Artifact not found"}, 404)
+
+                art_dict = dict(art)
+                f_path = Path(art_dict["storage_path"])
+                if not f_path.is_file():
+                    return self.send_json({"error": "Artifact binary file not found on disk"}, 404)
+
+                if sub_action == "download":
+                    file_bytes = f_path.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", art_dict["mime_type"])
+                    self.send_header("Content-Disposition", f'attachment; filename="{art_dict["filename"]}"')
+                    self.send_header("Content-Length", str(len(file_bytes)))
+                    self.send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(file_bytes)
+                    return
+
+                elif sub_action == "preview":
+                    art_type = art_dict["artifact_type"].lower()
+                    query_str = urlparse(self.path).query
+                    wants_json = "format=json" in query_str
+                    try:
+                        meta = json.loads(art_dict.get("metadata_json") or "{}")
+                    except Exception:
+                        meta = {}
+                    source_content = meta.get("source_content", "")
+
+                    if art_type == "pdf" and not wants_json:
+                        file_bytes = f_path.read_bytes()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/pdf")
+                        self.send_header("Content-Disposition", f'inline; filename="{art_dict["filename"]}"')
+                        self.send_header("Content-Length", str(len(file_bytes)))
+                        self.send_cors_headers()
+                        self.end_headers()
+                        self.wfile.write(file_bytes)
+                        return
+                    elif art_type == "pdf" and wants_json:
+                        prev = vs_ai_doc_generator.get_pdf_preview_data(str(f_path))
+                        if not source_content and prev.get("pages"):
+                            source_content = "\n\n".join(p.get("text", "") for p in prev["pages"] if p.get("text"))
+                        prev["artifact_id"] = art_dict["artifact_id"]
+                        prev["filename"] = art_dict["filename"]
+                        prev["title"] = art_dict.get("title") or art_dict["filename"]
+                        prev["artifact_type"] = "pdf"
+                        prev["orientation"] = meta.get("orientation", "portrait")
+                        prev["source_content"] = source_content
+                        prev["sections"] = vs_ai_doc_generator.extract_selectable_sections(source_content)
+                        return self.send_json(prev)
+                    elif art_type == "docx":
+                        prev = vs_ai_doc_generator.get_docx_preview_data(str(f_path))
+                        if not source_content and prev.get("blocks"):
+                            rebuilt = []
+                            for b in prev["blocks"]:
+                                if b.get("type") == "heading":
+                                    rebuilt.append("#" * int(b.get("level", 2)) + " " + b.get("text", ""))
+                                else:
+                                    rebuilt.append(b.get("text", ""))
+                            source_content = "\n\n".join(rebuilt)
+                        prev["artifact_id"] = art_dict["artifact_id"]
+                        prev["filename"] = art_dict["filename"]
+                        prev["title"] = art_dict.get("title") or art_dict["filename"]
+                        prev["artifact_type"] = "docx"
+                        prev["orientation"] = meta.get("orientation", "portrait")
+                        prev["source_content"] = source_content
+                        prev["sections"] = vs_ai_doc_generator.extract_selectable_sections(source_content)
+                        return self.send_json(prev)
+                    elif art_type == "xlsx":
+                        prev = vs_ai_doc_generator.get_xlsx_preview_data(str(f_path))
+                        if not source_content and prev.get("sheets"):
+                            rebuilt = []
+                            for sh in prev["sheets"]:
+                                rebuilt.append(f"## {sh.get('name', 'Sheet')}")
+                                for row in (sh.get("rows") or [])[:40]:
+                                    if any(row):
+                                        rebuilt.append("| " + " | ".join(str(c) for c in row) + " |")
+                            source_content = "\n".join(rebuilt)
+                        prev["artifact_id"] = art_dict["artifact_id"]
+                        prev["filename"] = art_dict["filename"]
+                        prev["title"] = art_dict.get("title") or art_dict["filename"]
+                        prev["artifact_type"] = "xlsx"
+                        prev["source_content"] = source_content
+                        prev["sections"] = vs_ai_doc_generator.extract_selectable_sections(source_content)
+                        return self.send_json(prev)
+                    else:
+                        txt = source_content or f_path.read_text(errors="replace")
+                        return self.send_json({
+                            "ok": True,
+                            "artifact_id": art_dict["artifact_id"],
+                            "filename": art_dict["filename"],
+                            "title": art_dict.get("title") or art_dict["filename"],
+                            "artifact_type": art_type,
+                            "text": txt,
+                            "source_content": txt,
+                            "sections": vs_ai_doc_generator.extract_selectable_sections(txt)
+                        })
+
+                return self.send_json({"ok": True, "artifact": art_dict})
+
+            if path == "/api/ai/jobs":
+                with db() as con:
+                    jobs = [dict(r) for r in con.execute("SELECT * FROM ai_jobs ORDER BY created_at DESC LIMIT 25").fetchall()]
+                return self.send_json({"ok": True, "jobs": jobs})
+
+            if path.startswith("/api/ai/jobs/"):
+                jid = path.split("/")[4]
+                with db() as con:
+                    job = con.execute("SELECT * FROM ai_jobs WHERE job_id = ?", (jid,)).fetchone()
+                if not job:
+                    return self.send_json({"error": "Job not found"}, 404)
+                return self.send_json({"ok": True, "job": dict(job)})
 
             return self.send_json({"error": "Unknown AI GET endpoint"}, 404)
         except Exception as e:
@@ -9210,6 +9777,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_ai_post(self, path: str, payload: dict):
         try:
+            ctx = self.get_auth_context()
+            user = ctx["user_id"] if ctx else "User"
             if path == "/api/ai/settings":
                 api_key = payload.get("gemini_api_key", "").strip() or payload.get("api_key", "").strip() or payload.get("vs_ai_key", "").strip()
                 if api_key:
@@ -9221,11 +9790,170 @@ class Handler(BaseHTTPRequestHandler):
                     "health": health
                 })
 
+            if path == "/api/ai/doc/analyze-rename":
+                # AI Auto Document Rename: First 2 Pages analysis (NEVER renames automatically)
+                f_path = str(payload.get("file_path") or "").strip()
+                stg_id = payload.get("staged_file_id")
+                stg_sess = payload.get("staging_session_id")
+                cl_fno = payload.get("client_file_no")
+                cl_name = payload.get("client_name")
+                rel_path = payload.get("relative_path")
+                kind = str(payload.get("storage_kind", "local")).strip()
+
+                target_file_path = None
+                temp_cleanup = None
+
+                # 1. Check if staged file
+                if stg_id and stg_sess:
+                    p_res = staging_mgr.find_file_path(stg_id, stg_sess)
+                    if p_res:
+                        target_file_path = str(p_res[0])
+                elif stg_id:
+                    p_res = staging_mgr.find_file_path(stg_id)
+                    if p_res:
+                        target_file_path = str(p_res[0])
+
+                # 2. Check if client explorer relative path
+                if not target_file_path and cl_fno and rel_path:
+                    with db() as con:
+                        client_row = con.execute("SELECT * FROM clients WHERE file_no=?", (cl_fno,)).fetchone()
+                    if client_row:
+                        if not cl_name:
+                            cl_name = client_row["name"]
+                        try:
+                            _, src_p, _ = resolve_client_path(client_row, rel_path, kind)
+                            if src_p and src_p.is_file():
+                                target_file_path = str(src_p)
+                        except Exception:
+                            pass
+
+                # 3. Direct file path if exists
+                if not target_file_path and f_path and os.path.isfile(f_path):
+                    target_file_path = f_path
+
+                # 4. Base64 payload fallback (e.g. from dropzone or memory)
+                b64_data = payload.get("file_base64") or payload.get("base64")
+                if not target_file_path and b64_data:
+                    try:
+                        if b64_data.startswith("data:"):
+                            b64_data = b64_data.split(",", 1)[1]
+                        raw_bytes = base64.b64decode(b64_data)
+                        temp_name = payload.get("original_filename") or payload.get("name") or "temp_doc.pdf"
+                        temp_p = SCRATCH_DIR / f"temp_rename_{uuid.uuid4().hex}_{os.path.basename(temp_name)}"
+                        temp_p.write_bytes(raw_bytes)
+                        target_file_path = str(temp_p)
+                        temp_cleanup = temp_p
+                    except Exception as e:
+                        logger.warning(f"Failed to decode base64 for rename: {e}")
+
+                if not target_file_path or not os.path.isfile(target_file_path):
+                    return self.send_json({"ok": False, "error": "Document file not found for analysis."}, 404)
+
+                try:
+                    coordinator = vs_ai_rename.AiAutoRenameCoordinator(gemini_provider=ai_engine.gemini)
+                    analysis = coordinator.analyze_document(
+                        file_path=target_file_path,
+                        context_client_name=cl_name,
+                        context_client_pan=payload.get("client_pan")
+                    )
+                    # Pass through identifiers for client UI
+                    analysis["staged_file_id"] = stg_id
+                    analysis["staging_session_id"] = stg_sess
+                    analysis["client_file_no"] = cl_fno
+                    analysis["relative_path"] = rel_path
+                    analysis["storage_kind"] = kind
+                    return self.send_json(analysis)
+                finally:
+                    if temp_cleanup and temp_cleanup.exists():
+                        try:
+                            temp_cleanup.unlink()
+                        except Exception:
+                            pass
+
+            if path == "/api/ai/doc/confirm-rename":
+                # Confirms and executes user-approved document rename
+                new_fname = str(payload.get("new_filename") or "").strip()
+                if not new_fname:
+                    return self.send_json({"ok": False, "error": "New filename cannot be empty."}, 400)
+
+                clean_fname = vs_ai_rename.sanitize_filename(new_fname)
+                conflict_action = payload.get("conflict_action", "replace") # 'replace' or 'keep_both' or 'cancel'
+                stg_id = payload.get("staged_file_id")
+                stg_sess = payload.get("staging_session_id")
+                cl_fno = payload.get("client_file_no")
+                rel_path = payload.get("relative_path")
+                kind = str(payload.get("storage_kind", "local")).strip()
+                f_path = str(payload.get("file_path") or "").strip()
+
+                ctx = self.get_auth_context()
+                actor = ctx["user_id"] if ctx else "User"
+
+                # Case A: Rename Staged File (Save Tab / PDF Studio)
+                if stg_id and stg_sess:
+                    ren_entry = staging_mgr.rename_staged_file(stg_sess, stg_id, clean_fname)
+                    if ren_entry:
+                        log_activity("AI_RENAME_CONFIRMED", client_name=payload.get("client_name"), details=f"Renamed staged file to '{clean_fname}'", actor=actor)
+                        return self.send_json({"ok": True, "renamed": True, "new_filename": clean_fname, "entry": ren_entry})
+                    return self.send_json({"ok": False, "error": "Staged file not found."}, 404)
+
+                # Case B: Rename File in Client Folder Explorer
+                if cl_fno and rel_path:
+                    with db() as con:
+                        client_row = con.execute("SELECT * FROM clients WHERE file_no=?", (cl_fno,)).fetchone()
+                    if not client_row:
+                        return self.send_json({"ok": False, "error": "Client not found."}, 404)
+
+                    _, src_path, clean_src = resolve_client_path(client_row, rel_path, kind)
+                    if not src_path or not src_path.is_file():
+                        return self.send_json({"ok": False, "error": "Source file does not exist."}, 404)
+
+                    dest_dir = src_path.parent
+                    dest_file = dest_dir / clean_fname
+
+                    # Duplicate collision handling
+                    if dest_file.exists() and dest_file.resolve() != src_path.resolve():
+                        if conflict_action == "keep_both":
+                            clean_fname = vs_ai_rename.generate_unique_filename(dest_dir, clean_fname)
+                        elif conflict_action == "cancel":
+                            return self.send_json({"ok": False, "error": "Rename cancelled due to existing file."})
+                        elif conflict_action == "replace":
+                            try:
+                                dest_file.unlink()
+                            except Exception as e:
+                                return self.send_json({"ok": False, "error": f"Could not replace existing file: {e}"}, 500)
+
+                    res = rename_client_file(client_row, rel_path, clean_fname, storage_kind=kind)
+                    log_activity(
+                        "AI_RENAME_CONFIRMED",
+                        client_file_no=client_row["file_no"],
+                        client_name=client_row["name"],
+                        details=f"AI Rename confirmed: '{rel_path}' -> '{res.get('new_path')}'",
+                        actor=actor
+                    )
+                    return self.send_json({"ok": True, **res, "new_filename": clean_fname})
+
+                # Case C: Direct local disk file rename
+                if f_path and os.path.isfile(f_path):
+                    p = Path(f_path)
+                    target = p.parent / clean_fname
+                    if target.exists() and target.resolve() != p.resolve():
+                        if conflict_action == "keep_both":
+                            clean_fname = vs_ai_rename.generate_unique_filename(p.parent, clean_fname)
+                            target = p.parent / clean_fname
+                        elif conflict_action == "replace":
+                            target.unlink()
+                    p.rename(target)
+                    log_activity("AI_RENAME_CONFIRMED", details=f"AI Rename confirmed: '{p.name}' -> '{clean_fname}'", actor=actor)
+                    return self.send_json({"ok": True, "renamed": True, "new_path": str(target), "new_filename": clean_fname})
+
+                return self.send_json({"ok": False, "error": "No valid file target provided for rename."}, 400)
+
             if path == "/api/ai/doc/rename":
                 f_path = payload.get("file_path", "").strip()
                 cl_name = payload.get("client_name")
                 cl_pan = payload.get("client_pan")
-                res = ai_engine.renamer.rename_document(f_path, client_name=cl_name, client_pan=cl_pan)
+                coordinator = vs_ai_rename.AiAutoRenameCoordinator(gemini_provider=ai_engine.gemini)
+                res = coordinator.analyze_document(f_path, context_client_name=cl_name, context_client_pan=cl_pan)
                 return self.send_json(res)
 
             if path == "/api/ai/export-pdf":
@@ -9233,27 +9961,56 @@ class Handler(BaseHTTPRequestHandler):
                 content = payload.get("content", "")
                 citations = payload.get("citations", [])
                 cl_name = payload.get("client_name")
-                res = vs_ai_engine.export_ai_opinion_pdf(title, content, citations, client_name=cl_name)
-                if res.get("ok"):
-                    res["download_url"] = f"/api/ai/exports/{res['filename']}"
-                return self.send_json(res)
+                res = vs_ai_engine.export_ai_opinion_pdf(
+                    title,
+                    content,
+                    citations,
+                    client_name=cl_name,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no"),
+                    style_profile_id=payload.get("style_profile_id"),
+                    reference_file_path=payload.get("reference_file_path")
+                )
+                if res.get("ok") and res.get("status") != "failed":
+                    res["export_url"] = f"/api/ai/exports/{res['filename']}"
+                    if not res.get("download_url"):
+                        res["download_url"] = res["export_url"]
+                    if not res.get("preview_url"):
+                        res["preview_url"] = res["export_url"]
+                    return self.send_json(res)
+                else:
+                    return self.send_json(res, 422 if not res.get("ok") else 200)
 
             if path == "/api/ai/export-docx":
                 title = payload.get("title", "Statutory Legal Opinion & Advisory")
                 content = payload.get("content", "")
                 citations = payload.get("citations", [])
                 cl_name = payload.get("client_name")
-                font_name = payload.get("font_name", "Plus Jakarta Sans")
+                font_name = payload.get("font_name", "Calibri")
                 res = vs_ai_doc_generator.export_ai_document_docx(
                     title=title,
                     content=content,
                     citations=citations,
                     client_name=cl_name,
-                    font_name=font_name
+                    font_name=font_name,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no"),
+                    style_profile_id=payload.get("style_profile_id"),
+                    reference_file_path=payload.get("reference_file_path")
                 )
-                if res.get("ok"):
-                    res["download_url"] = f"/api/ai/exports/{res['filename']}"
-                return self.send_json(res)
+                if res.get("ok") and res.get("status") != "failed":
+                    res["export_url"] = f"/api/ai/exports/{res['filename']}"
+                    if not res.get("download_url"):
+                        res["download_url"] = res["export_url"]
+                    if not res.get("preview_url"):
+                        res["preview_url"] = res["export_url"]
+                    return self.send_json(res)
+                else:
+                    return self.send_json(res, 422 if not res.get("ok") else 200)
 
             if path == "/api/ai/export-xlsx":
                 title = payload.get("title", "Statutory Statement & Computations")
@@ -9262,11 +10019,433 @@ class Handler(BaseHTTPRequestHandler):
                 res = vs_ai_doc_generator.export_ai_spreadsheet_xlsx(
                     title=title,
                     content=content,
-                    client_name=cl_name
+                    client_name=cl_name,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no"),
+                    style_profile_id=payload.get("style_profile_id"),
+                    reference_file_path=payload.get("reference_file_path")
+                )
+                if res.get("ok") and res.get("status") != "failed":
+                    res["export_url"] = f"/api/ai/exports/{res['filename']}"
+                    if not res.get("download_url"):
+                        res["download_url"] = res["export_url"]
+                    if not res.get("preview_url"):
+                        res["preview_url"] = res["export_url"]
+                    return self.send_json(res)
+                else:
+                    return self.send_json(res, 422 if not res.get("ok") else 200)
+
+            if path == "/api/ai/export-pptx":
+                title = payload.get("title", "Executive Presentation")
+                content = payload.get("content", "")
+                cl_name = payload.get("client_name")
+                res = vs_ai_doc_generator.export_ai_presentation_pptx(
+                    title=title,
+                    content=content,
+                    client_name=cl_name,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no"),
+                    style_profile_id=payload.get("style_profile_id")
+                )
+                if res.get("ok") and res.get("status") != "failed":
+                    res["export_url"] = f"/api/ai/exports/{res['filename']}"
+                    if not res.get("download_url"):
+                        res["download_url"] = res["export_url"]
+                    if not res.get("preview_url"):
+                        res["preview_url"] = res["export_url"]
+                    return self.send_json(res)
+                else:
+                    return self.send_json(res, 422 if not res.get("ok") else 200)
+
+            if path == "/api/ai/populate-template":
+                from template_engine import TemplatePopulationEngine
+                from doc_validator import DocumentValidator
+                from vs_ai_doc_generator import create_and_register_artifact, DEFAULT_EXPORTS_DIR
+                
+                template_path = payload.get("template_file_path") or payload.get("template_path")
+                context_data = payload.get("context_data") or {}
+                table_data = payload.get("table_data")
+                client_name = payload.get("client_name")
+                title = payload.get("title") or "Populated Template Document"
+                
+                if not template_path:
+                    return self.send_json({"ok": False, "error": "template_file_path is required"}, 400)
+                
+                src = Path(template_path)
+                if not src.exists():
+                    cand = DEFAULT_EXPORTS_DIR / src.name
+                    if cand.exists():
+                        src = cand
+                    else:
+                        return self.send_json({"ok": False, "error": f"Template file not found: {template_path}"}, 404)
+                
+                ext = src.suffix.lower()
+                clean_title = re.sub(r'[^a-zA-Z0-9_\- ]', '', title)[:35].strip()
+                out_filename = f"VS_AI_Populated_{re.sub(r'\s+', '_', clean_title)}_{int(time.time())}{ext}"
+                dest_file = DEFAULT_EXPORTS_DIR / out_filename
+                
+                pop_res = TemplatePopulationEngine.populate_template(
+                    template_path=src,
+                    output_path=dest_file,
+                    context_data=context_data,
+                    table_data=table_data
+                )
+                
+                if not pop_res.get("ok"):
+                    return self.send_json({"ok": False, "error": pop_res.get("error")}, 422)
+                
+                # Independent validation gate
+                val_res = DocumentValidator.validate_artifact(
+                    file_path=dest_file,
+                    target_format=ext.replace(".", "")
+                )
+                
+                is_valid = bool(val_res.is_valid and val_res.state != "FAILED")
+                delivery_status = "ready" if is_valid else "failed"
+                
+                art = create_and_register_artifact(
+                    artifact_type=ext.replace(".", ""),
+                    title=title,
+                    filename=out_filename,
+                    file_path=dest_file,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no"),
+                    metadata={
+                        "client_name": client_name,
+                        "template_source": str(src),
+                        "validation_state": delivery_status,
+                        "is_valid": is_valid,
+                        "validation_errors": val_res.errors,
+                        "validation_warnings": val_res.warnings,
+                        "cells_modified": pop_res.get("cells_modified", 0),
+                        "engine": pop_res.get("engine")
+                    }
+                )
+                
+                if not is_valid:
+                    return self.send_json({
+                        "ok": False,
+                        "error": f"Populated template validation failed: {'; '.join(val_res.errors)}",
+                        "status": "failed",
+                        "filename": out_filename,
+                        "file_path": str(dest_file),
+                        "validation_errors": val_res.errors
+                    }, 422)
+                
+                return self.send_json({
+                    "ok": True,
+                    "format": ext.replace(".", ""),
+                    "filename": out_filename,
+                    "path": str(dest_file),
+                    "file_path": str(dest_file),
+                    "size_kb": round(dest_file.stat().st_size / 1024, 1),
+                    "artifact_id": art["artifact_id"],
+                    "download_url": art["download_url"],
+                    "preview_url": art["preview_url"],
+                    "status": "ready",
+                    "validation_state": val_res.state,
+                    "cells_modified": pop_res.get("cells_modified", 0),
+                    "engine": pop_res.get("engine")
+                })
+
+            if path == "/api/ai/extract-style":
+                from style_profile_engine import StyleProfileEngine
+                f_path = payload.get("file_path") or payload.get("reference_file_path")
+                if not f_path or not Path(f_path).exists():
+                    return self.send_json({"ok": False, "error": f"File not found: {f_path}"}, 404)
+                
+                profile = StyleProfileEngine.extract_style(f_path)
+                StyleProfileEngine.save_profile(profile)
+                return self.send_json({
+                    "ok": True,
+                    "profile_id": profile.profile_id,
+                    "name": profile.name,
+                    "font_primary": profile.font_primary,
+                    "color_primary_hex": profile.color_primary_hex,
+                    "orientation": profile.orientation,
+                    "confidence_score": profile.confidence_score,
+                    "notes": profile.extraction_notes
+                })
+
+            if path == "/api/ai/export-gdoc":
+                title = payload.get("title", "Statutory Legal Opinion & Advisory")
+                content = payload.get("content", "")
+                citations = payload.get("citations", [])
+                cl_name = payload.get("client_name")
+                font_name = payload.get("font_name", "Calibri")
+                res = vs_ai_doc_generator.export_ai_document_docx(
+                    title=title,
+                    content=content,
+                    citations=citations,
+                    client_name=cl_name,
+                    font_name=font_name,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no")
                 )
                 if res.get("ok"):
-                    res["download_url"] = f"/api/ai/exports/{res['filename']}"
+                    res["export_url"] = f"/api/ai/exports/{res['filename']}"
+                    if not res.get("download_url"):
+                        res["download_url"] = res["export_url"]
+                    if not res.get("preview_url"):
+                        res["preview_url"] = res["export_url"]
+                    # Attempt real Google Docs cloud creation if Google Drive OAuth is connected
+                    if GOOGLE_TOKEN_FILE.is_file():
+                        try:
+                            from googleapiclient.http import MediaIoBaseUpload
+                            service = google_service()
+                            root_info = portal_root(service)
+                            ai_folder = drive_folder(service, "VS AI Generated Documents", parent_id=root_info["id"])
+                            raw_bytes = Path(res["file_path"]).read_bytes()
+                            media = MediaIoBaseUpload(
+                                io.BytesIO(raw_bytes),
+                                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                resumable=False
+                            )
+                            g_body = {
+                                "name": title,
+                                "mimeType": "application/vnd.google-apps.document",
+                                "parents": [ai_folder["id"]]
+                            }
+                            gfile = service.files().create(
+                                body=g_body,
+                                media_body=media,
+                                supportsAllDrives=True,
+                                fields="id,name,webViewLink"
+                            ).execute()
+                            res["cloud_connected"] = True
+                            res["cloud_provider"] = "google_docs"
+                            res["drive_file_id"] = gfile.get("id")
+                            res["web_view_link"] = gfile.get("webViewLink")
+                        except Exception as g_err:
+                            res["cloud_connected"] = False
+                            res["cloud_status_message"] = f"Google Drive sync unavailable ({g_err}). Local Google Docs-compatible .docx artifact is ready."
+                    else:
+                        res["cloud_connected"] = False
+                        res["cloud_status_message"] = "Google Drive OAuth is not connected. Local Google Docs-compatible .docx artifact is ready; connect Google Drive in Drive Sharing to open directly in Google Docs."
                 return self.send_json(res)
+
+            if path == "/api/ai/export-gsheet":
+                title = payload.get("title", "Statutory Statement & Computations")
+                content = payload.get("content", "")
+                cl_name = payload.get("client_name")
+                res = vs_ai_doc_generator.export_ai_spreadsheet_xlsx(
+                    title=title,
+                    content=content,
+                    client_name=cl_name,
+                    user_id=user,
+                    conversation_id=payload.get("conversation_id"),
+                    message_id=payload.get("message_id"),
+                    client_file_no=payload.get("client_file_no")
+                )
+                if res.get("ok"):
+                    res["export_url"] = f"/api/ai/exports/{res['filename']}"
+                    if not res.get("download_url"):
+                        res["download_url"] = res["export_url"]
+                    if not res.get("preview_url"):
+                        res["preview_url"] = res["export_url"]
+                    # Attempt real Google Sheets cloud creation if Google Drive OAuth is connected
+                    if GOOGLE_TOKEN_FILE.is_file():
+                        try:
+                            from googleapiclient.http import MediaIoBaseUpload
+                            service = google_service()
+                            root_info = portal_root(service)
+                            ai_folder = drive_folder(service, "VS AI Generated Documents", parent_id=root_info["id"])
+                            raw_bytes = Path(res["file_path"]).read_bytes()
+                            media = MediaIoBaseUpload(
+                                io.BytesIO(raw_bytes),
+                                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                resumable=False
+                            )
+                            g_body = {
+                                "name": title,
+                                "mimeType": "application/vnd.google-apps.spreadsheet",
+                                "parents": [ai_folder["id"]]
+                            }
+                            gfile = service.files().create(
+                                body=g_body,
+                                media_body=media,
+                                supportsAllDrives=True,
+                                fields="id,name,webViewLink"
+                            ).execute()
+                            res["cloud_connected"] = True
+                            res["cloud_provider"] = "google_sheets"
+                            res["drive_file_id"] = gfile.get("id")
+                            res["web_view_link"] = gfile.get("webViewLink")
+                        except Exception as g_err:
+                            res["cloud_connected"] = False
+                            res["cloud_status_message"] = f"Google Drive sync unavailable ({g_err}). Local Google Sheets-compatible .xlsx artifact is ready."
+                    else:
+                        res["cloud_connected"] = False
+                        res["cloud_status_message"] = "Google Drive OAuth is not connected. Local Google Sheets-compatible .xlsx artifact is ready; connect Google Drive in Drive Sharing to open directly in Google Sheets."
+                return self.send_json(res)
+
+            if path == "/api/ai/native-save-dialog":
+                artifact_id = str(payload.get("artifact_id") or "").strip()
+                source_filename = os.path.basename(str(payload.get("source_filename") or "").strip())
+                default_name = str(payload.get("default_name") or "").strip()
+                ext = str(payload.get("ext") or "").replace(".", "").lower()
+
+                export_file = None
+                if artifact_id:
+                    try:
+                        with db() as con:
+                            row = con.execute(
+                                "SELECT storage_path, filename FROM ai_artifacts WHERE artifact_id = ?",
+                                (artifact_id,)
+                            ).fetchone()
+                            if row:
+                                if row["storage_path"] and Path(row["storage_path"]).is_file():
+                                    export_file = Path(row["storage_path"]).resolve()
+                                if not source_filename and row["filename"]:
+                                    source_filename = os.path.basename(row["filename"])
+                    except Exception:
+                        pass
+                    if (not export_file or not export_file.is_file()):
+                        art_dir = (Path(APP_ROOT) / "data" / "ai_artifacts" / artifact_id)
+                        if art_dir.is_dir():
+                            for child in art_dir.iterdir():
+                                if child.is_file() and child.stat().st_size > 0:
+                                    export_file = child.resolve()
+                                    if not source_filename:
+                                        source_filename = child.name
+                                    break
+
+                if (not export_file or not export_file.is_file()) and source_filename:
+                    export_file = (Path(APP_ROOT) / "data" / "ai_exports" / source_filename).resolve()
+                    if not export_file.is_file():
+                        for alt in [source_filename.replace("_", " "), source_filename.replace(" ", "_")]:
+                            cand = (Path(APP_ROOT) / "data" / "ai_exports" / alt).resolve()
+                            if cand.is_file():
+                                export_file = cand
+                                break
+                    if not export_file.is_file():
+                        try:
+                            cand_art = list((Path(APP_ROOT) / "data" / "ai_artifacts").glob(f"*/{source_filename}"))
+                            if cand_art:
+                                export_file = cand_art[0].resolve()
+                        except Exception:
+                            pass
+                    if not export_file.is_file():
+                        try:
+                            with db() as con:
+                                row = con.execute("SELECT storage_path FROM ai_artifacts WHERE filename = ? ORDER BY created_at DESC LIMIT 1", (source_filename,)).fetchone()
+                                if row and Path(row["storage_path"]).is_file():
+                                    export_file = Path(row["storage_path"]).resolve()
+                        except Exception:
+                            pass
+
+                # Check PDF Studio sessions directory
+                if not export_file or not export_file.is_file():
+                    sess_id = payload.get("session_id")
+                    if sess_id:
+                        studio_sess = pdf_engine.get_session(sess_id)
+                        if studio_sess and studio_sess.working_pdf_path.is_file():
+                            studio_sess.rebuild_working_pdf()
+                            export_file = studio_sess.working_pdf_path.resolve()
+                    if (not export_file or not export_file.is_file()) and source_filename:
+                        cand_direct = (Path(APP_ROOT) / "data" / "pdf_studio_sessions" / source_filename / "working.pdf").resolve()
+                        if cand_direct.is_file():
+                            export_file = cand_direct
+                # Check if file_base64 was sent directly
+                if (not export_file or not export_file.is_file()) and payload.get("file_base64"):
+                    try:
+                        b64_raw = payload.get("file_base64")
+                        if "," in b64_raw:
+                            b64_raw = b64_raw.split(",", 1)[1]
+                        tmp_out = (Path(APP_ROOT) / "data" / "pdf_studio_sessions" / f"temp_save_{int(time.time()*1000)}.{ext or 'pdf'}")
+                        tmp_out.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_out.write_bytes(base64.b64decode(b64_raw))
+                        export_file = tmp_out
+                    except Exception as e:
+                        print(f"[native-save-dialog] base64 decode failed: {e}", flush=True)
+
+                if not export_file or not export_file.is_file():
+                    return self.send_json({"ok": False, "error": f"File not found on server: {source_filename or artifact_id}"}, 404)
+
+                if not ext:
+                    ext = export_file.suffix.replace(".", "").lower() or "pdf"
+
+                base = os.path.splitext(default_name or export_file.name)[0]
+                base = re.sub(r'(\.(docx|xlsx|pdf|txt|csv))+$', '', base, flags=re.I).strip() or "VS_AI_Document"
+                base = re.sub(r'[<>:"/\\|?*]', '_', base).strip() or "VS_AI_Document"
+                target_filename = f"{base}.{ext}"
+
+                if ext == "docx":
+                    file_types = [("Word Documents (*.docx)", "*.docx"), ("All Files (*.*)", "*.*")]
+                elif ext == "xlsx":
+                    file_types = [("Excel Workbooks (*.xlsx)", "*.xlsx"), ("All Files (*.*)", "*.*")]
+                elif ext == "txt":
+                    file_types = [("Text Documents (*.txt)", "*.txt"), ("All Files (*.*)", "*.*")]
+                elif ext == "csv":
+                    file_types = [("CSV Spreadsheets (*.csv)", "*.csv"), ("All Files (*.*)", "*.*")]
+                else:
+                    file_types = [("PDF Documents (*.pdf)", "*.pdf"), ("All Files (*.*)", "*.*")]
+
+                downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                if not os.path.isdir(downloads_dir):
+                    downloads_dir = os.path.expanduser("~")
+
+                dest_result = [None]
+                dialog_err = [None]
+                def _open_dialog():
+                    try:
+                        import tkinter as tk
+                        from tkinter import filedialog
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)
+                        dest = filedialog.asksaveasfilename(
+                            initialdir=downloads_dir,
+                            initialfile=target_filename,
+                            defaultextension=f".{ext}",
+                            filetypes=file_types,
+                            title=f"Save {ext.upper()} Document"
+                        )
+                        root.destroy()
+                        dest_result[0] = dest
+                    except Exception as e:
+                        dialog_err[0] = str(e)
+                        print(f"[SaveFileDialog] Error: {e}", flush=True)
+
+                th = threading.Thread(target=_open_dialog)
+                th.start()
+                th.join(timeout=120)
+
+                if dialog_err[0]:
+                    return self.send_json({
+                        "ok": False,
+                        "dialog_error": dialog_err[0],
+                        "fallback_url": f"/api/ai/artifacts/{artifact_id}/download" if artifact_id else f"/api/ai/exports/{urllib.parse.quote(export_file.name)}?download=1",
+                        "filename": target_filename
+                    })
+
+                dest_path = dest_result[0]
+                if not dest_path:
+                    return self.send_json({"ok": False, "cancelled": True})
+
+                dest_ext = os.path.splitext(dest_path)[1].lower()
+                if not dest_ext:
+                    dest_path += f".{ext}"
+                elif dest_ext != f".{ext}" and dest_path.lower().endswith(f".{ext}.pdf"):
+                    dest_path = dest_path[:-4]
+
+                import shutil
+                os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+                shutil.copy2(str(export_file), dest_path)
+                return self.send_json({
+                    "ok": True,
+                    "path": dest_path,
+                    "filename": os.path.basename(dest_path),
+                    "size_bytes": os.path.getsize(dest_path)
+                })
 
             if path == "/api/ai/enhance-selection":
                 selected_text = payload.get("selected_text", "").strip()
@@ -9304,24 +10483,209 @@ Return ONLY the revised replacement text without conversational preamble, introd
                     return self.send_json({"ok": True, "enhanced_text": enhanced})
                 return self.send_json({"ok": False, "error": res.get("error", "AI enhancement failed")})
 
-            if path == "/api/ai/save-to-client":
+            if path == "/api/ai/revise-document-area" or (path.startswith("/api/ai/artifacts/") and path.endswith("/revise-area")):
+                art_id = str(payload.get("artifact_id") or "").strip()
+                if not art_id and path.startswith("/api/ai/artifacts/"):
+                    art_id = path.split("/")[4]
+
+                selected_text = str(payload.get("selected_text") or payload.get("selected_area") or "").strip()
+                section_heading = str(payload.get("section_heading") or "").strip()
+                instruction = str(payload.get("instruction") or "").strip()
+                full_document = str(payload.get("full_document") or payload.get("full_content") or payload.get("source_content") or "").strip()
+                title = str(payload.get("title") or "").strip()
+                file_type = str(payload.get("file_type") or payload.get("format") or "").strip().lower()
+                client_name = payload.get("client_name")
+                client_file_no = payload.get("client_file_no")
+                conversation_id = payload.get("conversation_id")
+                citations = payload.get("citations") or []
+
+                orig_art = None
+                if art_id:
+                    with db() as con:
+                        row = con.execute("SELECT * FROM ai_artifacts WHERE artifact_id = ?", (art_id,)).fetchone()
+                        if row:
+                            orig_art = dict(row)
+                            if not title:
+                                title = orig_art.get("title") or orig_art.get("filename") or "Revised Statutory Document"
+                            if not file_type:
+                                file_type = (orig_art.get("artifact_type") or "pdf").lower()
+                            if not client_file_no:
+                                client_file_no = orig_art.get("client_file_no")
+                            if not conversation_id:
+                                conversation_id = orig_art.get("conversation_id")
+                            try:
+                                meta = json.loads(orig_art.get("metadata_json") or "{}")
+                                if not full_document and meta.get("source_content"):
+                                    full_document = meta.get("source_content", "")
+                            except Exception:
+                                pass
+
+                if not instruction:
+                    return self.send_json({"ok": False, "error": "Revision instruction is required."}, 400)
+                if not selected_text and not full_document:
+                    return self.send_json({"ok": False, "error": "Selected area or document content is required."}, 400)
+                if not selected_text:
+                    selected_text = full_document[:1200]
+                if not full_document:
+                    full_document = selected_text
+                if not title:
+                    title = "Revised Statutory Document"
+                if not file_type:
+                    file_type = "pdf"
+
+                revise_prompt = f"""You are VS AI, an authoritative Chartered Accountant and Legal Practice Copilot.
+The user is previewing a generated document ("{title}") and has selected a specific section/area to revise.
+
+USER REVISION INSTRUCTION:
+"{instruction}"
+
+SELECTED SECTION / AREA TO REVISE:
+\"\"\"{selected_text}\"\"\"
+
+FULL DOCUMENT CONTEXT (for consistency and numbering):
+\"\"\"{full_document[:4500]}\"\"\"
+
+TASK:
+1. Rewrite ONLY the selected section/area to faithfully incorporate the user's instruction ("{instruction}").
+2. Preserve all markdown headings (e.g., ## Heading), table syntax (| Col 1 | Col 2 |), and statutory rigor.
+3. Strictly NEVER invent or assume unstated figures or credentials; apply the user's exact instruction.
+4. Return ONLY the revised section replacement text without any conversational preamble or code fences."""
+
+                ai_res = ai_engine.gemini.generate_content(prompt=revise_prompt, temperature=0.2)
+                if ai_res.get("ok") and ai_res.get("text", "").strip():
+                    revised_section = vs_ai_engine.clean_model_response(ai_res.get("text", "").strip())
+                else:
+                    # Deterministic surgical revision fallback when offline or rate-limited
+                    heading_prefix = ""
+                    body_lines = []
+                    for ln in selected_text.splitlines():
+                        if not heading_prefix and ln.strip().startswith("#"):
+                            heading_prefix = ln.strip()
+                        else:
+                            body_lines.append(ln)
+                    # Check if user asked to replace a number/amount or term
+                    rep_match = re.search(r'(?:change|replace|update)\s+(.+?)\s+(?:to|with)\s+(.+)', instruction, re.I)
+                    updated_body = "\n".join(body_lines).strip()
+                    if rep_match and rep_match.group(1).strip() in selected_text:
+                        revised_section = selected_text.replace(rep_match.group(1).strip(), rep_match.group(2).strip())
+                    else:
+                        if heading_prefix:
+                            revised_section = f"{heading_prefix}\n{updated_body}\n\n**Revised Note / Submission**: {instruction}"
+                        else:
+                            revised_section = f"{selected_text}\n\n**Revised Note / Submission**: {instruction}"
+
+                # Splice revised_section into full_document
+                if selected_text in full_document:
+                    updated_document = full_document.replace(selected_text, revised_section, 1)
+                elif section_heading and section_heading in full_document:
+                    secs = vs_ai_doc_generator.extract_selectable_sections(full_document)
+                    rebuilt_parts = []
+                    replaced = False
+                    for s in secs:
+                        if not replaced and (s.get("heading") == section_heading or selected_text.strip() in s.get("content", "")):
+                            rebuilt_parts.append(revised_section)
+                            replaced = True
+                        else:
+                            rebuilt_parts.append(s.get("content", ""))
+                    updated_document = "\n\n".join(rebuilt_parts) if replaced else (full_document + "\n\n" + revised_section)
+                else:
+                    updated_document = full_document + "\n\n" + revised_section
+
+                rev_title = title if "(Revised)" in title else f"{title} (Revised)"
+                if file_type in ("xlsx", "excel", "gsheet"):
+                    new_art = vs_ai_doc_generator.export_ai_spreadsheet_xlsx(
+                        title=rev_title,
+                        content=updated_document,
+                        client_name=client_name,
+                        user_id=user,
+                        conversation_id=conversation_id,
+                        client_file_no=client_file_no
+                    )
+                elif file_type in ("docx", "word", "gdoc"):
+                    new_art = vs_ai_doc_generator.export_ai_document_docx(
+                        title=rev_title,
+                        content=updated_document,
+                        citations=citations,
+                        client_name=client_name,
+                        user_id=user,
+                        conversation_id=conversation_id,
+                        client_file_no=client_file_no
+                    )
+                else:
+                    new_art = vs_ai_doc_generator.export_ai_opinion_pdf(
+                        title=rev_title,
+                        content=updated_document,
+                        citations=citations,
+                        client_name=client_name,
+                        user_id=user,
+                        conversation_id=conversation_id,
+                        client_file_no=client_file_no
+                    )
+
+                if new_art.get("ok"):
+                    new_art["export_url"] = f"/api/ai/exports/{new_art['filename']}"
+                    if not new_art.get("download_url"):
+                        new_art["download_url"] = new_art["export_url"]
+                    if not new_art.get("preview_url"):
+                        new_art["preview_url"] = f"/api/ai/artifacts/{new_art.get('artifact_id')}/preview"
+
+                return self.send_json({
+                    "ok": True,
+                    "artifact": new_art,
+                    "artifact_id": new_art.get("artifact_id"),
+                    "filename": new_art.get("filename"),
+                    "file_path": new_art.get("file_path") or new_art.get("path"),
+                    "format": new_art.get("format", file_type or "pdf"),
+                    "orientation": new_art.get("orientation", "portrait"),
+                    "size_kb": new_art.get("size_kb"),
+                    "download_url": new_art.get("download_url"),
+                    "preview_url": new_art.get("preview_url"),
+                    "revised_section": revised_section,
+                    "revised_content": updated_document,
+                    "updated_content": updated_document,
+                    "sections": vs_ai_doc_generator.extract_selectable_sections(updated_document)
+                })
+
+            if path == "/api/ai/save-to-client" or (path.startswith("/api/ai/artifacts/") and path.endswith("/save-to-client")):
+                art_id = None
+                if path.startswith("/api/ai/artifacts/"):
+                    art_id = path.split("/")[4]
+
                 filename = payload.get("filename", "").strip()
                 client_file_no = payload.get("client_file_no", "").strip()
                 target_folder = payload.get("folder", "General").strip() or "General"
                 doc_title = payload.get("document_name") or filename
-                ext = os.path.splitext(filename)[1].lower() or ".pdf"
+
+                source_file = None
+                if art_id:
+                    with db() as con:
+                        art = con.execute("SELECT * FROM ai_artifacts WHERE artifact_id = ?", (art_id,)).fetchone()
+                    if art:
+                        source_file = Path(art["storage_path"]).resolve()
+                        if not filename:
+                            filename = art["filename"]
+                        if not doc_title:
+                            doc_title = art["title"] or art["filename"]
+
+                if not source_file:
+                    fname = os.path.basename(filename)
+                    cand1 = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
+                    if cand1.is_file():
+                        source_file = cand1
+
+                if not source_file or not source_file.is_file():
+                    return self.send_json({"ok": False, "error": f"File '{filename}' not found for client saving"}, 404)
+
+                ext = os.path.splitext(source_file.name)[1].lower() or ".pdf"
                 clean_title = re.sub(r'\.(docx|xlsx|pdf|txt)+$', '', doc_title, flags=re.I)
                 doc_title = f"{clean_title}{ext}"
-                fname = os.path.basename(filename)
-                export_file = (Path(APP_ROOT) / "data" / "ai_exports" / fname).resolve()
-                if not export_file.is_file():
-                    return self.send_json({"ok": False, "error": f"Exported file '{fname}' not found"}, 404)
+
                 ctx = self.get_auth_context()
                 actor = ctx["user_id"] if ctx else "Host"
                 doc_payload = {
                     "client_file_no": client_file_no,
                     "document_name": doc_title,
-                    "source_local_path": str(export_file),
+                    "source_local_path": str(source_file),
                     "service": target_folder,
                     "target_folder": target_folder,
                     "period": "General",
@@ -9329,6 +10693,10 @@ Return ONLY the revised replacement text without conversational preamble, introd
                     "save_drive": False
                 }
                 res = save_document(doc_payload, actor=actor)
+                if art_id:
+                    with db() as con:
+                        con.execute("UPDATE ai_artifacts SET status = 'saved_to_client', client_file_no = ?, updated_at = ? WHERE artifact_id = ?", (client_file_no, now(), art_id))
+                        con.commit()
                 return self.send_json({"ok": True, "saved": res})
 
             if path == "/api/ai/conversations":
@@ -9385,6 +10753,7 @@ Return ONLY the revised replacement text without conversational preamble, introd
                 generation_mode = (payload.get("generation_mode") or "").strip().lower()
                 attachments = payload.get("attachments", [])
                 client_ctx = payload.get("client_context")
+                clarif_answers = payload.get("clarification_answers")
 
                 if not prompt:
                     return self.send_json({"error": "Prompt cannot be empty"}, 400)
@@ -9410,7 +10779,7 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         con.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (t_now, cid))
 
                     user_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
-                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only, "generation_mode": generation_mode})
+                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only, "generation_mode": generation_mode, "clarification_answers": clarif_answers})
                     con.execute("""
                         INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                         VALUES (?, ?, 'user', ?, ?, ?)
@@ -9420,10 +10789,11 @@ Return ONLY the revised replacement text without conversational preamble, introd
                     history = [dict(r) for r in hist_rows]
                     con.commit()
 
+                self.close_connection = True
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-cache")
-                self.send_header("Connection", "keep-alive")
+                self.send_header("Connection", "close")
                 self.send_header("X-Accel-Buffering", "no")
                 self.send_cors_headers()
                 self.end_headers()
@@ -9448,7 +10818,8 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         attachments=attachments,
                         client_context=client_ctx,
                         history=history,
-                        generation_mode=generation_mode
+                        generation_mode=generation_mode,
+                        clarification_answers=clarif_answers
                     ):
                         ev_type = ev.get("type")
                         if ev_type == "meta":
@@ -9457,6 +10828,8 @@ Return ONLY the revised replacement text without conversational preamble, introd
                             send_sse(ev)
                         elif ev_type == "token":
                             asst_text += ev.get("delta", "")
+                            send_sse(ev)
+                        elif ev_type == "phase":
                             send_sse(ev)
                         elif ev_type == "done":
                             asst_model = ev.get("model", asst_model)
@@ -9472,24 +10845,15 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         "provider": "VS AI"
                     })
                     auto_title = title
+                    # 1. Save assistant message immediately in a dedicated fast transaction
                     with db() as con:
                         con.execute("""
                             INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                             VALUES (?, ?, 'assistant', ?, ?, ?)
                         """, (asst_msg_id, cid, asst_text, asst_meta, time.strftime("%Y-%m-%d %H:%M:%S")))
-                        
-                        conv_row = con.execute("SELECT title FROM ai_conversations WHERE id = ?", (cid,)).fetchone()
-                        msg_count = con.execute("SELECT count(*) as c FROM ai_messages WHERE conversation_id = ?", (cid,)).fetchone()["c"]
-                        # Auto-rename if first assistant message or generic title
-                        if conv_row and (msg_count <= 2 or conv_row["title"].startswith("New Chat") or "\n" in conv_row["title"] or conv_row["title"].endswith("...") or len(conv_row["title"]) < 5):
-                            refined = ai_engine.generate_chat_title(prompt, asst_text)
-                            if refined:
-                                auto_title = refined
-                                con.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (auto_title, time.strftime("%Y-%m-%d %H:%M:%S"), cid))
-                        elif conv_row:
-                            auto_title = conv_row["title"]
                         con.commit()
 
+                    # 2. Immediately send done event to client (<50ms) without waiting on Gemini
                     send_sse({
                         "type": "done",
                         "conversation_id": cid,
@@ -9499,6 +10863,18 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         "model": asst_model,
                         "auto_title": auto_title
                     })
+
+                    # 3. Offload chat auto-renaming to background worker thread (OUTSIDE of SQLite transaction)
+                    try:
+                        with db() as con:
+                            conv_row = con.execute("SELECT title FROM ai_conversations WHERE id = ?", (cid,)).fetchone()
+                            msg_count = con.execute("SELECT count(*) as c FROM ai_messages WHERE conversation_id = ?", (cid,)).fetchone()["c"]
+                        if conv_row and (msg_count <= 2 or conv_row["title"].startswith("New Chat") or "\n" in conv_row["title"] or conv_row["title"].endswith("...") or len(conv_row["title"]) < 5):
+                            ctx = self.get_auth_context()
+                            actor = ctx["user_id"] if ctx else "User"
+                            ai_job_queue.enqueue("AI_TITLE_GENERATION", _bg_generate_chat_title, cid, prompt, asst_text, user_id=actor)
+                    except Exception as bg_err:
+                        logging.debug("Could not enqueue title generation: %s", bg_err)
                 except (BrokenPipeError, ConnectionResetError):
                     logging.info("SSE client disconnected")
                 except Exception as stream_err:
@@ -9516,6 +10892,7 @@ Return ONLY the revised replacement text without conversational preamble, introd
                 source_only = bool(payload.get("source_only", False))
                 attachments = payload.get("attachments", [])
                 client_ctx = payload.get("client_context")
+                clarif_answers = payload.get("clarification_answers")
 
                 if not prompt:
                     return self.send_json({"error": "Prompt cannot be empty"}, 400)
@@ -9537,7 +10914,7 @@ Return ONLY the revised replacement text without conversational preamble, introd
                         con.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (t_now, cid))
 
                     user_msg_id = f"msg_{uuid.uuid4().hex[:10]}"
-                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only})
+                    user_meta = json.dumps({"attachments": attachments, "scope": scope, "source_only": source_only, "clarification_answers": clarif_answers})
                     con.execute("""
                         INSERT INTO ai_messages (id, conversation_id, role, content, meta_json, created_at)
                         VALUES (?, ?, 'user', ?, ?, ?)
@@ -9555,7 +10932,8 @@ Return ONLY the revised replacement text without conversational preamble, introd
                     source_only=source_only,
                     attachments=attachments,
                     client_context=client_ctx,
-                    history=history
+                    history=history,
+                    clarification_answers=clarif_answers
                 )
 
                 if res.get("ok"):
@@ -9617,7 +10995,18 @@ Return ONLY the revised replacement text without conversational preamble, introd
             return self.send_json({"error": str(e)}, 500)
 
     def handle_ai_tool_call(self, tool: str, payload: dict):
+        ctx = self.get_auth_context()
+        user_id = ctx.get("user_id") if ctx else "User"
+        role = ctx.get("role") if ctx else "staff"
+        client_file_no = payload.get("client_file_no")
+
         file_path = payload.get("file_path", "")
+        if tool in ("summarize-pdf", "extract-tables", "reconcile-excel"):
+            is_valid, resolved_path, err_msg = secure_resolve_ai_path(file_path, client_file_no=client_file_no, user_id=user_id, role=role)
+            if not is_valid:
+                return self.send_json({"ok": False, "error": err_msg}, 403)
+            file_path = resolved_path
+
         text = payload.get("text", "")
         tone = payload.get("tone", "formal")
 
@@ -9740,6 +11129,229 @@ Return ONLY the revised replacement text without conversational preamble, introd
             logging.exception("AI DELETE error")
             return self.send_json({"error": str(e)}, 500)
 
+    def handle_automation_get(self, path: str):
+        try:
+            # 1. Connection status
+            if path == "/api/automation/status":
+                query = parse_qs(urlparse(self.path).query)
+                force = query.get("force", ["0"])[0] in ("1", "true")
+                status = automation_engine.tally_client.get_connection_status(force_refresh=force)
+                return self.send_json({"ok": True, "status": status})
+
+            # 2. List companies
+            if path == "/api/automation/companies":
+                res = automation_engine.tally_client.list_companies()
+                return self.send_json(res)
+
+            # 3. Retrieve company masters
+            if path.startswith("/api/automation/masters"):
+                query = parse_qs(urlparse(self.path).query)
+                comp = query.get("company", [None])[0]
+                res = automation_engine.tally_client.get_company_masters(comp)
+                return self.send_json(res)
+
+            # 4. Get import session summary
+            if path.startswith("/api/automation/sessions/") and not "/transactions" in path and not "/validate" in path:
+                sess_id = path.split("/")[4]
+                res = automation_engine.get_import_session(sess_id)
+                return self.send_json(res)
+
+            # 5. Get session transactions with search & filtering
+            if path.startswith("/api/automation/sessions/") and path.endswith("/transactions"):
+                sess_id = path.split("/")[4]
+                query = parse_qs(urlparse(self.path).query)
+                search = query.get("search", [None])[0]
+                dir_filter = query.get("direction", [None])[0]
+                status_filter = query.get("status", [None])[0]
+                limit = int(query.get("limit", ["1000"])[0])
+                offset = int(query.get("offset", ["0"])[0])
+                res = automation_engine.get_session_transactions(
+                    sess_id, search=search, filter_direction=dir_filter,
+                    filter_status=status_filter, limit=limit, offset=offset
+                )
+                return self.send_json(res)
+
+            # 6. Validate session for posting
+            if path.startswith("/api/automation/sessions/") and path.endswith("/validate"):
+                sess_id = path.split("/")[4]
+                query = parse_qs(urlparse(self.path).query)
+                is_edu = query.get("is_educational_mode", ["true"])[0].lower() in ("true", "1")
+                res = automation_engine.validate_session_for_posting(sess_id, is_educational_mode=is_edu)
+                return self.send_json(res)
+
+            # 7. List mapping rules for company
+            if path == "/api/automation/rules":
+                query = parse_qs(urlparse(self.path).query)
+                company = query.get("company", [""])[0]
+                with db() as con:
+                    con.row_factory = sqlite3.Row
+                    rows = con.execute("SELECT * FROM automation_mapping_rules WHERE company_name=? ORDER BY priority ASC", (company,)).fetchall()
+                return self.send_json({"ok": True, "rules": [dict(r) for r in rows]})
+
+            # 8. Bank accounts & ledgers for company
+            if path == "/api/automation/bank-accounts":
+                query = parse_qs(urlparse(self.path).query)
+                company = query.get("company", [""])[0]
+                bank_ledgers = automation_engine.tally_client.get_bank_ledgers(company)
+                masters = automation_engine.tally_client.get_company_masters(company)
+                return self.send_json({
+                    "ok": True,
+                    "company": company,
+                    "bank_accounts": bank_ledgers,
+                    "all_ledgers": masters.get("ledgers", [])
+                })
+
+            # 9. Ask Tally message history
+            if path.startswith("/api/automation/ask-tally/sessions/") and path.endswith("/messages"):
+                sess_id = path.split("/")[5]
+                with db() as con:
+                    con.row_factory = sqlite3.Row
+                    rows = con.execute("SELECT * FROM automation_ask_tally_messages WHERE session_id=? ORDER BY created_at ASC", (sess_id,)).fetchall()
+                return self.send_json({"ok": True, "messages": [dict(r) for r in rows]})
+
+            return self.send_json({"error": "Unknown Automation GET endpoint"}, 404)
+        except Exception as e:
+            logging.exception("Automation GET error")
+            return self.send_json({"error": str(e)}, 500)
+
+    def handle_automation_post(self, path: str, payload: dict):
+        try:
+            # 0. Launch TallyPrime if installed
+            if path == "/api/automation/tally/launch":
+                res = automation_engine.tally_client.launch_tally()
+                return self.send_json(res)
+
+            # 1. Connect / set active company
+            if path == "/api/automation/select-company":
+                company_name = str(payload.get("company_name", "")).strip()
+                res = automation_engine.tally_client.set_active_company(company_name)
+                return self.send_json(res)
+
+            # 2. Upload / Import statement file
+            if path == "/api/automation/upload-statement":
+                # Expects base64 or file_path in payload
+                company_name = str(payload.get("company_name", "")).strip()
+                filename = str(payload.get("filename", "")).strip()
+                bank_ledger = str(payload.get("bank_account_ledger", "")).strip()
+                fy = str(payload.get("financial_year", "")).strip()
+                file_b64 = payload.get("file_base64", "")
+                existing_path = payload.get("file_path", "")
+
+                if not company_name:
+                    return self.send_json({"ok": False, "error": "Company name is required"}, 400)
+                if not filename:
+                    return self.send_json({"ok": False, "error": "Filename is required"}, 400)
+
+                target_file_path = None
+                if file_b64:
+                    raw_bytes = base64.b64decode(file_b64)
+                    uploads_dir = DATA_ROOT / "automation_uploads"
+                    uploads_dir.mkdir(exist_ok=True)
+                    safe_fname = f"{uuid.uuid4().hex[:8]}_{re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)}"
+                    target_file_path = uploads_dir / safe_fname
+                    target_file_path.write_bytes(raw_bytes)
+                elif existing_path and Path(existing_path).exists():
+                    target_file_path = Path(existing_path)
+                else:
+                    return self.send_json({"ok": False, "error": "Statement file payload (file_base64 or file_path) is required"}, 400)
+
+                res = automation_engine.create_import_session(
+                    company_name=company_name,
+                    source_filename=filename,
+                    file_path=target_file_path,
+                    bank_account_ledger=bank_ledger,
+                    financial_year=fy
+                )
+                return self.send_json(res)
+
+            # 3. Bulk assign ledger
+            if path == "/api/automation/bulk-assign":
+                t_ids = payload.get("transaction_ids", [])
+                ledger = payload.get("ledger_name", "")
+                vch_type = payload.get("voucher_type")
+                save_rule = bool(payload.get("save_as_rule", False))
+                rule_pattern = payload.get("rule_pattern")
+                company = payload.get("company_name")
+                res = automation_engine.bulk_assign_ledger(
+                    transaction_ids=t_ids,
+                    ledger_name=ledger,
+                    voucher_type=vch_type,
+                    save_as_rule=save_rule,
+                    rule_pattern=rule_pattern,
+                    company_name=company
+                )
+                return self.send_json(res)
+
+            # 4. Trigger VS AI suggestions for unassigned
+            if path == "/api/automation/suggest-ledgers":
+                sess_id = payload.get("session_id", "")
+                company = payload.get("company_name", "")
+                auto_assign = bool(payload.get("auto_assign", False))
+                res = automation_engine.suggest_ledgers_with_gemini(sess_id, company, auto_assign=auto_assign)
+                return self.send_json(res)
+
+            # 4b. Accept suggested ledgers
+            if path == "/api/automation/accept-suggestions":
+                sess_id = payload.get("session_id", "")
+                t_ids = payload.get("transaction_ids")
+                res = automation_engine.accept_suggested_ledgers(sess_id, t_ids)
+                return self.send_json(res)
+
+            # 4c. Reject suggested ledgers
+            if path == "/api/automation/reject-suggestions":
+                sess_id = payload.get("session_id", "")
+                t_ids = payload.get("transaction_ids")
+                res = automation_engine.reject_suggested_ledgers(sess_id, t_ids)
+                return self.send_json(res)
+
+            # 5. Update session details (e.g. Bank Account Ledger)
+            if path == "/api/automation/update-session":
+                sess_id = payload.get("session_id", "")
+                bank_ledger = payload.get("bank_account_ledger")
+                fy = payload.get("financial_year")
+                with db() as con:
+                    if bank_ledger:
+                        con.execute("UPDATE automation_import_sessions SET bank_account_ledger=?, updated_at=? WHERE session_id=?", (bank_ledger, now(), sess_id))
+                    if fy:
+                        con.execute("UPDATE automation_import_sessions SET financial_year=?, updated_at=? WHERE session_id=?", (fy, now(), sess_id))
+                return self.send_json({"ok": True, "session_id": sess_id})
+
+            # 6. Post approved vouchers to TallyPrime (supports chunking, idempotency, and EDU validation)
+            if path == "/api/automation/post-vouchers":
+                sess_id = payload.get("session_id", "")
+                batch_size = int(payload.get("batch_size", 50))
+                run_all = bool(payload.get("run_all", True))
+                is_edu = bool(payload.get("is_educational_mode", True))
+                remap_edu = bool(payload.get("remap_edu_dates", False))
+                confirmed_remap = bool(payload.get("user_confirmed_remap", False))
+                res = automation_engine.post_approved_session_to_tally(
+                    sess_id,
+                    batch_size=batch_size,
+                    run_all=run_all,
+                    is_educational_mode=is_edu,
+                    remap_edu_dates=remap_edu,
+                    user_confirmed_remap=confirmed_remap
+                )
+                return self.send_json(res)
+
+            # 7. Ask Tally query
+            if path == "/api/automation/ask-tally":
+                sess_id = payload.get("session_id") or f"ask_{uuid.uuid4().hex[:10]}"
+                company = payload.get("company_name", "")
+                query = payload.get("query", "")
+                # Create session if not existing
+                with db() as con:
+                    con.execute("INSERT OR IGNORE INTO automation_ask_tally_sessions (session_id, company_name, session_title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                                (sess_id, company, query[:40], now(), now()))
+                res = automation_engine.process_ask_tally_query(sess_id, company, query)
+                res["session_id"] = sess_id
+                return self.send_json(res)
+
+            return self.send_json({"error": "Unknown Automation POST endpoint"}, 404)
+        except Exception as e:
+            logging.exception("Automation POST error")
+            return self.send_json({"error": str(e)}, 500)
+
     def do_DELETE(self):
         try:
             path = urlparse(self.path).path
@@ -9835,13 +11447,15 @@ def start_server_background(port: int = None, host: str = "0.0.0.0"):
     _BACKEND_STATE = "READY"
     threading.Thread(target=main_server.serve_forever, daemon=True, name="BackendServer").start()
     print(f"VS Database in-process server started on port {PORT}")
-    try:
-        eff_uri = get_effective_google_redirect_uri()
-        p_port = urlparse(eff_uri).port
-        if p_port and p_port != PORT:
-            ensure_oauth_callback_bridge(p_port)
-    except Exception:
-        pass
+    def _launch_oauth_bridge_bg():
+        try:
+            eff_uri = get_effective_google_redirect_uri()
+            p_port = urlparse(eff_uri).port
+            if p_port and p_port != PORT:
+                ensure_oauth_callback_bridge(p_port)
+        except Exception:
+            pass
+    threading.Thread(target=_launch_oauth_bridge_bg, daemon=True, name="OAuthBridgeLauncher").start()
     return main_server
 
 

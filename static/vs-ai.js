@@ -7,6 +7,7 @@
   'use strict';
 
   let currentConvId = null;
+  let currentConversationTitle = null;
   let activeScope = 'All Knowledge';
   let sourceOnly = false;
   let currentAttachments = [];
@@ -23,6 +24,7 @@
   const MAX_AUTO_RETRIES = 3;
   let allConversationsCache = [];
   let activeGenerationMode = null;
+  let pendingClarificationSubmission = null;
 
   const GENERATION_MODE_CONFIG = {
     pdf: {
@@ -300,10 +302,6 @@
                 <svg class="i" aria-hidden="true"><use href="#clip"/></svg>
                 <span>Attach</span>
               </button>
-              <button type="button" class="btn" id="vs-ai-btn-browse-client-docs" title="Reference client file vault">
-                <svg class="i" aria-hidden="true"><use href="#folder"/></svg>
-                <span>Client files</span>
-              </button>
               <span class="sp" style="flex:1"></span>
               <small class="muted">Enter to send · Shift+Enter for new line</small>
               <button type="button" class="btn p" id="vs-ai-btn-send" title="Send statutory inquiry" disabled>
@@ -513,19 +511,6 @@
       filePicker.addEventListener('change', handleFileSelected);
     }
 
-    const browseClientBtn = document.querySelector('#vs-ai-btn-browse-client-docs');
-    if (browseClientBtn) {
-      browseClientBtn.addEventListener('click', () => {
-        if (promptInput) {
-          promptInput.value += (promptInput.value ? ' ' : '') + '[Referencing client vault] ';
-          promptInput.focus();
-          promptInput.style.height = 'auto';
-          promptInput.style.height = Math.min(promptInput.scrollHeight, 140) + 'px';
-          updateSendButtonState();
-        }
-      });
-    }
-
     // Search History Live Filtering
     const searchHistoryInput = document.querySelector('#vs-ai-search-history');
     if (searchHistoryInput) {
@@ -653,53 +638,43 @@
         <button type="button" class="btn ib tip btn-regenerate" data-t="Regenerate answer" aria-label="Regenerate">
           <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
         </button>
-        <button type="button" class="btn tip btn-open-canvas" data-t="Edit & Enhance in Document Canvas" aria-label="Edit in Canvas" style="font-size:12px;gap:5px;background:#f0fdf4;border-color:#bbf7d0;color:#166534;">
-          <svg class="i" aria-hidden="true" style="width:13px;height:13px;"><use href="#setup"/></svg>
-          <span>Canvas</span>
-        </button>
-        
-        <!-- DIRECT ONE-CLICK GENERATION & DOWNLOAD BUTTONS -->
-        <button type="button" class="btn tip vs-ai-btn-direct-export vs-ai-btn-direct-pdf btn-direct-pdf" data-t="Generate & Preview PDF" aria-label="Direct PDF">
-          <span>📑 PDF</span>
-        </button>
-        <button type="button" class="btn tip vs-ai-btn-direct-export vs-ai-btn-direct-excel btn-direct-excel" data-t="Generate & Download Excel (.xlsx)" aria-label="Direct Excel">
-          <span>📊 Excel</span>
-        </button>
-        <button type="button" class="btn tip vs-ai-btn-direct-export vs-ai-btn-direct-word btn-direct-word" data-t="Generate & Download Word (.docx)" aria-label="Direct Word">
-          <span>📄 Word</span>
-        </button>
-
-        <div class="vs-ai-export-dropdown-wrap" style="position:relative;display:inline-block;">
-          <button type="button" class="btn tip secondary btn-export-dropdown-toggle" data-t="More Export & Print Options" aria-label="More" style="font-size:12px;gap:4px;">
-            <span>More ▾</span>
-          </button>
-          <div class="vs-ai-export-menu" style="display:none;">
-            <button type="button" class="vs-ai-export-item export-opt-copy">
-              <span class="export-icon">📋</span>
-              <div class="export-text">
-                <div class="export-title">Copy Formatted Text</div>
-              </div>
-            </button>
-            <button type="button" class="vs-ai-export-item export-opt-print">
-              <span class="export-icon">🖨️</span>
-              <div class="export-text">
-                <div class="export-title">Print Document</div>
-              </div>
-            </button>
-          </div>
-        </div>
       </div>
     `;
   }
 
+  function extractExecutiveChatSummary(content, cleanHeading, formatLabel) {
+    if (content) {
+      const stripped = content
+        .replace(/```[\s\S]*?```/gi, '')
+        .replace(/^\*\*Artifact Generated\*\*:.*$/gim, '')
+        .trim();
+      const lines = stripped.split('\n').map(l => l.trim()).filter(Boolean);
+      const summaryLines = [];
+      for (const l of lines) {
+        if (l.startsWith('#') || l.startsWith('|') || l.startsWith('```')) {
+          if (summaryLines.length > 0) break;
+          continue;
+        }
+        if (/^(?:[-*]|\d+\.)\s+/.test(l) && summaryLines.length > 0) break;
+        summaryLines.push(l);
+        if (summaryLines.join(' ').length >= 160 || summaryLines.length >= 2) break;
+      }
+      if (summaryLines.length > 0) {
+        return summaryLines.join(' ');
+      }
+    }
+    return `Your requested ${formatLabel || 'document'} "${cleanHeading}" has been generated with full statutory analysis and structured formatting. Use the artifact card below to download or save it to a client.`;
+  }
+
   function extractCleanDocTitle(content, fallbackTitle) {
     if (content) {
-      const lines = content.split('\n');
-      for (let i = 0; i < Math.min(lines.length, 6); i++) {
+      const stripped = content.replace(/```[\s\S]*?```/gi, '');
+      const lines = stripped.split('\n');
+      for (let i = 0; i < Math.min(lines.length, 25); i++) {
         const l = lines[i].trim();
         if (l.startsWith('#')) {
           let clean = l.replace(/^[#\s*]+/, '').replace(/[*_`]/g, '').trim();
-          clean = clean.replace(/^\d+\.\s*/, '').replace(/[:\-–—\\/]+$/, '').trim();
+          clean = clean.replace(/^(?:sheet\s*\d*\s*[:\-–—]\s*|\d+\.\s*)/i, '').replace(/[:\-–—\\/]+$/, '').trim();
           if (clean.length > 3 && clean.length < 65 && !clean.toLowerCase().startsWith('table') && !clean.toLowerCase().startsWith('note') && !clean.toLowerCase().startsWith('disclaimer')) {
             return clean;
           }
@@ -712,8 +687,8 @@
       if (low.includes('pdf') && (low.includes('generate') || low.includes('can you') || low.includes('create') || low.includes('export') || low.includes('make') || low.includes('download'))) {
         return 'PDF Generation and Document Export';
       }
-      if (low.includes('excel') || low.includes('spreadsheet') || low.includes('xlsx')) {
-        return 'Excel Spreadsheet Generation';
+      if (low.includes('excel') || low.includes('ex cel') || low.includes('exel') || low.includes('spreadsheet') || low.includes('xlsx')) {
+        return 'Excel Spreadsheet Workbook';
       }
       if (low.includes('word') || low.includes('docx')) {
         return 'Word Document Drafting';
@@ -736,102 +711,142 @@
 
     const cleanHeading = extractCleanDocTitle(content, title);
 
-    // Direct Inbuilt Generated File Card
-    const pLow = (title || lastSentPrompt || '').toLowerCase();
-    const isTableData = content.includes('| ---') || content.includes('|:---') || content.includes('|---|') || (content.includes('|') && content.split('\n').filter(l => l.includes('|')).length >= 3);
-    const hasActiveMode = Boolean(activeGenerationMode);
-    const wantsPdf = activeGenerationMode === 'pdf' || pLow.includes('pdf');
-    const wantsExcel = activeGenerationMode === 'excel' || activeGenerationMode === 'gsheet' || pLow.includes('excel') || pLow.includes('spreadsheet') || pLow.includes('sheet') || pLow.includes('xlsx');
-    const wantsWord = activeGenerationMode === 'word' || activeGenerationMode === 'docs' || pLow.includes('word') || pLow.includes('doc') || pLow.includes('docx');
-    const wantsFile = hasActiveMode || wantsPdf || wantsExcel || wantsWord || pLow.includes('generate') || pLow.includes('create') || pLow.includes('export');
+    // Do not render a document artifact card on a clarification-question turn
+    const hasQuestionBlock = Boolean(
+      /```question[\s\S]*?```/i.test(content || '') ||
+      row.querySelector('.vs-ai-question-box') ||
+      row.querySelector('.vs-ai-interactive-question-box')
+    );
 
-    if (wantsFile || isTableData) {
-      let existingCard = row.querySelector('.vs-ai-direct-file-card');
-      if (!existingCard) {
+    const pLow = (title || lastSentPrompt || '').toLowerCase();
+    const convTitleLow = (currentConversationTitle || '').toLowerCase();
+    const combinedContextLow = `${pLow} ${convTitleLow}`;
+    const contentHeadLow = (content || '').slice(0, 1600).toLowerCase();
+    const contentFullLow = (content || '').toLowerCase();
+    const hasActiveMode = Boolean(activeGenerationMode);
+    const hasReportVerb = /\b(generate|prepare|create|draft|export|download|save|make|build|compile)\b/i.test(combinedContextLow);
+    const explicitGsheet = activeGenerationMode === 'gsheet' || /\b(google\s+sheet|gsheet)\b/i.test(combinedContextLow);
+    const explicitGdoc = activeGenerationMode === 'docs' || /\b(google\s+doc|gdoc)\b/i.test(combinedContextLow);
+    const contentWantsExcel = /\b(excel\s+(?:workbook|spreadsheet|file)|\.xlsx\b|##\s+sheet\s*\d*\s*:)/i.test(contentFullLow);
+    const contentWantsWord = /\b(\.docx\b.*\/api\/ai\/artifacts\/|word\s+document\s+has\s+been)/i.test(contentFullLow);
+    const contentWantsPdf = /\b(\.pdf\b.*\/api\/ai\/artifacts\/)/i.test(contentFullLow);
+    const explicitPdf = activeGenerationMode === 'pdf' || contentWantsPdf ||
+      /\b(export\s+(?:to\s+)?pdf|generate\s+(?:a\s+|an\s+)?pdf|download\s+pdf|create\s+(?:a\s+|an\s+)?pdf|save\s+(?:as\s+)?pdf|as\s+a\s+pdf|in\s+pdf|and\s+pdf|pdf\s+report|\.pdf)\b/i.test(combinedContextLow) ||
+      (hasReportVerb && /\bpdf\b/i.test(combinedContextLow));
+    const explicitExcel = activeGenerationMode === 'excel' || explicitGsheet || contentWantsExcel ||
+      /\b(export\s+(?:to\s+)?excel|generate\s+(?:a\s+|an\s+)?excel|download\s+excel|create\s+(?:a\s+|an\s+)?(?:proper\s+)?ex\s*cel|save\s+(?:as\s+)?excel|in\s+excel|and\s+excel|excel\s+(?:sheet|file|workbook|report|register|schedule|reconciliation)|ex\s*cel\s+file|exel|spreadsheet|\.xlsx|\.xls)\b/i.test(combinedContextLow) ||
+      (hasReportVerb && /\b(excel|ex\s*cel|exel|xlsx|spreadsheet|workbook)\b/i.test(combinedContextLow));
+    const explicitWord = activeGenerationMode === 'word' || explicitGdoc || contentWantsWord ||
+      /\b(export\s+(?:to\s+)?word|generate\s+(?:a\s+|an\s+)?word|download\s+word|create\s+(?:a\s+|an\s+)?word|save\s+(?:as\s+)?word|in\s+word|and\s+word|word\s+(?:file|doc|document|report|reply)|\.docx|\.doc)\b/i.test(combinedContextLow) ||
+      (hasReportVerb && /\b(word|docx)\b/i.test(combinedContextLow));
+    const isFormalNoticeReplyOrDraft = (content || '').length > 320 && (
+      /\b(reply\s+to\s+(?:form\s+|show\s+cause\s+|income\s+tax\s+|gst\s+|statutory\s+)?notice|show\s+cause\s+notice\s+reply|draft\s+(?:a\s+|an\s+|me\s+a\s+|the\s+)?reply|before\s+the\s+(?:assessing|proper|adjudicating)\s+officer|ground-wise\s+reply|submission\s+on\s+merits|drc-01|asmt-10|section\s+148|section\s+143)\b/i.test(`${combinedContextLow} ${contentHeadLow}`)
+    );
+    const wantsFile = !hasQuestionBlock && (hasActiveMode || explicitPdf || explicitExcel || explicitWord || isFormalNoticeReplyOrDraft);
+
+    if (wantsFile) {
+      const requestedFormats = [];
+      if (explicitGsheet) requestedFormats.push('gsheet');
+      else if (explicitExcel) requestedFormats.push('excel');
+      if (explicitGdoc) requestedFormats.push('docs');
+      else if (explicitWord) requestedFormats.push('word');
+      if (explicitPdf) requestedFormats.push('pdf');
+      if (requestedFormats.length === 0) {
+        if (activeGenerationMode) requestedFormats.push(activeGenerationMode);
+        else requestedFormats.push('pdf');
+      }
+
+      const asstBody = row.querySelector('.vs-ai-asst-body');
+      let summaryRendered = false;
+      let insertAfterEl = asstBody;
+
+      requestedFormats.forEach((formatKey) => {
+        if (row.querySelector(`.vs-ai-direct-file-card[data-format-key="${formatKey}"]`)) return;
+
         let fileType = 'pdf';
         let fileExt = 'pdf';
         let fileIcon = '📑';
         let badgeClass = 'pdf';
-        let badgeLabel = 'ReportLab 300 DPI';
-        let typeDesc = 'Direct Statutory PDF';
+        let badgeLabel = 'PDF · 300 DPI';
+        let typeDesc = 'Statutory PDF Document';
 
-        if (activeGenerationMode === 'gsheet') {
+        if (formatKey === 'gsheet') {
           fileType = 'xlsx';
           fileExt = 'xlsx';
-          fileIcon = '📈';
+          fileIcon = '📗';
           badgeClass = 'xlsx';
-          badgeLabel = 'Google Sheet';
-          typeDesc = 'Direct Financial Dataset';
-        } else if (wantsExcel || (isTableData && !wantsPdf && !wantsWord)) {
+          badgeLabel = 'Google Sheets · .xlsx';
+          typeDesc = 'Google Sheets Workbook';
+        } else if (formatKey === 'excel') {
           fileType = 'xlsx';
           fileExt = 'xlsx';
           fileIcon = '📊';
           badgeClass = 'xlsx';
           badgeLabel = 'Excel · .xlsx';
-          typeDesc = 'Direct Financial Spreadsheet';
-        } else if (activeGenerationMode === 'docs') {
+          typeDesc = 'Financial Spreadsheet Workbook';
+        } else if (formatKey === 'docs') {
           fileType = 'docx';
           fileExt = 'docx';
-          fileIcon = '📝';
+          fileIcon = '📘';
           badgeClass = 'docx';
-          badgeLabel = 'Google Docs';
-          typeDesc = 'Structured Legal Draft';
-        } else if (wantsWord) {
+          badgeLabel = 'Google Docs · .docx';
+          typeDesc = 'Google Docs Document';
+        } else if (formatKey === 'word') {
           fileType = 'docx';
           fileExt = 'docx';
           fileIcon = '📄';
           badgeClass = 'docx';
           badgeLabel = 'Word · .docx';
-          typeDesc = 'Direct Executive Document';
+          typeDesc = 'Executive Word Document';
         }
 
-        const safeFilename = cleanHeading.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '.' + fileExt;
+        let baseSlug = cleanHeading.replace(/(\.(docx|xlsx|pdf|txt|csv))+$/gi, '').trim();
+        baseSlug = baseSlug.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'VS_AI_Document';
+        const safeFilename = `${baseSlug}.${fileExt}`;
 
         const card = document.createElement('div');
         card.className = 'vs-ai-direct-file-card';
+        card.setAttribute('data-format-key', formatKey);
         card.innerHTML = `
           <div class="vs-ai-file-icon-box ${badgeClass}">${fileIcon}</div>
           <div class="vs-ai-file-meta-col">
             <div class="vs-ai-file-meta-name" title="${escapeHtml(safeFilename)}">${escapeHtml(safeFilename)}</div>
             <div class="vs-ai-file-meta-sub">
               <span class="vs-ai-file-badge ${badgeClass}">${badgeLabel}</span>
-              <span>${typeDesc}</span>
+              <span class="vs-ai-file-status-text">${typeDesc}</span>
             </div>
           </div>
           <div class="vs-ai-file-actions-row">
-            <button type="button" class="btn secondary btn-sm btn-card-preview" title="Preview Generated Document">
-              <span>👁️ Preview</span>
-            </button>
             <button type="button" class="btn primary btn-sm btn-card-download" title="Download Generated File">
               <svg class="i" style="width:12px;height:12px;margin-right:3px;" aria-hidden="true"><use href="#dl"/></svg>
               <span>Download</span>
             </button>
-            <button type="button" class="btn secondary btn-sm btn-card-canvas" title="Make Changes / Edit in Document Canvas">
-              <span>✏️ Make Changes</span>
+            <button type="button" class="btn secondary btn-sm btn-card-save-client" title="Save to Client Folder">
+              <svg class="i" style="width:12px;height:12px;margin-right:3px;" aria-hidden="true"><use href="#folder"/></svg>
+              <span>Save to Client</span>
             </button>
+            <button type="button" class="btn secondary btn-sm btn-card-preview" title="Preview Document & Select Area to Revise with VS AI">
+              <svg class="i" style="width:12px;height:12px;margin-right:3px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>Preview</span>
+            </button>
+            <a class="btn secondary btn-sm btn-card-open-cloud" href="#" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none;" title="Open in Google Drive">
+              <span>☁️ Open in Drive</span>
+            </a>
           </div>
         `;
 
-        const asstBody = row.querySelector('.vs-ai-asst-body');
-        const isDirectDocRequest = hasActiveMode || wantsPdf || wantsExcel || wantsWord || pLow.includes('generate') || pLow.includes('export') || pLow.includes('sample') || pLow.includes('balance sheet') || pLow.includes('p&l');
-
-        if (asstBody && isDirectDocRequest) {
-          // If file explicitly targeted, position the File Card at the top of the message bubble
-          asstBody.parentNode.insertBefore(card, asstBody);
-
-          // Clean executive confirmation + collapsible details: ONLY give the specific file not the chat answer dump!
-          asstBody.innerHTML = `
-            <div class="vs-ai-file-ready-note">
-              Your requested document <strong>${escapeHtml(cleanHeading)}</strong> has been compiled and is ready for preview, download, or editing in Document Canvas.
-            </div>
-            <details class="vs-ai-doc-outline-details">
-              <summary>
-                <span>📄 View Document Outline & Content</span>
-                <small class="muted" style="margin-left:auto;">Click to expand ▾</small>
-              </summary>
-              <div class="vs-ai-doc-outline-body">${renderMarkdown(content)}</div>
-            </details>
-          `;
+        if (asstBody) {
+          if (!summaryRendered) {
+            const execSummary = extractExecutiveChatSummary(content, cleanHeading, typeDesc);
+            asstBody.innerHTML = `
+              <div class="vs-ai-file-ready-note">
+                ${renderInlineFormatting(escapeHtml(execSummary))}
+              </div>
+            `;
+            summaryRendered = true;
+          }
+          insertAfterEl.parentNode.insertBefore(card, insertAfterEl.nextSibling);
+          insertAfterEl = card;
         } else {
           const footerRow = row.querySelector('.vs-ai-asst-footer-row');
           if (footerRow) {
@@ -841,38 +856,88 @@
           }
         }
 
-        card.querySelector('.btn-card-preview').onclick = () => {
-          if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
-          else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
-          else handlePreviewPdf(cleanHeading, content, citations);
-        };
-        card.querySelector('.btn-card-download').onclick = () => {
-          if (fileType === 'xlsx') handleExportExcel(cleanHeading, content);
-          else if (fileType === 'docx') handleExportWord(cleanHeading, content, citations);
-          else handleSavePdf(cleanHeading, content, citations);
-        };
-        card.querySelector('.btn-card-canvas').onclick = () => {
-          showDocumentCanvasModal({ title: cleanHeading, content: content, citations: citations });
-        };
-      }
-    }
+        let currentCardArtifact = null;
+        let currentCardContent = content;
 
-    // Direct 1-Click PDF Button
-    const directPdfBtn = actionsRow.querySelector('.btn-direct-pdf');
-    if (directPdfBtn) {
-      directPdfBtn.onclick = () => handlePreviewPdf(cleanHeading, content, citations);
-    }
+        const resolveArtifactExport = async () => {
+          if (currentCardArtifact && currentCardArtifact.ok) return currentCardArtifact;
+          let exported = null;
+          if (formatKey === 'gsheet') exported = await ensureGsheetExported(cleanHeading, currentCardContent);
+          else if (formatKey === 'excel') exported = await ensureXlsxExported(cleanHeading, currentCardContent);
+          else if (formatKey === 'docs') exported = await ensureGdocExported(cleanHeading, currentCardContent, citations);
+          else if (formatKey === 'word') exported = await ensureDocxExported(cleanHeading, currentCardContent, citations);
+          else exported = await ensurePdfExported(cleanHeading, currentCardContent, citations);
+          if (exported && exported.ok) {
+            currentCardArtifact = exported;
+          }
+          return exported;
+        };
 
-    // Direct 1-Click Excel Button
-    const directExcelBtn = actionsRow.querySelector('.btn-direct-excel');
-    if (directExcelBtn) {
-      directExcelBtn.onclick = () => handleExportExcel(cleanHeading, content);
-    }
+        // Pre-compile the artifact immediately so Download / Save to Client / Preview has artifact_id ready
+        resolveArtifactExport().then((d) => {
+          if (!d || !d.ok) return;
+          card.dataset.artifactId = d.artifact_id || '';
+          card.dataset.serverFilename = d.filename || safeFilename;
+          const statusEl = card.querySelector('.vs-ai-file-status-text');
+          if (statusEl && d.size_kb) {
+            const orientBadge = d.orientation ? ` · ${d.orientation.charAt(0).toUpperCase() + d.orientation.slice(1)}` : '';
+            statusEl.textContent = `${typeDesc}${orientBadge} · ${d.size_kb} KB`;
+          }
+          if (d.cloud_connected && d.web_view_link) {
+            const cloudBtn = card.querySelector('.btn-card-open-cloud');
+            if (cloudBtn) {
+              cloudBtn.href = d.web_view_link;
+              cloudBtn.style.display = 'inline-flex';
+            }
+          } else if (d.cloud_status_message && (formatKey === 'gsheet' || formatKey === 'docs') && asstBody) {
+            const noteEl = document.createElement('div');
+            noteEl.style.cssText = 'margin-top:6px;font-size:11.5px;color:#64748b;';
+            noteEl.textContent = d.cloud_status_message;
+            asstBody.appendChild(noteEl);
+          }
+        }).catch((err) => {
+          console.warn('[VS-AI Artifact Pre-Export]', err);
+        });
 
-    // Direct 1-Click Word Button
-    const directWordBtn = actionsRow.querySelector('.btn-direct-word');
-    if (directWordBtn) {
-      directWordBtn.onclick = () => handleExportWord(cleanHeading, content, citations);
+        // Download Button -> Resolves artifact and opens native Save As dialog (with blob fallback)
+        card.querySelector('.btn-card-download').onclick = async () => {
+          try {
+            const d = await resolveArtifactExport();
+            await executeSaveToWindowsLocation(d, cleanHeading, fileType);
+          } catch (err) {
+            alert('Download failed: ' + err.message);
+          }
+        };
+
+        // Save to Client Button -> Asks confirmation then redirects to Saves tab prefilled
+        const saveClientBtn = card.querySelector('.btn-card-save-client');
+        if (saveClientBtn) {
+          saveClientBtn.onclick = async () => {
+            try {
+              const d = await resolveArtifactExport();
+              showSaveClientConfirmationModal(d, cleanHeading, fileType);
+            } catch (err) {
+              alert('Save to Client failed: ' + err.message);
+            }
+          };
+        }
+
+        // Preview Button -> Opens Interactive Document Preview & Select-Area-to-Revise modal
+        const previewBtn = card.querySelector('.btn-card-preview');
+        if (previewBtn) {
+          previewBtn.onclick = async () => {
+            try {
+              const d = await resolveArtifactExport();
+              await openInteractiveDocumentPreviewModal(d, cleanHeading, fileType, currentCardContent, citations, row, card, (revisedArtifact, revisedContent) => {
+                currentCardArtifact = revisedArtifact;
+                currentCardContent = revisedContent || currentCardContent;
+              });
+            } catch (err) {
+              alert('Preview failed: ' + err.message);
+            }
+          };
+        }
+      });
     }
 
     // Copy Text
@@ -897,49 +962,367 @@
       };
     }
 
-    // Open in Canvas
-    const canvasBtn = actionsRow.querySelector('.btn-open-canvas');
-    if (canvasBtn) {
-      canvasBtn.onclick = () => {
-        showDocumentCanvasModal({
-          title: cleanHeading,
-          content: content,
-          citations: citations
-        });
-      };
-    }
+    // Interactive Question Box handlers — Sequential Slide-Wise Clarification UX (Workstream 8)
+    const questionBoxes = row.querySelectorAll('.vs-ai-interactive-question-box');
+    questionBoxes.forEach(qBox => {
+      const sections = Array.from(qBox.querySelectorAll('.vs-ai-question-section'));
+      const totalSlides = sections.length;
+      const prevBtn = qBox.querySelector('.vs-ai-btn-prev-question');
+      const nextBtn = qBox.querySelector('.vs-ai-btn-next-question');
+      const submitBtn = qBox.querySelector('.vs-ai-btn-submit-choice');
+      const progressBadge = qBox.querySelector('.vs-ai-question-progress-badge');
+      const stepDots = Array.from(qBox.querySelectorAll('.vs-ai-question-step-dot'));
+      const selections = new Map(); // qidx -> { qid, title, val, isOther, otherText }
+      let activeSlideIdx = 0;
+      let isSubmitted = false;
 
-    // Export Dropdown
-    const exportToggle = actionsRow.querySelector('.btn-export-dropdown-toggle');
-    const exportMenu = actionsRow.querySelector('.vs-ai-export-menu');
-    if (exportToggle && exportMenu) {
-      exportToggle.onclick = (e) => {
-        e.stopPropagation();
-        document.querySelectorAll('.vs-ai-export-menu').forEach(m => {
-          if (m !== exportMenu) m.style.display = 'none';
-        });
-        exportMenu.style.display = exportMenu.style.display === 'block' ? 'none' : 'block';
-      };
+      function isSlideValid(idx) {
+        const sel = selections.get(idx);
+        if (!sel || !sel.val) return false;
+        if (sel.isOther && (!sel.otherText || !sel.otherText.trim())) return false;
+        return true;
+      }
 
-      const optCopy = exportMenu.querySelector('.export-opt-copy');
-      if (optCopy) {
-        optCopy.onclick = () => {
-          exportMenu.style.display = 'none';
-          navigator.clipboard.writeText(content);
-          if (typeof showNativeToast === 'function') {
-            showNativeToast('Formatted content copied to clipboard', 'success', 2000);
+      function areAllSlidesValid() {
+        if (totalSlides === 0) return false;
+        for (let i = 0; i < totalSlides; i++) {
+          if (!isSlideValid(i)) return false;
+        }
+        return true;
+      }
+
+      function syncSlideUI(focusSlideControl = false) {
+        qBox.setAttribute('data-active-slide', String(activeSlideIdx));
+        if (progressBadge) {
+          progressBadge.textContent = `Question ${activeSlideIdx + 1} of ${totalSlides}`;
+        }
+        stepDots.forEach((dot, idx) => {
+          dot.classList.toggle('active', idx === activeSlideIdx);
+          dot.classList.toggle('answered', isSlideValid(idx));
+        });
+
+        sections.forEach((sec, idx) => {
+          const isCurrent = idx === activeSlideIdx;
+          sec.style.display = isCurrent ? '' : 'none';
+          sec.setAttribute('aria-hidden', isCurrent ? 'false' : 'true');
+
+          if (isCurrent) {
+            const saved = selections.get(idx);
+            const optBtns = sec.querySelectorAll('.vs-ai-question-opt-btn:not(.vs-ai-opt-other)');
+            const otherBtn = sec.querySelector('.vs-ai-opt-other');
+            const otherInput = sec.querySelector('.vs-ai-question-other-input');
+            const specifyLabel = sec.querySelector('.vs-ai-other-specify-label');
+
+            sec.querySelectorAll('.vs-ai-question-opt-btn').forEach(b => {
+              b.classList.remove('selected');
+              b.setAttribute('aria-checked', 'false');
+            });
+
+            if (saved) {
+              if (saved.isOther) {
+                if (otherBtn) {
+                  otherBtn.classList.add('selected');
+                  otherBtn.setAttribute('aria-checked', 'true');
+                }
+                if (otherInput) {
+                  otherInput.style.display = 'block';
+                  if (otherInput.value !== saved.otherText) {
+                    otherInput.value = saved.otherText || '';
+                  }
+                }
+                if (specifyLabel) specifyLabel.style.display = 'block';
+              } else {
+                if (otherInput) otherInput.style.display = 'none';
+                if (specifyLabel) specifyLabel.style.display = 'none';
+                const matchedBtn = Array.from(optBtns).find(b => b.getAttribute('data-val') === saved.val);
+                if (matchedBtn) {
+                  matchedBtn.classList.add('selected');
+                  matchedBtn.setAttribute('aria-checked', 'true');
+                }
+              }
+            } else {
+              if (otherInput) otherInput.style.display = 'none';
+              if (specifyLabel) specifyLabel.style.display = 'none';
+            }
+          }
+        });
+
+        const isLastSlide = activeSlideIdx >= totalSlides - 1;
+        if (prevBtn) {
+          if (totalSlides <= 1) {
+            prevBtn.style.display = 'none';
+            prevBtn.disabled = true;
+          } else {
+            prevBtn.style.display = '';
+            prevBtn.style.visibility = activeSlideIdx === 0 ? 'hidden' : 'visible';
+            prevBtn.disabled = activeSlideIdx === 0 || isSubmitted;
+          }
+        }
+        if (nextBtn) {
+          nextBtn.style.display = isLastSlide ? 'none' : '';
+          nextBtn.disabled = isLastSlide || !isSlideValid(activeSlideIdx) || isSubmitted;
+        }
+        if (submitBtn) {
+          submitBtn.style.display = isLastSlide ? '' : 'none';
+          submitBtn.disabled = !isLastSlide || !areAllSlidesValid() || isSubmitted;
+        }
+
+        if (focusSlideControl && sections[activeSlideIdx]) {
+          const activeSec = sections[activeSlideIdx];
+          const saved = selections.get(activeSlideIdx);
+          if (saved && saved.isOther) {
+            const otherInp = activeSec.querySelector('.vs-ai-question-other-input');
+            if (otherInp) {
+              otherInp.focus();
+              return;
+            }
+          }
+          const targetBtn = activeSec.querySelector('.vs-ai-question-opt-btn.selected') ||
+                            activeSec.querySelector('.vs-ai-question-opt-btn');
+          if (targetBtn) targetBtn.focus();
+        }
+      }
+
+      sections.forEach((sec, idx) => {
+        const qid = sec.getAttribute('data-qid') || `q_${idx + 1}`;
+        const qTitle = sec.querySelector('.vs-ai-question-title span')?.textContent || `Question ${idx + 1}`;
+        const optBtns = sec.querySelectorAll('.vs-ai-question-opt-btn:not(.vs-ai-opt-other)');
+        const otherBtn = sec.querySelector('.vs-ai-opt-other');
+        const otherInput = sec.querySelector('.vs-ai-question-other-input');
+        const specifyLabel = sec.querySelector('.vs-ai-other-specify-label');
+
+        function updateSecSelection(val, isOther = false) {
+          if (isSubmitted) return;
+          const prevSaved = selections.get(idx);
+          const preservedOtherText = otherInput ? otherInput.value : (prevSaved?.otherText || '');
+
+          sec.querySelectorAll('.vs-ai-question-opt-btn').forEach(b => {
+            b.classList.remove('selected');
+            b.setAttribute('aria-checked', 'false');
+          });
+
+          if (isOther) {
+            if (otherBtn) {
+              otherBtn.classList.add('selected');
+              otherBtn.setAttribute('aria-checked', 'true');
+            }
+            if (otherInput) {
+              otherInput.style.display = 'block';
+              if (specifyLabel) specifyLabel.style.display = 'block';
+              otherInput.focus();
+            }
+            selections.set(idx, { qid, title: qTitle, val: '__other__', isOther: true, otherText: preservedOtherText });
+          } else {
+            if (otherInput) otherInput.style.display = 'none';
+            if (specifyLabel) specifyLabel.style.display = 'none';
+            const btn = Array.from(optBtns).find(b => b.getAttribute('data-val') === val);
+            if (btn) {
+              btn.classList.add('selected');
+              btn.setAttribute('aria-checked', 'true');
+            }
+            selections.set(idx, { qid, title: qTitle, val: val, isOther: false, otherText: preservedOtherText });
+          }
+          syncSlideUI(false);
+        }
+
+        optBtns.forEach(btn => {
+          btn.onclick = () => updateSecSelection(btn.getAttribute('data-val'), false);
+        });
+
+        if (otherBtn) {
+          otherBtn.onclick = () => updateSecSelection('__other__', true);
+        }
+
+        if (otherInput) {
+          otherInput.oninput = () => {
+            if (isSubmitted) return;
+            const current = selections.get(idx) || { qid, title: qTitle, val: '__other__', isOther: true };
+            current.val = '__other__';
+            current.isOther = true;
+            current.otherText = otherInput.value;
+            selections.set(idx, current);
+            syncSlideUI(false);
+          };
+          otherInput.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (activeSlideIdx < totalSlides - 1) {
+                if (nextBtn && !nextBtn.disabled) nextBtn.click();
+              } else {
+                if (submitBtn && !submitBtn.disabled) submitBtn.click();
+              }
+            }
+          };
+        }
+      });
+
+      if (prevBtn) {
+        prevBtn.onclick = () => {
+          if (isSubmitted || activeSlideIdx <= 0) return;
+          activeSlideIdx -= 1;
+          syncSlideUI(true);
+        };
+      }
+
+      if (nextBtn) {
+        nextBtn.onclick = () => {
+          if (isSubmitted || activeSlideIdx >= totalSlides - 1) return;
+          if (!isSlideValid(activeSlideIdx)) return;
+          activeSlideIdx += 1;
+          syncSlideUI(true);
+        };
+      }
+
+      stepDots.forEach((dot, dotIdx) => {
+        dot.onclick = () => {
+          if (isSubmitted) return;
+          // Allow jumping back to any previous slide, or forward if intervening slides are valid
+          if (dotIdx < activeSlideIdx) {
+            activeSlideIdx = dotIdx;
+            syncSlideUI(true);
+          } else if (dotIdx > activeSlideIdx) {
+            let canAdvance = true;
+            for (let i = 0; i < dotIdx; i++) {
+              if (!isSlideValid(i)) {
+                canAdvance = false;
+                break;
+              }
+            }
+            if (canAdvance) {
+              activeSlideIdx = dotIdx;
+              syncSlideUI(true);
+            }
+          }
+        };
+      });
+
+      const clarifUploadBtn = qBox.querySelector('.vs-ai-btn-clarif-upload');
+      const clarifAttachedList = qBox.querySelector('.vs-ai-clarif-attached-list');
+
+      function syncClarifAttachments() {
+        if (!clarifAttachedList) return;
+        if (!currentAttachments || currentAttachments.length === 0) {
+          clarifAttachedList.innerHTML = '';
+          clarifAttachedList.style.display = 'none';
+          return;
+        }
+        clarifAttachedList.style.display = 'flex';
+        clarifAttachedList.innerHTML = currentAttachments.map((att, aIdx) => `
+          <span class="vs-ai-att-pill vs-ai-clarif-att-pill">
+            <svg class="i" style="width:11px;height:11px;" aria-hidden="true"><use href="#clip"/></svg>
+            <span style="font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(att.name)}">${escapeHtml(att.name)}</span>
+            <span style="opacity:0.75;font-size:10px;">${formatFileSize(att.size)}</span>
+            <button type="button" class="vs-ai-clarif-att-remove" data-att-idx="${aIdx}" title="Remove file" style="border:none;background:transparent;cursor:pointer;color:#64748b;font-weight:700;padding:0 2px;">&times;</button>
+          </span>
+        `).join('');
+
+        clarifAttachedList.querySelectorAll('.vs-ai-clarif-att-remove').forEach(rmBtn => {
+          rmBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            if (isSubmitted) return;
+            const rmIdx = parseInt(rmBtn.getAttribute('data-att-idx') || '-1', 10);
+            if (!isNaN(rmIdx) && rmIdx >= 0 && rmIdx < currentAttachments.length) {
+              currentAttachments.splice(rmIdx, 1);
+              renderAttachmentPreviewBar();
+              updateSendButtonState();
+              syncClarifAttachments();
+            }
+          };
+        });
+
+        // If current slide asks for supporting documents or reference format and has no selection yet, auto-select the Upload option
+        const activeSec = sections[activeSlideIdx];
+        if (activeSec && !isSlideValid(activeSlideIdx)) {
+          const qid = (activeSec.getAttribute('data-qid') || '').toLowerCase();
+          if (qid.includes('document') || qid.includes('format') || qid.includes('upload')) {
+            const uploadOptBtn = Array.from(activeSec.querySelectorAll('.vs-ai-question-opt-btn:not(.vs-ai-opt-other)')).find(b =>
+              /upload|attach|reference|preferred/i.test(b.getAttribute('data-val') || '')
+            );
+            if (uploadOptBtn) {
+              uploadOptBtn.click();
+            }
+          }
+        }
+      }
+
+      if (clarifUploadBtn) {
+        clarifUploadBtn.onclick = () => {
+          if (isSubmitted) return;
+          const fileInput = document.querySelector('#vs-ai-file-input');
+          if (fileInput) {
+            fileInput.click();
           }
         };
       }
 
-      const optPrint = exportMenu.querySelector('.export-opt-print');
-      if (optPrint) {
-        optPrint.onclick = () => {
-          exportMenu.style.display = 'none';
-          printFormattedContent(cleanHeading, content);
+      qBox._syncClarifAttachments = syncClarifAttachments;
+
+      if (submitBtn) {
+        submitBtn.onclick = () => {
+          if (isSubmitted || !areAllSlidesValid()) return;
+          const answers = [];
+          const structuredPayload = [];
+          sections.forEach((sec, idx) => {
+            const sel = selections.get(idx);
+            if (!sel) return;
+            const customTrimmed = (sel.otherText || '').trim();
+            const finalVal = sel.isOther ? `Any other answer: ${customTrimmed}` : sel.val;
+            answers.push(finalVal);
+            structuredPayload.push({
+              index: idx + 1,
+              id: sel.qid,
+              question_id: sel.qid,
+              question: sel.title,
+              answer: sel.isOther ? customTrimmed : sel.val,
+              is_custom: Boolean(sel.isOther),
+              custom_text: customTrimmed
+            });
+          });
+          if (answers.length === 0) return;
+
+          isSubmitted = true;
+          qBox.setAttribute('data-submitted', 'true');
+          qBox.dataset.submittedAnswers = JSON.stringify(structuredPayload);
+
+          const unlockDeck = () => {
+            isSubmitted = false;
+            qBox.removeAttribute('data-submitted');
+            qBox.querySelectorAll('button, input').forEach(el => el.disabled = false);
+            submitBtn.innerHTML = `<span>Submit Answers</span>`;
+            submitBtn.style.background = '';
+            submitBtn.style.borderColor = '';
+            syncSlideUI(false);
+          };
+
+          pendingClarificationSubmission = {
+            answers: structuredPayload,
+            unlockDeck: unlockDeck
+          };
+
+          const combinedMessage = answers.length === 1
+            ? answers[0]
+            : answers.map((ans, i) => `${i + 1}. ${ans}`).join('\n');
+
+          qBox.querySelectorAll('button, input').forEach(el => el.disabled = true);
+          submitBtn.innerHTML = `<span>✓ Submitted</span>`;
+          submitBtn.style.background = '#16a34a';
+          submitBtn.style.borderColor = '#16a34a';
+
+          const promptInp = document.querySelector('#vs-ai-prompt-input');
+          if (promptInp) {
+            promptInp.value = combinedMessage;
+            const sendBtn = document.querySelector('#vs-ai-btn-send');
+            if (sendBtn) {
+              sendBtn.disabled = false;
+              sendBtn.click();
+            }
+          }
         };
       }
-    }
+
+      syncClarifAttachments();
+      syncSlideUI(false);
+    });
   }
 
   // ------------------------------------------------------------
@@ -961,6 +1344,9 @@
     const attachmentsToSend = retryAtts !== null ? retryAtts : [...currentAttachments];
 
     if (!promptText && attachmentsToSend.length === 0) return;
+
+    const clarifSubmission = pendingClarificationSubmission;
+    pendingClarificationSubmission = null;
 
     // Cache last sent query for retries
     lastSentPrompt = promptText;
@@ -986,7 +1372,23 @@
 
     let thinkingMsg = 'VS AI is analyzing statutory provisions & legal clauses...';
     const pLow = (promptText || '').toLowerCase();
-    const isDocMode = Boolean(activeGenerationMode) || pLow.includes('pdf') || pLow.includes('excel') || pLow.includes('spreadsheet') || pLow.includes('sheet') || pLow.includes('word') || pLow.includes('doc') || pLow.includes('generate') || pLow.includes('balance sheet') || pLow.includes('p&l');
+    let isDocMode = Boolean(
+      !clarifSubmission && (
+        activeGenerationMode ||
+        pLow.includes('pdf') ||
+        pLow.includes('excel') ||
+        pLow.includes('spreadsheet') ||
+        pLow.includes('word') ||
+        pLow.includes('docx') ||
+        pLow.includes('sample 25 transactions') ||
+        pLow.includes('create a sample') ||
+        pLow.includes('final accounts') ||
+        pLow.includes('balance sheet') ||
+        pLow.includes('trial bal') ||
+        pLow.includes('journal') ||
+        pLow.includes('ledgers')
+      )
+    );
 
     if (activeGenerationMode === 'pdf' || pLow.includes('pdf')) thinkingMsg = 'VS AI is compiling statutory PDF document & citations...';
     else if (activeGenerationMode === 'excel' || activeGenerationMode === 'gsheet' || pLow.includes('excel') || pLow.includes('sheet')) thinkingMsg = 'VS AI is generating financial spreadsheet & calculations...';
@@ -1012,7 +1414,7 @@
         <div class="src vs-ai-asst-footer-row" style="display:none;">
           <span class="chip vs-ai-sources-pill">
             <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#folder"/></svg>
-            <span class="sources-pill-label">Income-tax Act, 2025</span>
+            <span class="sources-pill-label">Internet</span>
           </span>
         </div>
         ${renderAssistantActionsHtml()}
@@ -1029,6 +1431,7 @@
 
     isRequestInFlight = true;
     currentAbortController = new AbortController();
+    console.log(`[VS-AI-STREAM] ${Date.now()} controller-created`, currentAbortController);
     updateSendButtonState();
 
     const bodyEl = asstRow.querySelector('.vs-ai-asst-body');
@@ -1039,11 +1442,96 @@
 
     let accumulatedText = '';
     let currentCitations = [];
+    let rafId = null;
+    let isDirty = false;
+    let lastRenderTime = 0;
+    const RENDER_INTERVAL_MS = 45; // ~22fps maximum during active streaming
+
+    let receivedTokenCount = 0;
+    let renderCount = 0;
+
+    const docQuotes = [
+      "Generating Document Structure & Accounting Schema...",
+      "Compiling Transaction Entries & Ledgers...",
+      "Calculating Balances & Verification Totals...",
+      "Applying Executive Typography & Table Styling...",
+      "Finalizing High-Resolution Document Export..."
+    ];
+    let quoteIdx = 0;
+    let quoteInterval = null;
+
+    if (isDocMode && bodyEl) {
+      bodyEl.innerHTML = `
+        <div class="vs-ai-generating-box">
+          <div class="vs-ai-generating-spinner"></div>
+          <div class="vs-ai-generating-content">
+            <div class="vs-ai-generating-title">Compiling Professional Document...</div>
+            <div class="vs-ai-generating-quote" id="vs-ai-quote-text">${docQuotes[0]}</div>
+            <div class="vs-ai-generating-bar"><div class="vs-ai-generating-bar-inner"></div></div>
+          </div>
+        </div>
+      `;
+      quoteInterval = setInterval(() => {
+        quoteIdx = (quoteIdx + 1) % docQuotes.length;
+        const qEl = asstRow.querySelector('#vs-ai-quote-text');
+        if (qEl) {
+          qEl.style.opacity = '0';
+          setTimeout(() => {
+            qEl.textContent = docQuotes[quoteIdx];
+            qEl.style.opacity = '1';
+          }, 200);
+        }
+      }, 2600);
+    }
+
+    console.log(`[VS-AI-STREAM] initial state: convId=${currentConvId}, isDocMode=${isDocMode}, bodyElExists=${Boolean(bodyEl)}`);
+
+    function scheduleFrameRender() {
+      if (rafId) return;
+      rafId = requestAnimationFrame((now) => {
+        rafId = null;
+        if (!isDirty || !bodyEl) return;
+        if (now - lastRenderTime >= RENDER_INTERVAL_MS) {
+          lastRenderTime = now;
+          isDirty = false;
+          renderCount++;
+          if (!isDocMode) {
+            bodyEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="vs-ai-type-cursor">▌</span>';
+          }
+          const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+          if (distanceToBottom < 220) stream.scrollTop = stream.scrollHeight;
+        } else {
+          scheduleFrameRender();
+        }
+      });
+    }
+
+    function flushFrameRender() {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      isDirty = false;
+      if (quoteInterval) {
+        clearInterval(quoteInterval);
+        quoteInterval = null;
+      }
+      if (bodyEl) {
+        bodyEl.innerHTML = renderMarkdown(accumulatedText);
+        const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+        if (distanceToBottom < 220) stream.scrollTop = stream.scrollHeight;
+      }
+    }
 
     function updateCitationsPill(cList) {
-      if (!cList || cList.length === 0 || !sourcesLabel) return;
+      if (!sourcesLabel) return;
+      if (!cList || cList.length === 0) {
+        sourcesLabel.textContent = 'Internet';
+        if (sourcesFooter) sourcesFooter.style.display = 'flex';
+        return;
+      }
       const secList = cList.map(c => c.section || 'Statute').filter(Boolean);
-      const text = secList.length > 0 ? secList.slice(0, 2).join(', ') : 'Income-tax Act, 2025';
+      const text = secList.length > 0 ? secList.slice(0, 2).join(', ') : 'Internet';
       sourcesLabel.textContent = text;
       if (sourcesFooter) sourcesFooter.style.display = 'flex';
     }
@@ -1055,6 +1543,7 @@
     }
 
     try {
+      console.log(`[VS-AI-STREAM] ${Date.now()} request-start`);
       const resp = await fetch('/api/ai/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1066,9 +1555,12 @@
           scope: activeScope,
           source_only: sourceOnly,
           attachments: attachmentsToSend,
-          generation_mode: activeGenerationMode
+          generation_mode: activeGenerationMode,
+          clarification_answers: clarifSubmission ? clarifSubmission.answers : undefined
         })
       });
+
+      console.log(`[VS-AI-STREAM] ${Date.now()} response: status=${resp.status}`);
 
       if (!resp.ok) {
         let errData = {};
@@ -1078,14 +1570,19 @@
 
       const reader = resp.body.getReader();
       currentStreamReader = reader;
+      console.log(`[VS-AI-STREAM] ${Date.now()} reader-created`);
       const decoder = new TextDecoder();
       let buffer = '';
       let streamFinished = false;
 
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log(`[VS-AI-STREAM] ${Date.now()} reader done=true`);
+          break;
+        }
 
+        console.log(`[VS-AI-STREAM] ${Date.now()} chunk-received length=${value ? value.length : 0}`);
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split('\n\n');
         buffer = parts.pop() || '';
@@ -1097,7 +1594,11 @@
               const jsonStr = line.slice(5).trim();
               if (!jsonStr) continue;
               let ev = null;
-              try { ev = JSON.parse(jsonStr); } catch(e) { continue; }
+              try { ev = JSON.parse(jsonStr); } catch(e) {
+                console.error(`[VS-AI-STREAM] JSON parse error:`, e, jsonStr);
+                continue;
+              }
+              console.log(`[VS-AI-STREAM] ${Date.now()} event: type=${ev.type}`);
 
               if (ev.type === 'start') {
                 if (ev.conversation_id) currentConvId = ev.conversation_id;
@@ -1108,20 +1609,27 @@
                 currentCitations = ev.citations || [];
                 updateCitationsPill(currentCitations);
               } else if (ev.type === 'token') {
+                receivedTokenCount++;
                 accumulatedText += ev.delta || '';
-                if (!isDocMode) {
-                  bodyEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="vs-ai-type-cursor">▌</span>';
-                  const distanceToBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
-                  if (distanceToBottom < 180) stream.scrollTop = stream.scrollHeight;
-                } else {
-                  const subtext = asstRow.querySelector('.vs-ai-thinking-subtext');
-                  if (subtext) {
-                    const wordEst = Math.max(1, Math.round(accumulatedText.length / 5));
-                    subtext.textContent = `Compiling structured document (${wordEst} words generated)...`;
+                if (isDocMode && accumulatedText.includes('```question')) {
+                  isDocMode = false;
+                  if (quoteInterval) {
+                    clearInterval(quoteInterval);
+                    quoteInterval = null;
                   }
                 }
+                console.log(`[VS-AI-STREAM] token receivedTokenCount=${receivedTokenCount}, renderCount=${renderCount}, accumulatedLength=${accumulatedText.length}`);
+                isDirty = true;
+                scheduleFrameRender();
+              } else if (ev.type === 'phase') {
+                console.log(`[VS-AI-STREAM] ${Date.now()} phase:`, ev.phase, ev.message);
+                const subtext = asstRow ? asstRow.querySelector('.vs-ai-thinking-subtext') : null;
+                if (subtext) {
+                  subtext.textContent = ev.message || `Phase ${ev.phase}: Continuing document generation...`;
+                }
               } else if (ev.type === 'done') {
-                bodyEl.innerHTML = renderMarkdown(accumulatedText);
+                console.log(`[VS-AI-STREAM] ${Date.now()} done: message_id=${ev.message_id}`);
+                flushFrameRender();
                 if (ev.citations && ev.citations.length > 0) {
                   currentCitations = ev.citations;
                   updateCitationsPill(currentCitations);
@@ -1135,6 +1643,11 @@
                 try { await reader.cancel(); } catch(e) {}
                 break;
               } else if (ev.type === 'error') {
+                console.log(`[VS-AI-STREAM] ${Date.now()} server error event:`, ev.error);
+                flushFrameRender();
+                if (clarifSubmission && typeof clarifSubmission.unlockDeck === 'function') {
+                  clarifSubmission.unlockDeck();
+                }
                 retryAttempts++;
                 renderErrorCard(ev.error || 'Failed to generate response.', promptText, attachmentsToSend, asstRow);
                 if (ev.error && ev.error.toLowerCase().includes('key')) {
@@ -1152,21 +1665,32 @@
       }
 
       if (asstRow && bodyEl && !streamFinished) {
-        bodyEl.innerHTML = renderMarkdown(accumulatedText);
+        console.log(`[VS-AI-STREAM] ${Date.now()} stream loop exited without streamFinished`);
+        flushFrameRender();
         finalizeAssistantActions();
       }
 
     } catch (err) {
+      console.error(`[VS-AI-STREAM] ${Date.now()} error:`, err);
+      flushFrameRender();
+      if (clarifSubmission && typeof clarifSubmission.unlockDeck === 'function') {
+        clarifSubmission.unlockDeck();
+      }
       if (err.name === 'AbortError') {
         if (asstRow && bodyEl) {
           bodyEl.innerHTML = renderMarkdown(accumulatedText) + '\n\n*(Generation stopped by user)*';
-          finalizeAssistantActions();
+          const actionsRow = asstRow.querySelector('.vs-ai-msg-actions');
+          if (actionsRow) actionsRow.style.display = 'flex';
         }
       } else {
         retryAttempts++;
         renderErrorCard('VS AI servers are experiencing peak demand across model pools. Please retry.', promptText, attachmentsToSend, asstRow);
       }
     } finally {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       isRequestInFlight = false;
       currentAbortController = null;
       currentStreamReader = null;
@@ -1182,6 +1706,9 @@
   function renderErrorCard(errorMsg, originalPrompt, originalAtts, targetRow = null) {
     const stream = document.querySelector('#vs-ai-chat-stream');
     if (!stream) return;
+
+    const canAutoRetry = retryAttempts < MAX_AUTO_RETRIES;
+    const backoffSeconds = Math.min(30, Math.max(2, Math.pow(2, retryAttempts) * 3));
 
     // Collapse any previous consecutive error cards
     const existingErrors = stream.querySelectorAll('.vs-ai-error-card');
@@ -1286,20 +1813,20 @@
       }
       row.className = 'msg u vs-ai-message-row user';
       row.innerHTML = `
-        <div class="av">R</div>
         <div class="bub vs-ai-bubble-user">
           ${attHtml}
           <div>${escapeHtml(content)}</div>
           <small>${formatTime(new Date())}</small>
         </div>
+        <div class="av">R</div>
       `;
       stream.appendChild(row);
       stream.scrollTop = stream.scrollHeight;
     } else {
-      let sourcesText = 'Income-tax Act, 2025';
+      let sourcesText = 'Internet';
       if (citations && citations.length > 0) {
         const secList = citations.map(c => c.section || 'Statute').filter(Boolean);
-        sourcesText = secList.length > 0 ? secList.slice(0, 2).join(', ') : 'Income-tax Act, 2025';
+        sourcesText = secList.length > 0 ? secList.slice(0, 2).join(', ') : 'Internet';
       }
 
       row.className = 'msg vs-ai-message-row assistant';
@@ -1389,6 +1916,22 @@
   // UNIVERSAL DOCUMENT, SPREADSHEET & PDF EXPORT SUITE
   // ------------------------------------------------------------
   const pdfExportCache = new Map();
+  const docxExportCache = new Map();
+  const xlsxExportCache = new Map();
+  const gdocExportCache = new Map();
+  const gsheetExportCache = new Map();
+
+  function downloadDirectFile(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'document';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 250);
+    if (typeof showNativeToast === 'function') {
+      showNativeToast(`Downloading ${filename || 'file'}...`, 'success', 2500);
+    }
+  }
 
   async function ensurePdfExported(title, content, citations) {
     const cacheKey = (title || '') + '::' + (content || '').slice(0, 150);
@@ -1401,7 +1944,8 @@
       body: JSON.stringify({
         title: title || 'Statutory Legal Opinion & Advisory',
         content: content || '',
-        citations: citations || []
+        citations: citations || [],
+        conversation_id: currentConvId || null
       })
     });
     const data = await resp.json();
@@ -1409,6 +1953,98 @@
       throw new Error(data.error || 'Failed to generate PDF');
     }
     pdfExportCache.set(cacheKey, data);
+    return data;
+  }
+
+  async function ensureDocxExported(title, content, citations, fontName = 'Calibri') {
+    const cacheKey = (title || '') + '::' + (content || '').slice(0, 150);
+    if (docxExportCache.has(cacheKey)) {
+      return docxExportCache.get(cacheKey);
+    }
+    const resp = await fetch('/api/ai/export-docx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title || 'Statutory Legal Opinion & Advisory',
+        content: content || '',
+        citations: citations || [],
+        font_name: fontName,
+        conversation_id: currentConvId || null
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      throw new Error(data.error || 'Failed to generate Word document');
+    }
+    docxExportCache.set(cacheKey, data);
+    return data;
+  }
+
+  async function ensureXlsxExported(title, content) {
+    const cacheKey = (title || '') + '::' + (content || '').slice(0, 150);
+    if (xlsxExportCache.has(cacheKey)) {
+      return xlsxExportCache.get(cacheKey);
+    }
+    const resp = await fetch('/api/ai/export-xlsx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title || 'Statutory Statement & Computations',
+        content: content || '',
+        conversation_id: currentConvId || null
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      throw new Error(data.error || 'Failed to generate Excel spreadsheet');
+    }
+    xlsxExportCache.set(cacheKey, data);
+    return data;
+  }
+
+  async function ensureGdocExported(title, content, citations, fontName = 'Calibri') {
+    const cacheKey = (title || '') + '::' + (content || '').slice(0, 150);
+    if (gdocExportCache.has(cacheKey)) {
+      return gdocExportCache.get(cacheKey);
+    }
+    const resp = await fetch('/api/ai/export-gdoc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title || 'Statutory Legal Opinion & Advisory',
+        content: content || '',
+        citations: citations || [],
+        font_name: fontName,
+        conversation_id: currentConvId || null
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      throw new Error(data.error || 'Failed to generate Google Docs artifact');
+    }
+    gdocExportCache.set(cacheKey, data);
+    return data;
+  }
+
+  async function ensureGsheetExported(title, content) {
+    const cacheKey = (title || '') + '::' + (content || '').slice(0, 150);
+    if (gsheetExportCache.has(cacheKey)) {
+      return gsheetExportCache.get(cacheKey);
+    }
+    const resp = await fetch('/api/ai/export-gsheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title || 'Statutory Statement & Computations',
+        content: content || '',
+        conversation_id: currentConvId || null
+      })
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      throw new Error(data.error || 'Failed to generate Google Sheets artifact');
+    }
+    gsheetExportCache.set(cacheKey, data);
     return data;
   }
 
@@ -1436,23 +2072,56 @@
     }
   }
 
+  async function handlePreviewDocx(title, content, citations) {
+    try {
+      if (typeof showNativeToast === 'function') {
+        showNativeToast('Generating Microsoft Word (.docx) Preview...', 'info', 2000);
+      }
+      const data = await ensureDocxExported(title, content, citations);
+      let previewData = null;
+      if (data.artifact_id) {
+        try {
+          const pResp = await fetch(`/api/ai/artifacts/${data.artifact_id}/preview`);
+          const pJson = await pResp.json();
+          if (pJson.ok && pJson.preview) previewData = pJson.preview;
+        } catch (pe) {
+          console.warn('Artifact preview fetch error:', pe);
+        }
+      }
+      showInAppDocxPreview(data, title, content, previewData);
+    } catch (err) {
+      alert('Word preview error: ' + err.message);
+    }
+  }
+
+  async function handlePreviewExcel(title, content) {
+    try {
+      if (typeof showNativeToast === 'function') {
+        showNativeToast('Generating Microsoft Excel (.xlsx) Preview...', 'info', 2000);
+      }
+      const data = await ensureXlsxExported(title, content);
+      let previewData = null;
+      if (data.artifact_id) {
+        try {
+          const pResp = await fetch(`/api/ai/artifacts/${data.artifact_id}/preview`);
+          const pJson = await pResp.json();
+          if (pJson.ok && pJson.preview) previewData = pJson.preview;
+        } catch (pe) {
+          console.warn('Artifact preview fetch error:', pe);
+        }
+      }
+      showInAppXlsxPreview(data, title, content, previewData);
+    } catch (err) {
+      alert('Excel preview error: ' + err.message);
+    }
+  }
+
   async function handleExportWord(title, content, citations, fontName = 'Plus Jakarta Sans') {
     try {
       if (typeof showNativeToast === 'function') {
         showNativeToast('Generating Microsoft Word (.docx)...', 'info', 2000);
       }
-      const resp = await fetch('/api/ai/export-docx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title || 'Statutory Legal Opinion & Advisory',
-          content: content || '',
-          citations: citations || [],
-          font_name: fontName
-        })
-      });
-      const data = await resp.json();
-      if (!data.ok) throw new Error(data.error || 'Failed to generate Word document');
+      const data = await ensureDocxExported(title, content, citations, fontName);
       showUniversalSaveOptionsModal(data, title, 'docx');
     } catch (err) {
       alert('Word export error: ' + err.message);
@@ -1464,16 +2133,7 @@
       if (typeof showNativeToast === 'function') {
         showNativeToast('Generating Microsoft Excel (.xlsx)...', 'info', 2000);
       }
-      const resp = await fetch('/api/ai/export-xlsx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title || 'Statutory Statement & Computations',
-          content: content || ''
-        })
-      });
-      const data = await resp.json();
-      if (!data.ok) throw new Error(data.error || 'Failed to generate Excel spreadsheet');
+      const data = await ensureXlsxExported(title, content);
       showUniversalSaveOptionsModal(data, title, 'xlsx');
     } catch (err) {
       alert('Excel export error: ' + err.message);
@@ -1512,60 +2172,872 @@
     printWin.document.close();
   }
 
-  function showInAppPdfPreview(pdfData, title) {
-    const existing = document.getElementById('vs-ai-pdf-preview-modal');
+  function extractClientSelectableSections(mdText) {
+    const raw = (mdText || '').trim();
+    if (!raw) return [];
+    const lines = raw.split('\n');
+    const sections = [];
+    let curHeading = 'Document Header / Introduction';
+    let curLines = [];
+
+    for (const line of lines) {
+      const s = line.trim();
+      if (/^#{1,4}\s+/.test(s)) {
+        const body = curLines.join('\n').trim();
+        if (body || sections.length > 0) {
+          sections.push({
+            section_id: `sec_${sections.length + 1}`,
+            index: sections.length + 1,
+            heading: curHeading,
+            content: body
+          });
+        }
+        curHeading = s.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim() || `Section ${sections.length + 1}`;
+        curLines = [line];
+      } else {
+        curLines.push(line);
+      }
+    }
+    const tail = curLines.join('\n').trim();
+    if (tail) {
+      sections.push({
+        section_id: `sec_${sections.length + 1}`,
+        index: sections.length + 1,
+        heading: curHeading,
+        content: tail
+      });
+    }
+    return sections;
+  }
+
+  async function openInteractiveDocumentPreviewModal(fileData, title, fileType = 'pdf', rawContent = '', citations = [], messageRow = null, sourceCard = null, onRevised = null) {
+    const existing = document.getElementById('vs-ai-interactive-preview-modal');
     if (existing) existing.remove();
 
-    const modal = document.createElement('div');
-    modal.id = 'vs-ai-pdf-preview-modal';
-    modal.className = 'vs-ai-modal-overlay';
-    modal.style.zIndex = '10001';
+    let currentData = Object.assign({}, fileData || {});
+    let currentSourceContent = rawContent || '';
+    let currentSections = [];
+    let currentPreviewObj = null;
+    let currentOrientation = (currentData.orientation || 'portrait').toLowerCase();
 
-    const pdfUrl = `/api/ai/exports/${encodeURIComponent(pdfData.filename)}`;
-    const safeTitle = escapeHtml(title || 'Statutory Legal Opinion & Advisory');
+    const artifactId = currentData.artifact_id || currentData.id || '';
+    if (artifactId) {
+      try {
+        const pResp = await fetch(`/api/ai/artifacts/${encodeURIComponent(artifactId)}/preview?format=json`);
+        if (pResp.ok) {
+          const pJson = await pResp.json();
+          if (pJson && pJson.ok) {
+            currentPreviewObj = pJson.preview || null;
+            if (pJson.source_content) currentSourceContent = pJson.source_content;
+            if (Array.isArray(pJson.sections) && pJson.sections.length > 0) {
+              currentSections = pJson.sections;
+            }
+            if (pJson.orientation) currentOrientation = String(pJson.orientation).toLowerCase();
+          }
+        }
+      } catch (err) {
+        console.warn('[VS-AI Preview] JSON preview fetch fallback:', err);
+      }
+    }
+
+    if (!currentSections || currentSections.length === 0) {
+      currentSections = extractClientSelectableSections(currentSourceContent);
+    }
+    if (currentSections.length === 0 && currentSourceContent) {
+      currentSections = [{
+        section_id: 'sec_1',
+        index: 1,
+        heading: title || 'Full Document Content',
+        content: currentSourceContent
+      }];
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'vs-ai-interactive-preview-modal';
+    modal.className = 'vs-ai-modal-overlay';
+    modal.style.zIndex = '10004';
+
+    const normType = (fileType || 'pdf').toLowerCase();
+    const extBadgeLabel = normType === 'xlsx'
+      ? 'Excel Workbook (.xlsx)'
+      : (normType === 'docx' ? 'Word Document (.docx)' : `PDF · ${currentOrientation === 'landscape' ? 'Landscape' : 'Portrait'}`);
+    const extIcon = normType === 'xlsx' ? '📊' : (normType === 'docx' ? '📄' : '📑');
+    const safeTitle = escapeHtml(title || currentData.filename || 'Statutory Document Preview');
 
     modal.innerHTML = `
-      <div class="vs-ai-pdf-modal-card glass">
+      <div class="vs-ai-pdf-modal-card vs-ai-interactive-preview-card glass">
         <div class="vs-ai-pdf-toolbar">
           <div class="vs-ai-pdf-toolbar-title">
-            <svg class="i" style="width:18px;height:18px;color:#2563eb;" aria-hidden="true"><use href="#ai"/></svg>
-            <span style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeTitle}</span>
-            <span class="vs-ai-chart-badge" style="background:#f0fdf4;color:#16a34a;border-color:#bbf7d0;">ReportLab 300 DPI</span>
+            <span style="font-size:19px;">${extIcon}</span>
+            <span id="vs-ai-iprev-title" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;">${safeTitle}</span>
+            <span id="vs-ai-iprev-badge" class="vs-ai-chart-badge" style="background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;">${escapeHtml(extBadgeLabel)}</span>
           </div>
-          <div class="vs-ai-pdf-toolbar-actions">
-            <button type="button" class="btn primary btn-sm" id="vs-ai-pdf-btn-save-options">
+          <div class="vs-ai-pdf-toolbar-actions" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            ${normType === 'pdf' ? `
+              <div class="vs-ai-iprev-view-tabs" style="display:inline-flex;background:#f1f5f9;border-radius:8px;padding:2px;border:1px solid #cbd5e1;">
+                <button type="button" class="vs-ai-iprev-tab active" data-view="interactive" style="border:none;background:#ffffff;color:#1e3a8a;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:6px;cursor:pointer;">Interactive Sections</button>
+                <button type="button" class="vs-ai-iprev-tab" data-view="native-pdf" style="border:none;background:transparent;color:#475569;font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;">PDF Page View</button>
+              </div>
+            ` : ''}
+            <button type="button" class="btn primary btn-sm" id="vs-ai-iprev-btn-download">
               <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#dl"/></svg>
-              <span>Save / Download</span>
+              <span>Download</span>
             </button>
-            <button type="button" class="btn secondary btn-sm" id="vs-ai-pdf-btn-save-client">
+            <button type="button" class="btn secondary btn-sm" id="vs-ai-iprev-btn-save-client">
               <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#folder"/></svg>
               <span>Save to Client</span>
             </button>
-            <button type="button" class="btn secondary btn-sm" id="vs-ai-pdf-btn-save-location">
-              <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#drive"/></svg>
-              <span>Save to Windows</span>
-            </button>
-            <button type="button" class="vs-ai-modal-close" id="vs-ai-pdf-btn-close" aria-label="Close Preview">✕</button>
+            <button type="button" class="vs-ai-modal-close" id="vs-ai-iprev-btn-close" aria-label="Close Preview">✕</button>
           </div>
         </div>
-        <iframe class="vs-ai-pdf-frame" src="${pdfUrl}#toolbar=1&navpanes=0" title="PDF Document Preview"></iframe>
+
+        <div class="vs-ai-iprev-split-body">
+          <!-- Left / Main Document Surface -->
+          <div class="vs-ai-iprev-main-pane">
+            <div class="vs-ai-iprev-helper-banner">
+              <span>🎯 <strong>Select Area to Revise:</strong> Click any document section card below (or highlight specific text with your cursor) and instruct VS AI on the right to modify it and generate a new document.</span>
+            </div>
+            <div id="vs-ai-iprev-surface" class="vs-ai-iprev-surface"></div>
+            <iframe id="vs-ai-iprev-pdf-frame" class="vs-ai-pdf-frame" style="display:none;flex:1;width:100%;border:none;border-radius:8px;" title="PDF Native Preview"></iframe>
+          </div>
+
+          <!-- Right Sidebar: Select-Area-to-Revise AI Studio -->
+          <div class="vs-ai-iprev-side-pane">
+            <div class="vs-ai-iprev-side-header">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:800;font-size:14px;color:#0f172a;">
+                <span>✨ Revise Selected Area</span>
+              </div>
+              <div style="font-size:11.5px;color:#64748b;margin-top:2px;">
+                Select any section or text in the preview, enter your instruction, and VS AI will generate a revised document.
+              </div>
+            </div>
+
+            <div class="vs-ai-iprev-field-group">
+              <label class="vs-ai-iprev-label">Quick Section Picker:</label>
+              <select id="vs-ai-iprev-sec-select" class="vs-ai-input" style="padding:6px 10px;font-size:12px;"></select>
+            </div>
+
+            <div class="vs-ai-iprev-field-group" style="flex:1;display:flex;flex-direction:column;min-height:110px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <label class="vs-ai-iprev-label" style="margin:0;">Selected Area / Excerpt:</label>
+                <span id="vs-ai-iprev-sec-badge" style="font-size:10.5px;font-weight:700;color:#2563eb;background:#eff6ff;padding:2px 7px;border-radius:99px;border:1px solid #bfdbfe;">Section 1</span>
+              </div>
+              <textarea id="vs-ai-iprev-selected-text" class="vs-ai-input" style="flex:1;min-height:95px;font-size:12px;line-height:1.45;resize:vertical;font-family:inherit;background:#f8fafc;" placeholder="Click a section on the left or highlight text to populate the target area..."></textarea>
+            </div>
+
+            <div class="vs-ai-iprev-field-group">
+              <label class="vs-ai-iprev-label" for="vs-ai-iprev-instruction">Instruction for VS AI:</label>
+              <textarea id="vs-ai-iprev-instruction" class="vs-ai-input" rows="3" style="font-size:12.5px;line-height:1.45;resize:vertical;" placeholder="e.g., 'Update the disputed tax amount to ₹4,15,000', 'Add citation to Circular 183/15/2022-GST', 'Make arguments more assertive'..."></textarea>
+              <div class="vs-ai-iprev-chip-row">
+                <button type="button" class="vs-ai-iprev-chip" data-ins="Strengthen statutory citations and judicial precedents in this section">⚖️ Add Legal Citations</button>
+                <button type="button" class="vs-ai-iprev-chip" data-ins="Convert the figures in this section into a clean structured reconciliation table">📊 Convert to Table</button>
+                <button type="button" class="vs-ai-iprev-chip" data-ins="Make this section more formal, concise, and authoritative for tax authorities">✒️ Make Formal</button>
+              </div>
+            </div>
+
+            <div id="vs-ai-iprev-status" style="display:none;font-size:12px;padding:8px 10px;border-radius:8px;margin-bottom:8px;"></div>
+
+            <button type="button" class="btn primary" id="vs-ai-iprev-apply-btn" style="width:100%;padding:10px 14px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:6px;">
+              <span>✨ Apply Change & Generate New Document</span>
+            </button>
+          </div>
+        </div>
       </div>
     `;
 
     document.body.appendChild(modal);
 
-    modal.querySelector('#vs-ai-pdf-btn-close').onclick = () => modal.remove();
+    const surfaceEl = modal.querySelector('#vs-ai-iprev-surface');
+    const pdfFrameEl = modal.querySelector('#vs-ai-iprev-pdf-frame');
+    const secSelectEl = modal.querySelector('#vs-ai-iprev-sec-select');
+    const secBadgeEl = modal.querySelector('#vs-ai-iprev-sec-badge');
+    const selectedTextEl = modal.querySelector('#vs-ai-iprev-selected-text');
+    const instructionEl = modal.querySelector('#vs-ai-iprev-instruction');
+    const applyBtn = modal.querySelector('#vs-ai-iprev-apply-btn');
+    const statusBox = modal.querySelector('#vs-ai-iprev-status');
+    const badgeEl = modal.querySelector('#vs-ai-iprev-badge');
+
+    let selectedSectionIndex = 0;
+
+    function selectSectionByIndex(idx, customHighlightedText = null) {
+      if (!currentSections || currentSections.length === 0) return;
+      selectedSectionIndex = Math.max(0, Math.min(idx, currentSections.length - 1));
+      const sec = currentSections[selectedSectionIndex];
+      if (secSelectEl) secSelectEl.value = String(selectedSectionIndex);
+      if (secBadgeEl) secBadgeEl.textContent = sec.heading ? (sec.heading.length > 26 ? sec.heading.slice(0, 26) + '...' : sec.heading) : `Section ${selectedSectionIndex + 1}`;
+      if (selectedTextEl) {
+        selectedTextEl.value = customHighlightedText !== null ? customHighlightedText : (sec.content || sec.heading || '');
+      }
+      surfaceEl.querySelectorAll('.vs-ai-preview-section-block').forEach((blk, bIdx) => {
+        blk.classList.toggle('selected', bIdx === selectedSectionIndex);
+      });
+    }
+
+    function renderInteractiveSurface(recentlyRevisedHeading = null) {
+      if (!surfaceEl) return;
+
+      // Populate section dropdown
+      if (secSelectEl) {
+        secSelectEl.innerHTML = currentSections.map((s, idx) => `
+          <option value="${idx}">${idx + 1}. ${escapeHtml(s.heading || ('Section ' + (idx + 1)))}</option>
+        `).join('');
+      }
+
+      let html = '';
+
+      // If Excel workbook has sheet preview data, render interactive sheet preview at top
+      if (normType === 'xlsx' && currentPreviewObj && Array.isArray(currentPreviewObj.sheets) && currentPreviewObj.sheets.length > 0) {
+        html += `<div style="margin-bottom:18px;">`;
+        currentPreviewObj.sheets.forEach((sh) => {
+          const headers = sh.headers || [];
+          const rows = sh.rows || [];
+          html += `
+            <div style="margin-bottom:14px;background:#ffffff;border:1px solid #cbd5e1;border-radius:10px;overflow:hidden;">
+              <div style="background:#f0fdf4;padding:8px 12px;border-bottom:1px solid #bbf7d0;font-weight:700;font-size:12.5px;color:#166534;">
+                📊 Sheet: ${escapeHtml(sh.name || 'Schedule')}
+              </div>
+              <div style="overflow-x:auto;">
+                <table class="vs-ai-excel-table" style="width:100%;border-collapse:collapse;font-size:12px;">
+                  ${headers.length > 0 ? `<thead><tr>${headers.map(h => `<th style="background:#1e3a8a;color:#fff;padding:6px 10px;border:1px solid #cbd5e1;text-align:left;">${escapeHtml(String(h ?? ''))}</th>`).join('')}</tr></thead>` : ''}
+                  <tbody>
+                    ${rows.slice(0, 40).map(r => `<tr>${r.map(c => `<td style="padding:5px 10px;border:1px solid #e2e8f0;">${escapeHtml(String(c ?? ''))}</td>`).join('')}</tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `;
+        });
+        html += `</div>`;
+      }
+
+      html += `
+        <div class="vs-ai-docx-page" style="max-width:${currentOrientation === 'landscape' ? '1060px' : '820px'};margin:0 auto;padding:36px 44px;">
+          <div class="vs-ai-docx-letterhead">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-size:16px;font-weight:800;color:#1e3a8a;letter-spacing:0.4px;">VS DATABASE · STATUTORY DOCUMENT PREVIEW</div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px;">Click any section block below or highlight text to revise with VS AI</div>
+              </div>
+              <span style="font-size:11px;font-weight:700;color:#1e40af;background:#eff6ff;padding:4px 10px;border-radius:6px;border:1px solid #bfdbfe;">
+                ${currentOrientation === 'landscape' ? '📐 Landscape Mode' : '📄 Portrait Mode'}
+              </span>
+            </div>
+            <div style="height:2px;background:linear-gradient(90deg, #2563eb 0%, #93c5fd 100%);margin:10px 0 18px 0;"></div>
+          </div>
+          <div class="vs-ai-iprev-sections-list">
+            ${currentSections.map((sec, idx) => {
+              const isRevised = recentlyRevisedHeading && sec.heading && sec.heading.toLowerCase() === recentlyRevisedHeading.toLowerCase();
+              return `
+                <div class="vs-ai-preview-section-block ${idx === selectedSectionIndex ? 'selected' : ''} ${isRevised ? 'just-revised' : ''}" data-sec-idx="${idx}">
+                  <div class="vs-ai-preview-section-bar">
+                    <span class="vs-ai-preview-sec-title">§ ${idx + 1}. ${escapeHtml(sec.heading || ('Section ' + (idx + 1)))}</span>
+                    <span class="vs-ai-preview-sec-action-pill">${isRevised ? '✓ Updated by VS AI' : 'Click to Select & Revise'}</span>
+                  </div>
+                  <div class="vs-ai-preview-section-content">${renderMarkdown(sec.content || '')}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+
+      surfaceEl.innerHTML = html;
+
+      surfaceEl.querySelectorAll('.vs-ai-preview-section-block').forEach((blk) => {
+        blk.onclick = (e) => {
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed && sel.toString().trim().length > 3) {
+            return; // Let mouseup text selection handler capture the exact highlighted substring
+          }
+          const idx = parseInt(blk.getAttribute('data-sec-idx') || '0', 10);
+          selectSectionByIndex(idx);
+        };
+      });
+
+      selectSectionByIndex(selectedSectionIndex);
+    }
+
+    // Support freeform text selection inside the preview surface
+    surfaceEl.addEventListener('mouseup', () => {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) {
+        const highlighted = sel.toString().trim();
+        if (highlighted.length > 3) {
+          let secIdx = selectedSectionIndex;
+          const anchorEl = sel.anchorNode ? (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement) : null;
+          const secBlk = anchorEl ? anchorEl.closest('.vs-ai-preview-section-block') : null;
+          if (secBlk) {
+            secIdx = parseInt(secBlk.getAttribute('data-sec-idx') || '0', 10);
+          }
+          selectSectionByIndex(secIdx, highlighted);
+        }
+      }
+    });
+
+    if (secSelectEl) {
+      secSelectEl.onchange = () => {
+        const idx = parseInt(secSelectEl.value || '0', 10);
+        selectSectionByIndex(idx);
+        const targetBlk = surfaceEl.querySelector(`.vs-ai-preview-section-block[data-sec-idx="${idx}"]`);
+        if (targetBlk) targetBlk.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      };
+    }
+
+    modal.querySelectorAll('.vs-ai-iprev-chip').forEach(chip => {
+      chip.onclick = () => {
+        instructionEl.value = chip.getAttribute('data-ins') || '';
+        instructionEl.focus();
+      };
+    });
+
+    // View mode toggle for PDF (Interactive Sections vs Native PDF Frame)
+    modal.querySelectorAll('.vs-ai-iprev-tab').forEach(tabBtn => {
+      tabBtn.onclick = () => {
+        modal.querySelectorAll('.vs-ai-iprev-tab').forEach(b => {
+          b.classList.remove('active');
+          b.style.background = 'transparent';
+          b.style.color = '#475569';
+        });
+        tabBtn.classList.add('active');
+        tabBtn.style.background = '#ffffff';
+        tabBtn.style.color = '#1e3a8a';
+
+        const viewMode = tabBtn.getAttribute('data-view');
+        if (viewMode === 'native-pdf') {
+          const curArtId = currentData.artifact_id || currentData.id || '';
+          const pdfStreamUrl = (curArtId ? `/api/ai/artifacts/${encodeURIComponent(curArtId)}/preview` : null) ||
+            (currentData.filename ? `/api/ai/exports/${encodeURIComponent(currentData.filename)}` : '');
+          surfaceEl.style.display = 'none';
+          pdfFrameEl.style.display = 'block';
+          pdfFrameEl.src = `${pdfStreamUrl}#toolbar=1&navpanes=0&t=${Date.now()}`;
+        } else {
+          pdfFrameEl.style.display = 'none';
+          surfaceEl.style.display = 'block';
+        }
+      };
+    });
+
+    // Apply AI Revision & Generate New Document
+    applyBtn.onclick = async () => {
+      const targetText = (selectedTextEl.value || '').trim();
+      const instruction = (instructionEl.value || '').trim();
+      if (!targetText) {
+        alert('Please click a section in the preview or highlight the text area you want to revise.');
+        return;
+      }
+      if (!instruction) {
+        alert('Please enter an instruction telling VS AI what to change in the selected area.');
+        instructionEl.focus();
+        return;
+      }
+
+      const activeSec = currentSections[selectedSectionIndex] || {};
+      applyBtn.disabled = true;
+      applyBtn.innerHTML = `<span>⏳ Revising Area & Generating New Document...</span>`;
+      if (statusBox) {
+        statusBox.style.display = 'block';
+        statusBox.style.background = '#eff6ff';
+        statusBox.style.color = '#1e40af';
+        statusBox.style.border = '1px solid #bfdbfe';
+        statusBox.textContent = 'VS AI is revising the selected section and compiling the updated document...';
+      }
+
+      try {
+        const resp = await fetch('/api/ai/revise-document-area', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            artifact_id: currentData.artifact_id || currentData.id || '',
+            title: title || currentData.filename || 'Statutory Document',
+            format: normType,
+            full_content: currentSourceContent,
+            selected_area: targetText,
+            section_heading: activeSec.heading || '',
+            instruction: instruction,
+            conversation_id: currentConvId || null
+          })
+        });
+        const res = await resp.json();
+        if (!res || !res.ok) {
+          throw new Error((res && res.error) || 'Failed to revise selected area');
+        }
+
+        // Update state with newly generated artifact
+        currentData = {
+          ok: true,
+          artifact_id: res.artifact_id,
+          filename: res.filename,
+          format: res.format || normType,
+          orientation: res.orientation || currentOrientation,
+          size_kb: res.size_kb,
+          download_url: res.download_url,
+          preview_url: res.preview_url
+        };
+        currentSourceContent = res.revised_content || currentSourceContent;
+        currentOrientation = (res.orientation || currentOrientation).toLowerCase();
+        currentPreviewObj = res.preview || currentPreviewObj;
+        currentSections = (Array.isArray(res.sections) && res.sections.length > 0)
+          ? res.sections
+          : extractClientSelectableSections(currentSourceContent);
+
+        if (badgeEl && normType === 'pdf') {
+          badgeEl.textContent = `PDF · ${currentOrientation === 'landscape' ? 'Landscape' : 'Portrait'} (Revised)`;
+        }
+
+        renderInteractiveSurface(activeSec.heading || '');
+        instructionEl.value = '';
+
+        if (statusBox) {
+          statusBox.style.display = 'block';
+          statusBox.style.background = '#f0fdf4';
+          statusBox.style.color = '#166534';
+          statusBox.style.border = '1px solid #bbf7d0';
+          statusBox.textContent = `✓ Revised document "${res.filename}" generated! Preview updated & added to chat.`;
+        }
+
+        if (typeof onRevised === 'function') {
+          onRevised(currentData, currentSourceContent);
+        }
+
+        // Append a new Revised Document Card into the chat stream so the user has the newly generated file card
+        if (messageRow) {
+          const revisedCard = document.createElement('div');
+          const badgeCls = normType === 'xlsx' ? 'xlsx' : (normType === 'docx' ? 'docx' : 'pdf');
+          const badgeLbl = normType === 'xlsx' ? 'Excel · Revised' : (normType === 'docx' ? 'Word · Revised' : `PDF · ${currentOrientation === 'landscape' ? 'Landscape' : 'Portrait'} · Revised`);
+          revisedCard.className = 'vs-ai-direct-file-card vs-ai-revised-file-card';
+          revisedCard.dataset.artifactId = res.artifact_id || '';
+          revisedCard.dataset.serverFilename = res.filename || '';
+          revisedCard.innerHTML = `
+            <div class="vs-ai-file-icon-box ${badgeCls}">${extIcon}</div>
+            <div class="vs-ai-file-meta-col">
+              <div class="vs-ai-file-meta-name" title="${escapeHtml(res.filename)}">${escapeHtml(res.filename)}</div>
+              <div class="vs-ai-file-meta-sub">
+                <span class="vs-ai-file-badge ${badgeCls}">${badgeLbl}</span>
+                <span class="vs-ai-file-status-text">Updated via AI Area Revision · ${res.size_kb || ''} KB</span>
+              </div>
+            </div>
+            <div class="vs-ai-file-actions-row">
+              <button type="button" class="btn primary btn-sm btn-card-download" title="Download Revised File">
+                <svg class="i" style="width:12px;height:12px;margin-right:3px;" aria-hidden="true"><use href="#dl"/></svg>
+                <span>Download</span>
+              </button>
+              <button type="button" class="btn secondary btn-sm btn-card-save-client" title="Save Revised File to Client">
+                <svg class="i" style="width:12px;height:12px;margin-right:3px;" aria-hidden="true"><use href="#folder"/></svg>
+                <span>Save to Client</span>
+              </button>
+              <button type="button" class="btn secondary btn-sm btn-card-preview" title="Preview Revised Document">
+                <svg class="i" style="width:12px;height:12px;margin-right:3px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>Preview</span>
+              </button>
+            </div>
+          `;
+          const latestDataSnapshot = Object.assign({}, currentData);
+          const latestContentSnapshot = currentSourceContent;
+          revisedCard.querySelector('.btn-card-download').onclick = () => executeSaveToWindowsLocation(latestDataSnapshot, title, normType);
+          revisedCard.querySelector('.btn-card-save-client').onclick = () => showSaveClientConfirmationModal(latestDataSnapshot, title, normType);
+          revisedCard.querySelector('.btn-card-preview').onclick = () => openInteractiveDocumentPreviewModal(latestDataSnapshot, title, normType, latestContentSnapshot, citations, messageRow, revisedCard);
+
+          if (sourceCard && sourceCard.parentNode) {
+            sourceCard.parentNode.insertBefore(revisedCard, sourceCard.nextSibling);
+          } else {
+            const footerRow = messageRow.querySelector('.vs-ai-asst-footer-row');
+            if (footerRow && footerRow.parentNode) {
+              footerRow.parentNode.insertBefore(revisedCard, footerRow);
+            }
+          }
+        }
+
+        if (typeof showNativeToast === 'function') {
+          showNativeToast(`✓ Revised document "${res.filename}" generated!`, 'success', 3500);
+        }
+      } catch (err) {
+        if (statusBox) {
+          statusBox.style.display = 'block';
+          statusBox.style.background = '#fef2f2';
+          statusBox.style.color = '#b91c1c';
+          statusBox.style.border = '1px solid #fecaca';
+          statusBox.textContent = `Revision error: ${err.message}`;
+        } else {
+          alert('Failed to revise selected area: ' + err.message);
+        }
+      } finally {
+        applyBtn.disabled = false;
+        applyBtn.innerHTML = `<span>✨ Apply Change & Generate New Document</span>`;
+      }
+    };
+
+    renderInteractiveSurface();
+
+    modal.querySelector('#vs-ai-iprev-btn-close').onclick = () => modal.remove();
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.querySelector('#vs-ai-iprev-btn-download').onclick = () => executeSaveToWindowsLocation(currentData, title, normType);
+    modal.querySelector('#vs-ai-iprev-btn-save-client').onclick = () => showSaveClientConfirmationModal(currentData, title, normType);
+  }
+
+  function showInAppPdfPreview(pdfData, title, rawContent = '') {
+    openInteractiveDocumentPreviewModal(pdfData, title, 'pdf', rawContent);
+  }
+
+  function showInAppDocxPreview(docxData, title, rawContent, previewData) {
+    const existing = document.getElementById('vs-ai-docx-preview-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'vs-ai-docx-preview-modal';
+    modal.className = 'vs-ai-modal-overlay';
+    modal.style.zIndex = '10001';
+
+    const safeTitle = escapeHtml(title || docxData.filename || 'Executive Advisory Document');
+    const downloadUrl = docxData.download_url || `/api/ai/exports/${encodeURIComponent(docxData.filename)}`;
+
+    function formatDocxPreviewCell(cell) {
+      if (!cell) return '';
+      let c = escapeHtml(String(cell));
+      c = c.replace(/&lt;br\s*\/?&gt;/gi, '<br/>');
+      c = c.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      c = c.replace(/\*(.*?)\*/g, '<em>$1</em>');
+      return c;
+    }
+
+    let docHtml = '';
+    if (previewData && previewData.paragraphs && previewData.paragraphs.length > 0) {
+      docHtml = previewData.paragraphs.map(p => {
+        const trimmed = p.trim();
+        if (!trimmed) return '<p style="margin:8px 0;height:12px;"></p>';
+        if (trimmed.startsWith('#') || (trimmed.toUpperCase() === trimmed && trimmed.length < 80)) {
+          return `<h3 style="color:#1e3a8a;margin:20px 0 8px 0;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:4px;">${escapeHtml(trimmed.replace(/^#+\s*/, ''))}</h3>`;
+        }
+        let pFormatted = escapeHtml(trimmed);
+        pFormatted = pFormatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        pFormatted = pFormatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        return `<p style="margin:8px 0;line-height:1.7;color:#1e293b;font-size:13.5px;text-align:justify;">${pFormatted}</p>`;
+      }).join('');
+      if (previewData.tables && previewData.tables.length > 0) {
+        docHtml += '<div style="margin-top:24px;">';
+        previewData.tables.forEach(tbl => {
+          docHtml += '<div style="overflow-x:auto;margin:16px 0;"><table class="vs-ai-docx-table" style="width:100%;border-collapse:collapse;font-size:12.5px;">';
+          tbl.forEach((row, rIdx) => {
+            const isHead = rIdx === 0;
+            docHtml += `<tr style="${isHead ? 'background:#1e3a8a;color:#ffffff;font-weight:700;' : (rIdx % 2 === 0 ? 'background:#f8fafc;' : 'background:#ffffff;')}">`;
+            row.forEach(cell => {
+              docHtml += `<td style="border:1px solid #cbd5e1;padding:8px 12px;${isHead ? 'color:#fff;' : 'color:#1e293b;'}">${formatDocxPreviewCell(cell)}</td>`;
+            });
+            docHtml += '</tr>';
+          });
+          docHtml += '</table></div>';
+        });
+        docHtml += '</div>';
+      }
+    } else {
+      docHtml = renderMarkdown(rawContent || '');
+    }
+
+    modal.innerHTML = `
+      <div class="vs-ai-pdf-modal-card vs-ai-preview-card glass">
+        <div class="vs-ai-pdf-toolbar">
+          <div class="vs-ai-pdf-toolbar-title">
+            <span style="font-size:20px;">📄</span>
+            <span style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeTitle}</span>
+            <span class="vs-ai-chart-badge" style="background:#eff6ff;color:#2563eb;border-color:#bfdbfe;">Microsoft Word (.docx)</span>
+          </div>
+          <div class="vs-ai-pdf-toolbar-actions">
+            <button type="button" class="btn primary btn-sm" id="vs-ai-docx-btn-download">
+              <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#dl"/></svg>
+              <span>Download Word</span>
+            </button>
+            <button type="button" class="btn secondary btn-sm" id="vs-ai-docx-btn-save-client">
+              <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#folder"/></svg>
+              <span>Save to Client</span>
+            </button>
+            <button type="button" class="vs-ai-modal-close" id="vs-ai-docx-btn-close" aria-label="Close Preview">✕</button>
+          </div>
+        </div>
+        <div class="vs-ai-docx-paper-container">
+          <div class="vs-ai-docx-page">
+            <div class="vs-ai-docx-letterhead">
+              <div style="font-size:17px;font-weight:800;color:#1e3a8a;letter-spacing:0.5px;">VS ADVISORY SERVICES & ASSOCIATES</div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px;">Chartered Accountants & Legal Practitioners · Professional Advisory Dossier</div>
+              <div style="height:2px;background:linear-gradient(90deg, #2563eb 0%, #93c5fd 100%);margin:12px 0 18px 0;"></div>
+            </div>
+            <div class="vs-ai-docx-body">${docHtml}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('#vs-ai-docx-btn-close').onclick = () => modal.remove();
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
-    modal.querySelector('#vs-ai-pdf-btn-save-options').onclick = () => {
-      showUniversalSaveOptionsModal(pdfData, title, 'pdf');
+    modal.querySelector('#vs-ai-docx-btn-download').onclick = () => {
+      executeSaveToWindowsLocation(docxData, title, 'docx');
     };
-    modal.querySelector('#vs-ai-pdf-btn-save-client').onclick = () => {
-      showUniversalSaveOptionsModal(pdfData, title, 'pdf', 'client');
+    modal.querySelector('#vs-ai-docx-btn-save-client').onclick = () => {
+      showSaveClientConfirmationModal(docxData, title, 'docx');
     };
-    modal.querySelector('#vs-ai-pdf-btn-save-location').onclick = () => {
-      executeSaveToWindowsLocation(pdfData, title, 'pdf');
+  }
+
+  function showInAppXlsxPreview(xlsxData, title, rawContent, previewData) {
+    const existing = document.getElementById('vs-ai-xlsx-preview-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'vs-ai-xlsx-preview-modal';
+    modal.className = 'vs-ai-modal-overlay';
+    modal.style.zIndex = '10001';
+
+    const safeTitle = escapeHtml(title || xlsxData.filename || 'Statutory Spreadsheet');
+    const downloadUrl = xlsxData.download_url || `/api/ai/exports/${encodeURIComponent(xlsxData.filename)}`;
+
+    let sheets = {};
+    let sheetNames = [];
+    if (previewData && previewData.sheets) {
+      if (Array.isArray(previewData.sheets)) {
+        previewData.sheets.forEach(s => {
+          const sName = s.name || 'Sheet';
+          sheetNames.push(sName);
+          const fullSheetRows = [];
+          if (s.headers && s.headers.length > 0) fullSheetRows.push(s.headers);
+          if (s.rows && Array.isArray(s.rows)) fullSheetRows.push(...s.rows);
+          sheets[sName] = fullSheetRows;
+        });
+      } else {
+        sheets = previewData.sheets;
+        sheetNames = previewData.sheet_names || Object.keys(sheets);
+      }
+    }
+
+    let activeSheetIndex = 0;
+
+    modal.innerHTML = `
+      <div class="vs-ai-pdf-modal-card vs-ai-preview-card glass">
+        <div class="vs-ai-pdf-toolbar">
+          <div class="vs-ai-pdf-toolbar-title">
+            <span style="font-size:20px;">📊</span>
+            <span style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeTitle}</span>
+            <span class="vs-ai-chart-badge" style="background:#f0fdf4;color:#16a34a;border-color:#bbf7d0;">Excel Spreadsheet (.xlsx)</span>
+          </div>
+          <div class="vs-ai-pdf-toolbar-actions">
+            <button type="button" class="btn primary btn-sm" id="vs-ai-xlsx-btn-download">
+              <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#dl"/></svg>
+              <span>Download Excel</span>
+            </button>
+            <button type="button" class="btn secondary btn-sm" id="vs-ai-xlsx-btn-save-client">
+              <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#folder"/></svg>
+              <span>Save to Client</span>
+            </button>
+            <button type="button" class="vs-ai-modal-close" id="vs-ai-xlsx-btn-close" aria-label="Close Preview">✕</button>
+          </div>
+        </div>
+        <div class="vs-ai-xlsx-container">
+          <div class="vs-ai-xlsx-sheet-tabs" id="vs-ai-xlsx-tabs"></div>
+          <div class="vs-ai-xlsx-grid-wrapper" id="vs-ai-xlsx-grid"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function renderActiveSheet() {
+      const tabsEl = modal.querySelector('#vs-ai-xlsx-tabs');
+      const gridEl = modal.querySelector('#vs-ai-xlsx-grid');
+      if (!tabsEl || !gridEl) return;
+
+      if (sheetNames.length === 0) {
+        tabsEl.style.display = 'none';
+        gridEl.innerHTML = `<div style="padding:40px;text-align:center;color:#64748b;">No spreadsheet cells found.</div>`;
+        return;
+      }
+
+      tabsEl.innerHTML = sheetNames.map((sName, idx) => `
+        <button type="button" class="vs-ai-sheet-tab ${idx === activeSheetIndex ? 'active' : ''}" data-idx="${idx}">
+          <svg class="i" style="width:12px;height:12px;margin-right:4px;" aria-hidden="true"><use href="#doc"/></svg>
+          ${escapeHtml(sName)}
+        </button>
+      `).join('');
+
+      tabsEl.querySelectorAll('.vs-ai-sheet-tab').forEach(tb => {
+        tb.onclick = () => {
+          activeSheetIndex = parseInt(tb.getAttribute('data-idx') || '0', 10);
+          renderActiveSheet();
+        };
+      });
+
+      const currentName = sheetNames[activeSheetIndex];
+      const rows = sheets[currentName] || [];
+
+      if (rows.length === 0) {
+        gridEl.innerHTML = `<div style="padding:40px;text-align:center;color:#64748b;">Sheet is empty.</div>`;
+        return;
+      }
+
+      let maxCols = 0;
+      rows.forEach(r => { if (r.length > maxCols) maxCols = r.length; });
+
+      const colLabels = [];
+      for (let c = 0; c < maxCols; c++) {
+        let label = '';
+        let n = c;
+        while (n >= 0) {
+          label = String.fromCharCode(65 + (n % 26)) + label;
+          n = Math.floor(n / 26) - 1;
+        }
+        colLabels.push(label);
+      }
+
+      let gridHtml = '<table class="vs-ai-excel-table"><thead><tr><th class="vs-ai-excel-corner"></th>';
+      colLabels.forEach(cl => {
+        gridHtml += `<th class="vs-ai-excel-col-head">${cl}</th>`;
+      });
+      gridHtml += '</tr></thead><tbody>';
+
+      rows.forEach((row, rIdx) => {
+        const isHeaderCandidate = rIdx === 0;
+        gridHtml += `<tr><td class="vs-ai-excel-row-num">${rIdx + 1}</td>`;
+        for (let c = 0; c < maxCols; c++) {
+          const val = row[c] !== undefined && row[c] !== null ? String(row[c]) : '';
+          const isNumeric = val !== '' && !isNaN(val.replace(/[₹$,]/g, '').trim());
+          const cellAlign = isNumeric ? 'text-align:right;' : 'text-align:left;';
+          const headerWeight = isHeaderCandidate ? 'font-weight:700;background:#f8fafc;' : '';
+          gridHtml += `<td class="vs-ai-excel-cell" style="${cellAlign}${headerWeight}">${escapeHtml(val)}</td>`;
+        }
+        gridHtml += '</tr>';
+      });
+
+      gridHtml += '</tbody></table>';
+      gridEl.innerHTML = gridHtml;
+    }
+
+    renderActiveSheet();
+
+    modal.querySelector('#vs-ai-xlsx-btn-close').onclick = () => modal.remove();
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+    modal.querySelector('#vs-ai-xlsx-btn-download').onclick = () => {
+      executeSaveToWindowsLocation(xlsxData, title, 'xlsx');
     };
+    modal.querySelector('#vs-ai-xlsx-btn-save-client').onclick = () => {
+      showSaveClientConfirmationModal(xlsxData, title, 'xlsx');
+    };
+  }
+
+  function showSaveClientConfirmationModal(fileData, title, fileType = 'pdf') {
+    const existing = document.getElementById('vs-ai-save-confirm-modal');
+    if (existing) {
+      if (window.VSKeyboard && window.VSKeyboard.releaseFocus) {
+        window.VSKeyboard.releaseFocus(existing);
+      }
+      existing.remove();
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'vs-ai-save-confirm-modal';
+    modal.className = 'vs-ai-modal-overlay';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'vs-ai-save-confirm-title');
+    modal.style.zIndex = '10006';
+    modal.innerHTML = `
+      <div style="background:#ffffff; border-radius:16px; padding:26px 30px; max-width:420px; width:90%; box-shadow:0 24px 50px rgba(15,23,42,0.22); border:1px solid #e2e8f0; text-align:center; animation:vsaiFadeIn 0.2s ease both;">
+        <div style="width:54px; height:54px; border-radius:50%; background:#eff6ff; color:#2563eb; display:flex; align-items:center; justify-content:center; margin:0 auto 16px auto; font-size:26px; border:1px solid #bfdbfe;">
+          📁
+        </div>
+        <h3 id="vs-ai-save-confirm-title" style="font-size:17px; font-weight:700; color:#0f172a; margin:0 0 8px 0;">Save to Client</h3>
+        <p style="font-size:13.5px; color:#475569; margin:0 0 22px 0; line-height:1.5;">
+          Do you really want to save this document to the client?
+        </p>
+        <div style="display:flex; justify-content:center; gap:12px;">
+          <button type="button" class="btn secondary vs-ai-btn-no" style="min-width:96px; padding:8px 18px; font-weight:600;">No</button>
+          <button type="button" class="btn primary vs-ai-btn-yes" style="min-width:96px; padding:8px 18px; font-weight:600; background:#2563eb; color:#fff;">Yes</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeModal = () => {
+      if (window.VSKeyboard && window.VSKeyboard.releaseFocus) {
+        window.VSKeyboard.releaseFocus(modal);
+      }
+      modal.remove();
+    };
+
+    const noBtn = modal.querySelector('.vs-ai-btn-no');
+    const yesBtn = modal.querySelector('.vs-ai-btn-yes');
+
+    noBtn.onclick = () => closeModal();
+    modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+    yesBtn.onclick = async () => {
+      yesBtn.disabled = true;
+      yesBtn.textContent = 'Preparing...';
+      try {
+        await stageFileAndRedirectToSave(fileData, title, fileType);
+        closeModal();
+      } catch (err) {
+        alert('Could not save file to client: ' + err.message);
+        closeModal();
+      }
+    };
+
+    if (window.VSKeyboard && window.VSKeyboard.trapFocus) {
+      window.VSKeyboard.trapFocus(modal, noBtn);
+    } else if (noBtn) {
+      noBtn.focus();
+    }
+  }
+
+  async function stageFileAndRedirectToSave(fileData, title, fileType = 'pdf') {
+    const filename = fileData.filename;
+    if (!filename) throw new Error('Filename missing from generated file');
+
+    const fetchUrl = fileData.download_url || (fileData.artifact_id ? `/api/ai/artifacts/${fileData.artifact_id}/download` : null) || `/api/ai/exports/${encodeURIComponent(filename)}`;
+    let res = await fetch(fetchUrl);
+    if (!res.ok) {
+      // Fallback check to direct exports
+      const altUrl = `/api/ai/exports/${encodeURIComponent(filename)}`;
+      if (altUrl !== fetchUrl) {
+        res = await fetch(altUrl);
+      }
+    }
+    if (!res.ok) throw new Error(`Could not load export file from server (${res.status})`);
+    const blob = await res.blob();
+    const fileObj = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+
+    let stagedItem = null;
+    if (window.saveStaging) {
+      await window.saveStaging.init();
+      stagedItem = await window.saveStaging.addFileDirect(fileObj, filename);
+    }
+
+    if (typeof selectedFiles !== 'undefined') {
+      const isPdf = filename.toLowerCase().endsWith('.pdf') || fileType === 'pdf';
+      selectedFiles.push({
+        staged_file_id: stagedItem ? stagedItem.staged_file_id : undefined,
+        staging_session_id: window.saveStaging ? window.saveStaging.sessionId : undefined,
+        name: filename,
+        filename: filename,
+        size: blob.size,
+        fileObj: fileObj,
+        is_pdf: isPdf,
+        pdf_selected: false,
+        badge: stagedItem ? stagedItem.badge : null,
+        client_visibility: true
+      });
+      if (typeof renderSelectedFiles === 'function') {
+        renderSelectedFiles();
+      }
+    }
+
+    document.querySelectorAll('#vs-ai-pdf-preview-modal, #vs-ai-docx-preview-modal, #vs-ai-xlsx-preview-modal, #vs-ai-save-modal, #vs-ai-save-options-modal').forEach(m => m.remove());
+
+    if (typeof navigateTo === 'function') {
+      navigateTo('save');
+      if (typeof showNativeToast === 'function') {
+        showNativeToast(`Pre-filled "${filename}" in Saves tab. Select client and folder to finish saving.`, 'success', 4000);
+      }
+    }
   }
 
   let cachedClientsList = null;
@@ -1580,8 +3052,8 @@
     modal.style.zIndex = '10005';
 
     let cleanBase = (title || fileData.filename || 'Statutory Document').trim();
-    cleanBase = cleanBase.replace(/\.(docx|xlsx|pdf|txt)+$/i, '');
-    const safeTitle = escapeHtml(cleanBase);
+    cleanBase = cleanBase.replace(/(\.(docx|xlsx|pdf|txt|csv))+$/gi, '').trim();
+    const safeTitle = escapeHtml(cleanBase || 'Statutory Document');
     const extLabel = fileType === 'xlsx' ? 'Excel Spreadsheet (.xlsx)' : (fileType === 'docx' ? 'Word Document (.docx)' : 'Statutory Document (.pdf)');
     const extIcon = fileType === 'xlsx' ? '📊' : (fileType === 'docx' ? '📄' : '📑');
 
@@ -1679,43 +3151,121 @@
     showUniversalSaveOptionsModal(pdfData, title, 'pdf', initialOption);
   }
 
-  async function executeSaveToWindowsLocation(fileData, title, fileType = 'pdf') {
-    const ext = (fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`).toLowerCase();
-    let base = (title || fileData.filename || 'VS_AI_Document').replace(/[/\\?%*:|"<>]/g, '_').trim();
-    base = base.replace(/\.(docx|xlsx|pdf|txt)+$/i, '');
-    const defaultName = `${base}${ext}`;
-    
-    // In pywebview native desktop mode:
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.save_file_to_location) {
+  async function executeSaveToWindowsLocation(fileData, title, fileType = null) {
+    let targetExt = fileType ? fileType.replace(/^\./, '').toLowerCase() : '';
+    if (!targetExt && fileData && (fileData.format || fileData.artifact_type)) {
+      targetExt = String(fileData.format || fileData.artifact_type).toLowerCase();
+    }
+    if (!targetExt && fileData && fileData.filename) {
+      const m = fileData.filename.match(/\.([a-zA-Z0-9]+)$/);
+      if (m) targetExt = m[1].toLowerCase();
+    }
+    if (!targetExt && title) {
+      const m = title.match(/\.([a-zA-Z0-9]+)$/);
+      if (m) targetExt = m[1].toLowerCase();
+    }
+    if (!targetExt) targetExt = 'pdf';
+
+    let base = (title || (fileData && (fileData.title || fileData.filename)) || 'VS_AI_Document').trim();
+    base = base.replace(/[/\\?%*:|"<>]/g, '_').trim();
+    base = base.replace(/(\.(docx|xlsx|pdf|txt|csv))+$/gi, '').trim();
+    if (!base) base = 'VS_AI_Document';
+    const defaultName = `${base}.${targetExt}`;
+    const filenameOnServer = (fileData && fileData.filename) ? fileData.filename : defaultName;
+    const artifactId = (fileData && (fileData.artifact_id || fileData.id)) ? String(fileData.artifact_id || fileData.id) : '';
+
+    // 1. Primary Desktop Native Bridge (pywebview WinForms SaveFileDialog)
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_file_to_location === 'function') {
       try {
-        const res = await window.pywebview.api.save_file_to_location(fileData.filename, defaultName);
-        if (res && res.ok) {
-          const msg = `✓ Document saved successfully to:\n${res.path}`;
+        const pyRes = await window.pywebview.api.save_file_to_location(filenameOnServer, defaultName, artifactId);
+        if (pyRes && pyRes.ok) {
+          const msg = `✓ Document saved successfully to:\n${pyRes.path}`;
           if (typeof showNativeToast === 'function') {
             showNativeToast(msg, 'success', 5000);
           } else {
             alert(msg);
           }
-          return;
-        } else if (res && res.cancelled) {
-          return;
-        } else if (res && res.error) {
-          throw new Error(res.error);
+          return pyRes;
+        } else if (pyRes && pyRes.cancelled) {
+          return pyRes;
         }
-      } catch (err) {
-        console.warn('Native Windows save dialog error:', err);
+      } catch (pyErr) {
+        console.warn('[Download] pywebview save_file_to_location notice, trying server save dialog:', pyErr);
       }
     }
 
-    // In-browser fallback: trigger clean native download without redirecting
-    const a = document.createElement('a');
-    a.href = `/api/ai/exports/${encodeURIComponent(fileData.filename)}`;
-    a.download = defaultName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => a.remove(), 200);
-    if (typeof showNativeToast === 'function') {
-      showNativeToast('Document download started.', 'success', 3000);
+    // 2. Native Server Save Dialog with artifact_id + filename resolution
+    try {
+      const resp = await fetch('/api/ai/native-save-dialog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artifact_id: artifactId,
+          source_filename: filenameOnServer,
+          default_name: defaultName,
+          ext: targetExt
+        })
+      });
+      const res = await resp.json();
+      if (res && res.ok) {
+        const msg = `✓ Document saved successfully to:\n${res.path}`;
+        if (typeof showNativeToast === 'function') {
+          showNativeToast(msg, 'success', 5000);
+        } else {
+          alert(msg);
+        }
+        return res;
+      } else if (res && res.cancelled) {
+        return res;
+      } else if (res && res.error && resp.status === 404) {
+        const errMsg = `Could not download document: ${res.error}`;
+        if (typeof showNativeToast === 'function') {
+          showNativeToast(errMsg, 'error', 5000);
+        } else {
+          alert(errMsg);
+        }
+        return res;
+      }
+    } catch (dialogErr) {
+      console.warn('[Download] Server save dialog error, falling back to direct stream download:', dialogErr);
+    }
+
+    // 3. Verified Blob Download Fallback (works in both WebView2 with ALLOW_DOWNLOADS=True and browsers)
+    const downloadUrl = (fileData && fileData.download_url)
+      ? fileData.download_url
+      : (artifactId ? `/api/ai/artifacts/${encodeURIComponent(artifactId)}/download` : `/api/ai/exports/${encodeURIComponent(filenameOnServer)}?download=1`);
+
+    try {
+      const dlResp = await fetch(downloadUrl);
+      if (!dlResp.ok) {
+        throw new Error(`Server returned HTTP ${dlResp.status}`);
+      }
+      const blob = await dlResp.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error('Downloaded file is empty (0 bytes).');
+      }
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = defaultName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(blobUrl);
+      }, 1500);
+      if (typeof showNativeToast === 'function') {
+        showNativeToast(`✓ Downloaded "${defaultName}" (${Math.max(1, Math.round(blob.size / 1024))} KB).`, 'success', 4000);
+      }
+      return { ok: true, filename: defaultName, size_bytes: blob.size };
+    } catch (dlErr) {
+      const errMsg = `Download failed for "${defaultName}": ${dlErr.message}`;
+      if (typeof showNativeToast === 'function') {
+        showNativeToast(errMsg, 'error', 5000);
+      } else {
+        alert(errMsg);
+      }
+      return { ok: false, error: dlErr.message };
     }
   }
 
@@ -1789,8 +3339,8 @@
         try {
           const ext = (fileData.filename ? fileData.filename.slice(fileData.filename.lastIndexOf('.')) : `.${fileType}`).toLowerCase();
           let cleanDoc = (title || fileData.filename || 'VS_AI_Statutory_Document').replace(/[/\\?%*:|"<>]/g, '_').trim();
-          cleanDoc = cleanDoc.replace(/\.(docx|xlsx|pdf|txt)+$/i, '');
-          const docName = `${cleanDoc}${ext}`;
+          cleanDoc = cleanDoc.replace(/(\.(docx|xlsx|pdf|txt|csv))+$/gi, '').trim();
+          const docName = `${cleanDoc || 'VS_AI_Document'}${ext}`;
           const targetFolder = folderSelect.value || 'General';
 
           const saveResp = await fetch('/api/ai/save-to-client', {
@@ -2410,7 +3960,11 @@
   }
 
   async function loadConversation(convId) {
-    if (isRequestInFlight) return;
+    if (isRequestInFlight && currentAbortController) {
+      console.log(`[VS-AI-STREAM] ${Date.now()} controller-aborted in loadConversation`);
+      try { currentAbortController.abort(); } catch(e) {}
+    }
+    isRequestInFlight = false;
     currentConvId = convId;
 
     const stream = document.querySelector('#vs-ai-chat-stream');
@@ -2426,9 +3980,22 @@
       const data = await resp.json();
       stream.innerHTML = '';
 
+      if (data.conversation && data.conversation.title) {
+        currentConversationTitle = data.conversation.title;
+      } else {
+        const cachedConv = allConversationsCache.find(c => c.id === convId);
+        currentConversationTitle = cachedConv ? cachedConv.title : '';
+      }
+
       if (data.messages && data.messages.length > 0) {
+        let prevUserPrompt = '';
         data.messages.forEach(m => {
-          appendMessage(m.role, m.content, m.meta ? m.meta.citations : null, null, null, false);
+          if (m.role === 'user') {
+            prevUserPrompt = m.content || '';
+            appendMessage(m.role, m.content, null, null, null, false);
+          } else {
+            appendMessage(m.role, m.content, m.meta ? m.meta.citations : null, prevUserPrompt, null, false);
+          }
         });
         triggerMermaidRender();
       } else {
@@ -2440,9 +4007,17 @@
   }
 
   function startNewChat() {
-    if (isRequestInFlight) return;
+    if (isRequestInFlight && currentAbortController) {
+      console.log(`[VS-AI-STREAM] ${Date.now()} controller-aborted in startNewChat`);
+      try { currentAbortController.abort(); } catch(e) {}
+    }
+    isRequestInFlight = false;
     cancelAutoRetry();
     currentConvId = null;
+    currentConversationTitle = null;
+    lastSentPrompt = '';
+    lastSentAttachments = [];
+    pendingClarificationSubmission = null;
     document.querySelectorAll('.vs-ai-history-item').forEach(it => it.classList.remove('active', 'on'));
     renderWelcomeHero();
     const input = document.querySelector('#vs-ai-prompt-input');
@@ -2568,6 +4143,11 @@
     e.target.value = '';
     renderAttachmentPreviewBar();
     updateSendButtonState();
+    document.querySelectorAll('.vs-ai-interactive-question-box').forEach(qBox => {
+      if (typeof qBox._syncClarifAttachments === 'function') {
+        qBox._syncClarifAttachments();
+      }
+    });
   }
 
   function readFileAsAttachment(file) {
@@ -2608,6 +4188,12 @@
   function renderAttachmentPreviewBar() {
     const bar = document.querySelector('#vs-ai-att-preview-bar');
     if (!bar) return;
+
+    document.querySelectorAll('.vs-ai-interactive-question-box').forEach(qBox => {
+      if (typeof qBox._syncClarifAttachments === 'function') {
+        qBox._syncClarifAttachments();
+      }
+    });
 
     if (currentAttachments.length === 0) {
       bar.style.display = 'none';
@@ -3265,11 +4851,138 @@
     `;
   }
 
+  function renderInteractiveQuestion(rawText) {
+    const rawLines = rawText.split('\n').map(l => l.trim());
+    const qList = [];
+    let currentQ = null;
+    let pendingId = null;
+
+    for (const line of rawLines) {
+      if (!line) continue;
+      const lower = line.toLowerCase();
+      if (lower.startsWith('id:')) {
+        pendingId = line.slice(3).trim();
+        if (currentQ && currentQ.options.length === 0 && !currentQ.id) {
+          currentQ.id = pendingId;
+          pendingId = null;
+        }
+      } else if (lower.startsWith('question:')) {
+        if (currentQ && currentQ.options.length > 0) {
+          qList.push(currentQ);
+        }
+        currentQ = {
+          id: pendingId || '',
+          title: line.slice(9).trim(),
+          options: []
+        };
+        pendingId = null;
+      } else if (line.startsWith('-') || line.startsWith('*') || /^\d+\./.test(line)) {
+        const opt = line.replace(/^[-*\d.]+\s*/, '').trim();
+        if (opt && !opt.toLowerCase().startsWith('other') && !opt.toLowerCase().startsWith('any other')) {
+          if (!currentQ) {
+            currentQ = { id: pendingId || '', title: 'Clarification / Confirmation Required', options: [] };
+            pendingId = null;
+          }
+          currentQ.options.push(opt);
+        }
+      } else if (!currentQ) {
+        currentQ = { id: pendingId || '', title: line, options: [] };
+        pendingId = null;
+      }
+    }
+    if (currentQ && currentQ.options.length > 0) {
+      qList.push(currentQ);
+    }
+    if (qList.length === 0) {
+      qList.push({ id: 'q_1', title: 'Clarification / Confirmation Required', options: ['Yes', 'No'] });
+    }
+
+    const slides = qList.slice(0, 5);
+    const totalSlides = slides.length;
+    const boxId = 'vs-ai-qbox-' + Math.random().toString(36).substring(2, 9);
+
+    return `
+      <div class="vs-ai-interactive-question-box" id="${boxId}" data-qcount="${totalSlides}" data-active-slide="0">
+        <div class="vs-ai-question-slide-header">
+          <span class="vs-ai-question-progress-badge">Question 1 of ${totalSlides}</span>
+          <div class="vs-ai-question-step-dots" role="tablist" aria-label="Clarification Questions Progress">
+            ${slides.map((_, sIdx) => `
+              <button type="button" class="vs-ai-question-step-dot ${sIdx === 0 ? 'active' : ''}" data-step="${sIdx}" title="Question ${sIdx + 1} of ${totalSlides}" aria-label="Question ${sIdx + 1} of ${totalSlides}"></button>
+            `).join('')}
+          </div>
+        </div>
+        ${slides.map((q, qIdx) => `
+          <div class="vs-ai-question-section" data-qidx="${qIdx}" data-qid="${escapeHtml(q.id || ('q_' + (qIdx + 1)))}" aria-hidden="${qIdx === 0 ? 'false' : 'true'}" style="${qIdx === 0 ? '' : 'display:none;'}">
+            <div class="vs-ai-question-title">
+              <svg class="i" style="width:16px;height:16px;color:#2563eb;flex-shrink:0;" aria-hidden="true"><use href="#ai"/></svg>
+              <span>${escapeHtml(q.title)}</span>
+            </div>
+            <div class="vs-ai-question-options" role="radiogroup" aria-label="${escapeHtml(q.title)}">
+              ${q.options.map(opt => `
+                <button type="button" class="vs-ai-question-opt-btn" data-val="${escapeHtml(opt)}" role="radio" aria-checked="false" aria-label="${escapeHtml(opt)}">
+                  <span class="vs-ai-radio-dot"></span>
+                  <span class="vs-ai-opt-text">${escapeHtml(opt)}</span>
+                </button>
+              `).join('')}
+              <div class="vs-ai-question-other-wrap">
+                <button type="button" class="vs-ai-question-opt-btn vs-ai-opt-other" data-val="__other__" role="radio" aria-checked="false" aria-label="Any other answer">
+                  <span class="vs-ai-radio-dot"></span>
+                  <span class="vs-ai-opt-text">Any other answer</span>
+                </button>
+                <div class="vs-ai-other-specify-label" style="display:none; font-size:12px; font-weight:600; color:#475569; margin:6px 0 2px 4px;">Please specify:</div>
+                <input type="text" class="vs-ai-question-other-input" placeholder="Type your custom answer here..." style="display:none;" />
+              </div>
+            </div>
+          </div>
+        `).join('')}
+        <div class="vs-ai-clarif-upload-bar" style="margin-top:12px;padding:10px 12px;background:#f8fafc;border:1px dashed #93c5fd;border-radius:10px;display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button type="button" class="btn secondary btn-sm vs-ai-btn-clarif-upload" style="background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;font-weight:600;">
+                <svg class="i" style="width:13px;height:13px;margin-right:4px;" aria-hidden="true"><use href="#clip"/></svg>
+                <span>📎 Upload Notice / Reference Document</span>
+              </button>
+              <span style="font-size:11.5px;color:#64748b;">Attach Notice PDF, GSTR-2B/3B Mismatch, AIS/26AS, or Preferred Format (.docx/.pdf)</span>
+            </div>
+          </div>
+          <div class="vs-ai-clarif-attached-list" style="display:none;flex-wrap:wrap;gap:6px;"></div>
+        </div>
+        <div class="vs-ai-question-submit-row" style="margin-top:14px;">
+          <button type="button" class="btn secondary btn-sm vs-ai-btn-prev-question" style="${totalSlides > 1 ? 'visibility:hidden;' : 'display:none;'}" disabled>
+            <span>← Previous</span>
+          </button>
+          <div class="vs-ai-question-submit-actions">
+            <button type="button" class="btn primary btn-sm vs-ai-btn-next-question" style="${totalSlides > 1 ? '' : 'display:none;'}" disabled>
+              <span>Continue →</span>
+            </button>
+            <button type="button" class="btn primary btn-sm vs-ai-btn-submit-choice" style="${totalSlides === 1 ? '' : 'display:none;'}" disabled>
+              <span>Submit Answers</span>
+              <svg class="i" style="width:12px;height:12px;" aria-hidden="true"><use href="#send"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderMarkdown(md) {
     if (!md) return '';
 
     const placeholders = [];
     let text = md;
+
+    // 0. Coalesce multiple ```question ... ``` blocks in the same message into a single sequential slide-wise widget
+    const questionBlocks = [];
+    text = text.replace(/```question\s*([\s\S]*?)```/gi, (match, qCode) => {
+      questionBlocks.push(qCode.trim());
+      return questionBlocks.length === 1 ? '@@@VSAI_MERGED_QUESTIONS@@@' : '';
+    });
+    if (questionBlocks.length > 0) {
+      const mergedQHtml = renderInteractiveQuestion(questionBlocks.join('\n\n'));
+      const qPhIdx = placeholders.length;
+      placeholders.push(mergedQHtml);
+      text = text.replace('@@@VSAI_MERGED_QUESTIONS@@@', `\n\n@@@VSAI_PH_${qPhIdx}@@@\n\n`);
+    }
 
     // 1. Extract and process Code Blocks (including ```chart, ```mermaid)
     text = text.replace(/```([a-zA-Z0-9_\-]*)\s*([\s\S]*?)```/g, (match, lang, code) => {
@@ -3289,6 +5002,13 @@
           placeholders.push(fallback);
           return `\n\n@@@VSAI_PH_${idx}@@@\n\n`;
         }
+      }
+
+      if (cleanLang === 'question') {
+        const qHtml = renderInteractiveQuestion(cleanCode);
+        const idx = placeholders.length;
+        placeholders.push(qHtml);
+        return `\n\n@@@VSAI_PH_${idx}@@@\n\n`;
       }
 
       if (cleanLang === 'mermaid') {

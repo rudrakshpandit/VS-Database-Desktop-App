@@ -112,6 +112,14 @@
   }, false);
 })();
 
+// Universal HTML Escaper (avoids lexical redeclaration collisions across script tags)
+if (typeof window.escapeHtml !== 'function') {
+  window.escapeHtml = function(value) {
+    return String(value || '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  };
+}
+var escapeHtml = window.escapeHtml;
+
 // Native Toast Notifications
 function showNativeToast(message, type = 'info', duration = 4000) {
   let container = document.getElementById('vs-native-toast-container');
@@ -188,10 +196,19 @@ function showNativeAlert(message, { title = 'VS Database', type = 'info' } = {})
   document.body.appendChild(overlay);
 
   const okBtn = overlay.querySelector('#vs-native-alert-ok-btn');
-  const closeAlert = () => overlay.remove();
+  const closeAlert = () => {
+    overlay.remove();
+    if (window.VSKeyboard && window.VSKeyboard.releaseFocus) {
+      window.VSKeyboard.releaseFocus(overlay);
+    }
+  };
   okBtn.onclick = closeAlert;
   overlay.onclick = (e) => { if (e.target === overlay) closeAlert(); };
-  okBtn.focus();
+  if (window.VSKeyboard && window.VSKeyboard.trapFocus) {
+    window.VSKeyboard.trapFocus(overlay, okBtn);
+  } else {
+    okBtn.focus();
+  }
 }
 window.showNativeAlert = showNativeAlert;
 
@@ -223,12 +240,23 @@ function showNativeConfirm(message, { title = 'VS Database', confirmText = 'Conf
 
     const onFinish = (res) => {
       overlay.remove();
+      if (window.VSKeyboard && window.VSKeyboard.releaseFocus) {
+        window.VSKeyboard.releaseFocus(overlay);
+      }
       resolve(res);
     };
 
-    overlay.querySelector('#vs-confirm-cancel-btn').onclick = () => onFinish(false);
-    overlay.querySelector('#vs-confirm-ok-btn').onclick = () => onFinish(true);
+    const cancelBtn = overlay.querySelector('#vs-confirm-cancel-btn');
+    const okBtn = overlay.querySelector('#vs-confirm-ok-btn');
+    cancelBtn.onclick = () => onFinish(false);
+    okBtn.onclick = () => onFinish(true);
     overlay.onclick = (e) => { if (e.target === overlay) onFinish(false); };
+
+    if (window.VSKeyboard && window.VSKeyboard.trapFocus) {
+      window.VSKeyboard.trapFocus(overlay, cancelBtn);
+    } else if (cancelBtn) {
+      cancelBtn.focus();
+    }
   });
 }
 window.showNativeConfirm = showNativeConfirm;
@@ -241,7 +269,7 @@ window.alert = function(msg) {
 const getDeviceId = () => {
   let id = localStorage.getItem('vs-device-id');
   if (!id) {
-    id = 'dev-' + (crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)));
+    id = 'dev-' + ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : (Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)));
     localStorage.setItem('vs-device-id', id);
   }
   return id;
@@ -327,6 +355,7 @@ const PAGE_META = {
   ai: ["VS AI", "Statutory legal and tax copilot for Chartered Accountants"],
   drive: ["Drive Sharing", "Client portals on Google Drive"],
   backup: ["Backup & Restore", "Protect your database, clients and settings"],
+  automation: ["Automation", "Bank statement to Tally import & accounting copilot"],
   activity: ["Activity", "Recent filings you can revert"],
   setup: ["Setup", "Storage and integration"],
   users: ["Users & Devices", "Staff accounts and approved PCs"]
@@ -403,6 +432,9 @@ function dismissSplash() {
     splash.style.opacity = '0';
     splash.style.pointerEvents = 'none';
     setTimeout(() => { splash.style.display = 'none'; }, 250);
+  }
+  if (typeof dismissStartupAnimationImmediately === 'function') {
+    dismissStartupAnimationImmediately();
   }
 }
 
@@ -568,6 +600,8 @@ function renderWaitingApproval(user_id, password) {
 let startupVideoDismissTimeout = null;
 
 function dismissStartupAnimationImmediately() {
+  window.__vsSplashDismissed = true;
+  document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
   const overlay = document.getElementById('vs-daily-startup-splash');
   const video = document.getElementById('vs-startup-video');
   if (overlay) {
@@ -577,7 +611,11 @@ function dismissStartupAnimationImmediately() {
     overlay.classList.remove('fade-out');
   }
   if (video) {
-    try { video.pause(); } catch (_) {}
+    try {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    } catch (_) {}
     video.currentTime = 0;
   }
   const splash = document.getElementById('app-startup-splash');
@@ -602,14 +640,21 @@ function getTodayDateKey() {
 }
 
 let startupVideoHasRun = false;
+window.__vsDashboardRendered = false;
 
 function initDailyStartupVideo(force = false) {
-  if (startupVideoHasRun && !force) return;
+  if (startupVideoHasRun && !force) {
+    dismissStartupAnimationImmediately();
+    return;
+  }
   startupVideoHasRun = true;
 
   const overlay = document.getElementById('vs-daily-startup-splash');
   const video = document.getElementById('vs-startup-video');
-  if (!overlay || !video) return;
+  if (!overlay || !video) {
+    document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
+    return;
+  }
 
   // Check if opened via Companion Extension or direct document save intent
   const urlParams = new URLSearchParams(window.location.search);
@@ -633,48 +678,90 @@ function initDailyStartupVideo(force = false) {
   overlay.style.opacity = '1';
   overlay.style.visibility = 'visible';
   overlay.style.transform = 'none';
+  overlay.style.cursor = 'pointer';
 
-  // Ensure normal startup video is loaded
-  if (!video.src.includes('Startup.mp4')) {
+  // Ensure normal startup video is loaded without flushing active playback buffer
+  if (!video.src || !video.src.includes('Startup.mp4')) {
     video.src = 'Startup.mp4?v=20260924_orig';
+    video.currentTime = 0;
+  } else if (force || video.ended) {
+    video.currentTime = 0;
   }
   video.playbackRate = 1.0;
-  video.currentTime = 0;
   video.muted = true; // Video only, no audio
 
   let dismissed = false;
   const dismissVideo = () => {
     if (dismissed) return;
     dismissed = true;
-    overlay.classList.add('fade-out');
-    setTimeout(() => {
-      overlay.style.display = 'none';
-      try { video.pause(); } catch (_) {}
-    }, 1050);
+    window.__vsSplashDismissed = true;
+    window.removeEventListener('keydown', onKeyDismiss);
+    overlay.removeEventListener('click', dismissVideo);
+    if (startupVideoDismissTimeout) {
+      clearTimeout(startupVideoDismissTimeout);
+      startupVideoDismissTimeout = null;
+    }
+    // Make sure .app is 100% opaque underneath the splash before fading out the splash
+    document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
+    requestAnimationFrame(() => {
+      overlay.classList.add('fade-out');
+      setTimeout(() => {
+        overlay.style.display = 'none';
+        try {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+        } catch (_) {}
+      }, 350);
+    });
   };
 
-  // Crossfade gently when reaching resting state (0.9s before video end)
+  overlay.addEventListener('click', dismissVideo, { once: true });
+
+  const onKeyDismiss = (e) => {
+    if (['Escape', ' ', 'Enter'].includes(e.key)) {
+      dismissVideo();
+    }
+  };
+  window.addEventListener('keydown', onKeyDismiss, { passive: true });
+
+  // Crossfade gently when reaching resting state (0.75s before video end)
   video.ontimeupdate = () => {
-    if (video.duration && video.currentTime >= Math.max(0, video.duration - 0.95)) {
+    if (video.duration && !isNaN(video.duration) && video.duration > 2 && video.currentTime >= Math.max(1, video.duration - 0.75)) {
       dismissVideo();
     }
   };
 
   video.onended = dismissVideo;
-  video.onerror = dismissVideo;
+  video.onerror = () => {
+    console.warn('[StartupVideo] Video playback encountered error, transitioning to app.');
+    dismissVideo();
+  };
 
-  // Fallback safety timeout if playback stalls
+  // Fallback safety timeout (reduced from 12s to 3.5s to prevent any stall)
   startupVideoDismissTimeout = setTimeout(() => {
     if (!dismissed) dismissVideo();
-  }, 8500);
+  }, 3500);
 
-  const playPromise = video.play();
-  if (playPromise !== undefined) {
-    playPromise.catch(err => {
-      console.warn('[StartupVideo] Autoplay error, auto-dismissing:', err);
-      dismissVideo();
-    });
-  }
+  const attemptPlay = () => {
+    if (!video.paused || dismissed) return;
+    try {
+      video.muted = true;
+      video.defaultMuted = true;
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.warn('[StartupVideo] Autoplay notice:', err);
+        });
+      }
+    } catch (e) {
+      console.warn('[StartupVideo] Play error:', e);
+    }
+  };
+
+  video.addEventListener('canplay', attemptPlay, { once: true });
+  video.addEventListener('loadeddata', attemptPlay, { once: true });
+  attemptPlay();
 }
 
 window.initDailyStartupVideo = initDailyStartupVideo;
@@ -683,6 +770,11 @@ function updateMaximizeIcon(isMaximized) {
   const iconMax = document.getElementById('titlebar-icon-max');
   const iconRestore = document.getElementById('titlebar-icon-restore');
   const maxBtn = document.getElementById('titlebar-max');
+  document.body.classList.toggle('window-maximized', !!isMaximized);
+  const resizeGrips = document.getElementById('vs-window-resize-grips');
+  if (resizeGrips) {
+    resizeGrips.style.display = isMaximized ? 'none' : 'block';
+  }
   if (iconMax && iconRestore) {
     if (isMaximized) {
       iconMax.style.display = 'none';
@@ -706,7 +798,11 @@ function showExitConfirmModal() {
     modal.style.display = 'flex';
     modal.setAttribute('aria-hidden', 'false');
     const cancelBtn = document.getElementById('vs-exit-btn-cancel');
-    if (cancelBtn) cancelBtn.focus();
+    if (window.VSKeyboard && window.VSKeyboard.trapFocus) {
+      window.VSKeyboard.trapFocus(modal, cancelBtn);
+    } else if (cancelBtn) {
+      cancelBtn.focus();
+    }
   }
 }
 window.showExitConfirmModal = showExitConfirmModal;
@@ -716,6 +812,9 @@ function hideExitConfirmModal() {
   if (modal) {
     modal.style.display = 'none';
     modal.setAttribute('aria-hidden', 'true');
+    if (window.VSKeyboard && window.VSKeyboard.releaseFocus) {
+      window.VSKeyboard.releaseFocus(modal);
+    }
   }
 }
 window.hideExitConfirmModal = hideExitConfirmModal;
@@ -799,6 +898,9 @@ function initExitModal() {
   const confirmBtn = document.getElementById('vs-exit-btn-confirm');
   const cancelBtn = document.getElementById('vs-exit-btn-cancel');
 
+  if (!modal || modal.dataset.exitBound === '1') return;
+  modal.dataset.exitBound = '1';
+
   if (cancelBtn) {
     cancelBtn.onclick = (e) => {
       e.preventDefault();
@@ -815,29 +917,43 @@ function initExitModal() {
     };
   }
 
-  if (modal) {
-    modal.onclick = (e) => {
-      if (e.target === modal) {
-        hideExitConfirmModal();
-      }
-    };
-  }
-
-  window.addEventListener('keydown', (e) => {
-    if (modal && modal.style.display !== 'none') {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        hideExitConfirmModal();
-      } else if (e.key === 'Enter') {
-        const active = document.activeElement;
-        if (active && active.id === 'vs-exit-btn-cancel') {
-          hideExitConfirmModal();
-        } else if (confirmBtn) {
-          confirmBtn.click();
-        }
-      }
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      hideExitConfirmModal();
     }
+  };
+}
+
+function initFramelessResizeGrips() {
+  if (document.getElementById('vs-window-resize-grips')) return;
+  const container = document.createElement('div');
+  container.id = 'vs-window-resize-grips';
+  container.setAttribute('aria-hidden', 'true');
+  const edges = [
+    { dir: 'n',  css: 'position:fixed;top:0;left:8px;right:8px;height:5px;cursor:ns-resize;z-index:99990;' },
+    { dir: 's',  css: 'position:fixed;bottom:0;left:8px;right:8px;height:5px;cursor:ns-resize;z-index:99990;' },
+    { dir: 'w',  css: 'position:fixed;left:0;top:8px;bottom:8px;width:5px;cursor:ew-resize;z-index:99990;' },
+    { dir: 'e',  css: 'position:fixed;right:0;top:8px;bottom:8px;width:5px;cursor:ew-resize;z-index:99990;' },
+    { dir: 'nw', css: 'position:fixed;top:0;left:0;width:10px;height:10px;cursor:nwse-resize;z-index:99991;' },
+    { dir: 'ne', css: 'position:fixed;top:0;right:0;width:10px;height:10px;cursor:nesw-resize;z-index:99991;' },
+    { dir: 'sw', css: 'position:fixed;bottom:0;left:0;width:10px;height:10px;cursor:nesw-resize;z-index:99991;' },
+    { dir: 'se', css: 'position:fixed;bottom:0;right:0;width:10px;height:10px;cursor:nwse-resize;z-index:99991;' },
+  ];
+  edges.forEach(({ dir, css }) => {
+    const grip = document.createElement('div');
+    grip.dataset.resizeDir = dir;
+    grip.style.cssText = css;
+    grip.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || document.body.classList.contains('window-maximized')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.start_resize) {
+        window.pywebview.api.start_resize(dir);
+      }
+    });
+    container.appendChild(grip);
   });
+  document.body.appendChild(container);
 }
 
 function initDesktopWindowControls() {
@@ -845,6 +961,8 @@ function initDesktopWindowControls() {
   const maxBtn = document.getElementById('titlebar-max');
   const closeBtn = document.getElementById('titlebar-close');
   const dragArea = document.querySelector('.titlebar-drag-area');
+
+  initFramelessResizeGrips();
 
   if (minBtn) {
     minBtn.onclick = (e) => {
@@ -888,10 +1006,27 @@ function initDesktopWindowControls() {
     };
 
     dragArea.onmousedown = (e) => {
+      if (e.button !== 0) return;
       if (e.target.closest('.no-drag') || e.target.closest('.titlebar-btn')) return;
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
-        window.pywebview.api.start_drag();
-      }
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let dragStarted = false;
+      const onMove = (ev) => {
+        if (dragStarted) return;
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
+          dragStarted = true;
+          cleanupDragWatch();
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+            window.pywebview.api.start_drag();
+          }
+        }
+      };
+      const cleanupDragWatch = () => {
+        window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('mouseup', cleanupDragWatch, true);
+      };
+      window.addEventListener('mousemove', onMove, true);
+      window.addEventListener('mouseup', cleanupDragWatch, true);
     };
   }
 
@@ -955,17 +1090,7 @@ async function load() {
       api('/api/firm-types')
     ]);
 
-    let isDriveConnected = false;
-    try {
-      const gStat = await api('/api/google/status');
-      isDriveConnected = !!(gStat && gStat.connected);
-      const ds = document.querySelector('#drive-status');
-      if (ds) {
-        ds.textContent = isDriveConnected ? 'Drive: Connected' : 'Drive: Not Connected';
-      }
-    } catch (_) {}
-
-    updateUnifiedStatus(true, isDriveConnected, 'Server online', isDriveConnected ? 'Drive connected' : 'Drive offline');
+    updateUnifiedStatus(true, false, 'Server online', 'Drive checking...');
 
     await render();
     document.querySelectorAll('nav button').forEach(b => {
@@ -974,8 +1099,25 @@ async function load() {
       if (isCur) b.setAttribute('aria-current', 'page');
       else b.removeAttribute('aria-current');
     });
+    window.__vsDashboardRendered = true;
+    // Reveal .app at opacity:1 safely behind the 100% opaque #vs-daily-startup-splash so fade-out has zero washout
+    document.documentElement.classList.remove('vs-booting');
     dismissSplash();
+
+    // Check Google Drive status asynchronously without blocking initial dashboard render
+    api('/api/google/status').then(gStat => {
+      const isDriveConnected = !!(gStat && gStat.connected);
+      const ds = document.querySelector('#drive-status');
+      if (ds) {
+        ds.textContent = isDriveConnected ? 'Drive: Connected' : 'Drive: Not Connected';
+      }
+      updateUnifiedStatus(true, isDriveConnected, 'Server online', isDriveConnected ? 'Drive connected' : 'Drive offline');
+    }).catch(() => {
+      updateUnifiedStatus(true, false, 'Server online', 'Drive offline');
+    });
   } catch (e) {
+    window.__vsDashboardRendered = true;
+    document.documentElement.classList.remove('vs-booting');
     dismissSplash();
     updateUnifiedStatus(false, false, 'Server offline', 'Drive offline');
     content.innerHTML = message(e.message, true);
@@ -1074,7 +1216,7 @@ function setup() {
 
           <div id="drive-base-wrapper">
             <label style="font-weight:700;font-size:13px;">Google Drive Synced Root Path (G: Drive)</label>
-            <input id="drive" class="input" placeholder="G:\\My Drive\\VS Database" value="${escapeHtml(driveVal)}">
+            <input id="drive-path" class="input" placeholder="G:\\My Drive\\VS Database" value="${escapeHtml(driveVal)}">
             <p class="muted" style="margin-top:4px;font-size:11px;">Local mirror path for instant G: drive disk speed saving.</p>
           </div>
         </div>
@@ -1126,6 +1268,60 @@ function setup() {
         <div id="update-status-msg" style="margin-top:12px;font-size:12.5px;display:none;"></div>
       </div>
 
+      <!-- 5. Windows Startup & Background System Services -->
+      <div style="background:rgba(248,250,252,0.8);border:1px solid rgba(226,232,240,0.9);border-radius:16px;padding:20px;margin-bottom:22px;">
+        <label style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:#1e293b;margin-bottom:14px;display:block;">
+          5. Windows Startup & Background Services
+        </label>
+        
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;">
+          <!-- Card A: Desktop App Autostart Toggle -->
+          <div style="background:#fff;border:1px solid rgba(226,232,240,0.9);border-radius:14px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;">
+                <svg class="i" style="width:18px;height:18px;color:#4f46e5;" aria-hidden="true"><use href="#dashboard"/></svg>
+                <span>Autostart App at Startup</span>
+              </div>
+              <p class="muted" style="margin:4px 0 0 0;font-size:12px;line-height:1.4;">
+                Automatically open the VS Database desktop window when you log into Windows.
+              </p>
+            </div>
+            <div style="flex-shrink:0;">
+              <label class="sw t1" id="sw-app-autostart-label" title="Toggle Desktop App autostart">
+                <input type="checkbox" id="toggle-app-autostart" role="switch" aria-label="Autostart App at startup" ${settings.app_autostart ? 'checked' : ''}>
+                <span class="track glass">
+                  <span class="lbl y">Yes</span>
+                  <span class="lbl n">No</span>
+                  <span class="thumb">
+                    <svg class="ic tick"><use href="#tick"/></svg>
+                    <svg class="ic cross"><use href="#x"/></svg>
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Card B: Server Background Service (Always Active) -->
+          <div style="background:#fff;border:1px solid rgba(226,232,240,0.9);border-radius:14px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;">
+                <svg class="i" style="width:18px;height:18px;color:#16a34a;" aria-hidden="true"><use href="#refresh"/></svg>
+                <span>Backend Server Service</span>
+              </div>
+              <p class="muted" style="margin:4px 0 0 0;font-size:12px;line-height:1.4;">
+                Starts silently on PC boot on Port 8767 for instant app launch, LAN devices, and extensions.
+              </p>
+            </div>
+            <div style="flex-shrink:0;">
+              <span class="badge active" style="font-size:11.5px;padding:6px 12px;border-radius:99px;font-weight:700;background:rgba(31,207,147,0.15);color:#059669;border:1px solid rgba(31,207,147,0.4);display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;box-shadow:0 0 8px #10b981;"></span>
+                <span>Auto-Starts on Boot</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="row" style="margin-top:16px;">
         <button class="btn p" id="save-settings" style="min-height:46px;font-size:14px;padding:0 26px;">
           <svg class="i" aria-hidden="true"><use href="#check"/></svg>
@@ -1152,11 +1348,16 @@ function setup() {
       card.style.background = isSel ? 'rgba(238,242,255,0.7)' : '#fff';
     });
 
-    const oName = (document.getElementById('office-folder-name').value || 'Office').trim();
-    const cName = (document.getElementById('client-folder-name').value || 'Client').trim();
-    const dName = (document.getElementById('drive-root-name').value || 'VS Database').trim();
-    const locPath = (document.getElementById('local').value || 'D:\\Code Trial').trim();
-    const drvPath = (document.getElementById('drive').value || 'G:\\My Drive\\VS Database').trim();
+    const val = (id) => {
+      const el = document.getElementById(id);
+      return (el && typeof el.value === 'string') ? el.value.trim() : '';
+    };
+
+    const oName = val('office-folder-name') || 'Office';
+    const cName = val('client-folder-name') || 'Client';
+    const dName = val('drive-root-name') || 'VS Database';
+    const locPath = val('local') || 'D:\\Code Trial';
+    const drvPath = val('drive-path') || val('drive') || 'G:\\My Drive\\VS Database';
 
     if (mode === 'backup_and_client') {
       driveBaseWrap.style.display = 'block';
@@ -1208,7 +1409,7 @@ function setup() {
     card.onclick = () => updateModeUI(card.getAttribute('data-mode'));
   });
 
-  ['local', 'drive', 'office-folder-name', 'client-folder-name', 'drive-root-name'].forEach(id => {
+  ['local', 'drive-path', 'drive', 'office-folder-name', 'client-folder-name', 'drive-root-name'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.oninput = () => updateModeUI(modeInput.value);
   });
@@ -1218,19 +1419,24 @@ function setup() {
   // Save Settings & Provision Handler
   document.getElementById('save-settings').onclick = async () => {
     const resEl = document.getElementById('result');
+    const getVal = (id) => {
+      const el = document.getElementById(id);
+      return (el && typeof el.value === 'string') ? el.value.trim() : '';
+    };
+
     try {
       const payload = {
-        local_root: document.getElementById('local').value.trim(),
-        drive_root: document.getElementById('drive').value.trim(),
-        office_folder_name: document.getElementById('office-folder-name').value.trim(),
-        client_folder_name: document.getElementById('client-folder-name').value.trim(),
-        google_portal_root_name: document.getElementById('drive-root-name').value.trim(),
+        local_root: getVal('local') || 'D:\\Code Trial',
+        drive_root: getVal('drive-path') || getVal('drive') || 'G:\\My Drive\\VS Database',
+        office_folder_name: getVal('office-folder-name') || 'Office',
+        client_folder_name: getVal('client-folder-name') || 'Client',
+        google_portal_root_name: getVal('drive-root-name') || 'VS Database',
         google_drive_mode: modeInput.value,
-        firm_name: document.getElementById('firm-name').value.trim(),
-        firm_title: document.getElementById('firm-title').value.trim(),
-        firm_city: document.getElementById('firm-city').value.trim(),
-        firm_phone: document.getElementById('firm-phone').value.trim(),
-        firm_upi_id: document.getElementById('firm-upi').value.trim(),
+        firm_name: getVal('firm-name') || 'Vimal Sikhwal',
+        firm_title: getVal('firm-title') || 'Tax Practitioner',
+        firm_city: getVal('firm-city') || 'Jodhpur',
+        firm_phone: getVal('firm-phone') || '+91 9460222319',
+        firm_upi_id: getVal('firm-upi') || '8104888850@ybl',
       };
 
       const pb = (typeof showGlassProgressBar === 'function')
@@ -1300,6 +1506,46 @@ function setup() {
       } catch (err) {
         updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(err.message)}</span>`;
         btnApplyUpdate.disabled = false;
+      }
+    };
+  }
+
+  // Windows Desktop App Autostart Toggle Handler (Glass UI Kit .sw.t1)
+  const appAutostartToggle = document.getElementById('toggle-app-autostart');
+  if (appAutostartToggle) {
+    // Sync live state from backend on load
+    api('/api/system/autostart').then(res => {
+      if (res && typeof res.app_autostart === 'boolean') {
+        appAutostartToggle.checked = res.app_autostart;
+      }
+    }).catch(() => {});
+
+    appAutostartToggle.onchange = async () => {
+      const isEnabled = appAutostartToggle.checked;
+      try {
+        const resp = await api('/api/system/autostart', {
+          method: 'POST',
+          body: JSON.stringify({ app_autostart: isEnabled })
+        });
+        if (resp && resp.ok) {
+          appAutostartToggle.checked = !!resp.app_autostart;
+          const msg = resp.message || (isEnabled ? 'Desktop App autostart enabled' : 'Desktop App autostart disabled');
+          if (typeof showGlassToast === 'function') {
+            showGlassToast(msg, 'success');
+          } else if (typeof toast === 'function') {
+            toast(msg);
+          }
+        } else {
+          throw new Error((resp && resp.error) || 'Failed to update autostart setting');
+        }
+      } catch (err) {
+        appAutostartToggle.checked = !isEnabled; // Revert switch on error
+        const errMsg = err.message || 'Error updating autostart';
+        if (typeof showGlassToast === 'function') {
+          showGlassToast(errMsg, 'error');
+        } else if (typeof toast === 'function') {
+          toast(errMsg, true);
+        }
       }
     };
   }
@@ -1666,7 +1912,12 @@ function clientsPage() {
         <table id="registered-clients-table">
           <thead>
             <tr>
-              <th style="width:36px;text-align:center;"><input type="checkbox" id="client-select-all" title="Select All"></th>
+              <th style="width:42px;text-align:center;">
+                <label class="g-cb" style="margin:0;padding:0;display:inline-flex;" title="Select All">
+                  <input type="checkbox" id="client-select-all">
+                  <span class="g-box"><svg viewBox="0 0 24 24"><path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                </label>
+              </th>
               <th>Reference</th>
               <th>Name</th>
               <th>Mobile</th>
@@ -1678,8 +1929,13 @@ function clientsPage() {
           </thead>
           <tbody id="registered-clients-tbody">
             ${clients.map(c => `
-              <tr data-fno="${escapeHtml(c.file_no)}">
-                <td style="width:36px;text-align:center;"><input type="checkbox" class="client-row-checkbox" data-fno="${escapeHtml(c.file_no)}"></td>
+              <tr data-fno="${escapeHtml(c.file_no)}" tabindex="0" aria-label="Client ${escapeHtml(c.name)}, Reference ${escapeHtml(c.file_no)}">
+                <td style="width:42px;text-align:center;">
+                  <label class="g-cb" style="margin:0;padding:0;display:inline-flex;">
+                    <input type="checkbox" class="client-row-checkbox" data-fno="${escapeHtml(c.file_no)}">
+                    <span class="g-box"><svg viewBox="0 0 24 24"><path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  </label>
+                </td>
                 <td>${escapeHtml(c.file_no)}</td>
                 <td><b>${escapeHtml(c.name)}</b></td>
                 <td>${escapeHtml(c.mobile || '')}</td>
@@ -1725,7 +1981,12 @@ function clientsPage() {
 
     tbodyEl.innerHTML = filtered.map(c => `
       <tr data-fno="${escapeHtml(c.file_no)}">
-        <td style="width:36px;text-align:center;"><input type="checkbox" class="client-row-checkbox" data-fno="${escapeHtml(c.file_no)}" /></td>
+        <td style="width:42px;text-align:center;">
+          <label class="g-cb" style="margin:0;padding:0;display:inline-flex;">
+            <input type="checkbox" class="client-row-checkbox" data-fno="${escapeHtml(c.file_no)}" />
+            <span class="g-box"><svg viewBox="0 0 24 24"><path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+          </label>
+        </td>
         <td>${escapeHtml(c.file_no)}</td>
         <td><strong>${escapeHtml(c.name)}</strong></td>
         <td>${escapeHtml(c.mobile || '')}</td>
@@ -2070,12 +2331,18 @@ function folders() {
       <div class="grid3">
         <div><label>Services</label><textarea id="services">${rules.services.join(', ')}</textarea></div>
         <div><label>Periods</label><textarea id="periods">${rules.periods.join(', ')}</textarea></div>
-        <div><label>Folder order</label><select id="order"><option value="service-period" ${rules.order_name === 'service-period' ? 'selected' : ''}>Client / Service / Period</option><option value="period-service" ${rules.order_name === 'period-service' ? 'selected' : ''}>Client / Period / Service</option></select></div>
+        <div>
+          <label>Folder order</label>
+          <select id="order">
+            <option value="service-period" ${rules.order_name === 'service-period' ? 'selected' : ''}>Client / Service / Period</option>
+            <option value="period-service" ${rules.order_name === 'period-service' ? 'selected' : ''}>Client / Period / Service</option>
+          </select>
+        </div>
       </div>
       <div class="row" style="margin-top:16px;">
         <button class="btn secondary" id="save-rules"><svg class="i" aria-hidden="true"><use href="#check"/></svg>Save rules</button>
         <button class="btn p" id="create"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Create missing folders</button>
-        <button class="btn" id="reconcile-all"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile</button>
+        <button class="btn btn-reconcile" id="reconcile-all" style="background:linear-gradient(135deg, #10b981, #059669);color:#ffffff;border:0;font-weight:700;"><svg class="i" style="stroke:#fff;" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile</button>
       </div>
       <div id="result" style="margin-top:12px;"></div>
       <div id="reconcile-result" style="margin-top:12px;"></div>
@@ -2121,8 +2388,12 @@ function folders() {
       }
       reconcileResult.innerHTML = html;
     } catch (e) { reconcileResult.innerHTML = message(e.message, true); }
-    finally { btn.disabled = false; btn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile'; }
+    finally { btn.disabled = false; btn.innerHTML = '<svg class="i" style="stroke:#fff;" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile'; }
   };
+  if (window.GlassUI && window.GlassUI.createDropdown) {
+    const orderSel = field('order');
+    if (orderSel) window.GlassUI.createDropdown(orderSel);
+  }
 }
 
 // --- Audio Chime & Browser Notification System ---
@@ -2338,6 +2609,9 @@ function showGlassProgressBar({ title = 'Processing...', subtitle = 'Please wait
         if (subEl) subEl.textContent = text;
         if (statEl) statEl.textContent = text;
       }
+    },
+    setPercent(percent, text = '') {
+      this.update(percent, text);
     },
     simulate(durationMs = 1500, from = 0, to = 92) {
       let start = performance.now();
@@ -3307,7 +3581,7 @@ function save() {
         size: f.size || (f.fileObj ? f.fileObj.size : 0),
         fileObj: f.fileObj || (f instanceof File ? f : null),
         base64: f.base64 || f.file_base64 || f._b64 || '',
-        client_visibility: f.client_visibility !== undefined ? Boolean(f.client_visibility) : true,
+        client_visibility: f.client_visibility !== undefined ? Boolean(f.client_visibility) : false,
         is_pdf: isPdf,
         pdf_selected: false,
         badge: badge,
@@ -3359,7 +3633,7 @@ function save() {
             is_pdf: Boolean(f.is_pdf),
             pdf_selected: Boolean(f.pdf_selected),
             badge: f.badge || null,
-            client_visibility: true,
+            client_visibility: f.client_visibility !== undefined ? Boolean(f.client_visibility) : false,
             is_encrypted: f.is_pdf ? null : false,
             is_unlocked: !f.is_pdf,
             matched_label: null,
@@ -3415,7 +3689,7 @@ function save() {
     filesContainer.style.display = 'block';
     fileLabel.textContent = `${selectedFiles.length} file(s) selected`;
 
-    const allPortalChecked = selectedFiles.every(f => f.client_visibility !== false);
+    const allPortalChecked = selectedFiles.length > 0 && selectedFiles.every(f => f.client_visibility === true);
     const pdfFiles = selectedFiles.filter(f => f.is_pdf);
     const selectedPdfs = selectedFiles.filter(f => f.is_pdf && f.pdf_selected);
     const allPdfsSelected = pdfFiles.length > 0 && selectedPdfs.length === pdfFiles.length;
@@ -3444,10 +3718,27 @@ function save() {
         <div style="width:36px;text-align:center;">Edit</div>
         <div style="flex:1;">Files (${selectedFiles.length})</div>
         <div style="display:flex;align-items:center;gap:18px;">
-          <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:#1e40af;cursor:pointer;margin:0;text-transform:none;" title="Toggle Client Portal access for all files">
-            <input type="checkbox" id="master-portal-check" ${allPortalChecked ? 'checked' : ''} style="cursor:pointer;accent-color:#2563eb;">
-            <span>👥 Client Portal (All)</span>
-          </label>
+          <div style="display:inline-flex;align-items:center;gap:8px;" title="Toggle Client Portal access for all files">
+            <span style="font-size:11.5px;font-weight:700;color:#1e40af;">👥 Client Portal (All):</span>
+            ${window.GlassUI && window.GlassUI.renderPillSwitch ? window.GlassUI.renderPillSwitch({
+              id: 'master-portal-pill',
+              className: 'master-portal-pill-input',
+              checked: allPortalChecked,
+              title: 'Toggle Client Portal access for all files'
+            }) : `
+              <label class="g-pill-sw" title="Toggle Client Portal access for all files">
+                <input type="checkbox" id="master-portal-pill" class="g-pill-input master-portal-pill-input" ${allPortalChecked ? 'checked' : ''} />
+                <span class="g-pill-track">
+                  <span class="g-pill-lbl y">YES</span>
+                  <span class="g-pill-lbl n">NO</span>
+                  <span class="g-pill-thumb">
+                    <svg class="tk" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+                    <svg class="cr" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg>
+                  </span>
+                </span>
+              </label>
+            `}
+          </div>
           <span style="font-size:11px;color:var(--muted);width:95px;text-align:center;">Security</span>
           <span style="width:24px;"></span>
         </div>
@@ -3457,7 +3748,7 @@ function save() {
         ${selectedFiles.map((file, idx) => {
           const isPdf = file.is_pdf || file.name.toLowerCase().endsWith('.pdf');
           const sizeStr = file.size ? `${(file.size / 1024).toFixed(1)} KB` : '';
-          const isPortal = file.client_visibility !== false;
+          const isPortal = file.client_visibility === true;
 
           let lockBadgeHtml = '';
           if (!isPdf) {
@@ -3475,13 +3766,30 @@ function save() {
             `;
           }
 
-          let fileIcon = '📄';
-          const lowerName = (file.name || '').toLowerCase();
-          if (isPdf) fileIcon = '📕';
-          else if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.csv')) fileIcon = '📊';
-          else if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) fileIcon = '📝';
-          else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.png') || lowerName.endsWith('.webp')) fileIcon = '🖼️';
-          else if (lowerName.endsWith('.zip') || lowerName.endsWith('.rar')) fileIcon = '📦';
+          const fileIconSvg = (window.GlassUI && window.GlassUI.renderFileIcon)
+            ? window.GlassUI.renderFileIcon(file.name, 36)
+            : `<span style="font-size:20px;">${isPdf ? '📕' : '📄'}</span>`;
+
+          const pillToggleHtml = (window.GlassUI && window.GlassUI.renderPillSwitch)
+            ? window.GlassUI.renderPillSwitch({
+                className: 'file-portal-pill-input',
+                dataAttrs: `data-idx="${idx}"`,
+                checked: isPortal,
+                title: 'Toggle Client Portal access for this file'
+              })
+            : `
+              <label class="g-pill-sw" title="Toggle Client Portal access for this file">
+                <input type="checkbox" class="g-pill-input file-portal-pill-input" data-idx="${idx}" ${isPortal ? 'checked' : ''} />
+                <span class="g-pill-track">
+                  <span class="g-pill-lbl y">YES</span>
+                  <span class="g-pill-lbl n">NO</span>
+                  <span class="g-pill-thumb">
+                    <svg class="tk" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+                    <svg class="cr" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg>
+                  </span>
+                </span>
+              </label>
+            `;
 
           return `
             <div class="vs-file-item-card">
@@ -3495,7 +3803,9 @@ function save() {
                 </div>
 
                 <div class="vs-file-meta">
-                  <span style="font-size:18px;">${fileIcon}</span>
+                  <div class="glass-file-icon-wrap" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;">
+                    ${fileIconSvg}
+                  </div>
                   <div class="vs-file-name-block">
                     <div style="display:flex;align-items:center;gap:6px;">
                       <strong style="color:var(--ink);font-size:12.5px;">${escapeHtml(file.name)}</strong>
@@ -3506,10 +3816,12 @@ function save() {
                 </div>
 
                 <div class="vs-file-actions-group">
-                  <label class="vs-portal-check-label" title="Save this file into the Client's Google Drive Portal">
-                    <input type="checkbox" class="file-portal-check" data-idx="${idx}" ${isPortal ? 'checked' : ''} style="cursor:pointer;accent-color:#2563eb;">
-                    <span>👥 Portal</span>
-                  </label>
+                  <button type="button" class="btn-ai-rename-chip btn-ai-rename-staged" data-idx="${idx}" title="Analyze document contents and propose standardized name">✨ AI Rename</button>
+
+                  <div style="display:inline-flex;align-items:center;gap:6px;" title="Save this file into the Client's Google Drive Portal">
+                    <span style="font-size:11px;font-weight:700;color:var(--muted);">Portal:</span>
+                    ${pillToggleHtml}
+                  </div>
 
                   <div style="width:95px;display:flex;justify-content:center;">
                     ${lockBadgeHtml}
@@ -3590,24 +3902,24 @@ function save() {
       };
     }
 
-    // Master portal checkbox handler
-    const masterCheck = filesList.querySelector('#master-portal-check');
-    if (masterCheck) {
-      masterCheck.onchange = () => {
-        const val = masterCheck.checked;
+    // Master portal sliding pill switch handler
+    const masterPill = filesList.querySelector('#master-portal-pill');
+    if (masterPill) {
+      masterPill.onchange = () => {
+        const val = masterPill.checked;
         selectedFiles.forEach(f => { f.client_visibility = val; });
         renderSelectedFiles();
       };
     }
 
-    // Individual portal checkbox handler
-    filesList.querySelectorAll('.file-portal-check').forEach(chk => {
+    // Individual portal sliding pill switch handler
+    filesList.querySelectorAll('.file-portal-pill-input').forEach(chk => {
       chk.onchange = () => {
         const idx = Number(chk.dataset.idx);
         if (selectedFiles[idx]) {
           selectedFiles[idx].client_visibility = chk.checked;
-          const allChecked = selectedFiles.every(f => f.client_visibility !== false);
-          const masterEl = filesList.querySelector('#master-portal-check');
+          const allChecked = selectedFiles.length > 0 && selectedFiles.every(f => f.client_visibility === true);
+          const masterEl = filesList.querySelector('#master-portal-pill');
           if (masterEl) masterEl.checked = allChecked;
         }
       };
@@ -3682,6 +3994,36 @@ function save() {
           const idx = inp.dataset.idx;
           const unlockBtn = filesList.querySelector(`.btn-inline-unlock[data-idx="${idx}"]`);
           if (unlockBtn) unlockBtn.click();
+        }
+      };
+    });
+
+    // AI Rename Staged File handler
+    filesList.querySelectorAll('.btn-ai-rename-staged').forEach(btn => {
+      btn.onclick = async () => {
+        const idx = Number(btn.dataset.idx);
+        const item = selectedFiles[idx];
+        if (!item) return;
+
+        // Active client context from dropdown
+        const selectedClientOption = clientSelect && clientSelect.selectedOptions ? clientSelect.selectedOptions[0] : null;
+        const currentClientName = selectedClientOption ? (selectedClientOption.text.split('—')[0] || selectedClientOption.text).trim() : null;
+
+        if (window.aiAutoRenamer) {
+          await window.aiAutoRenamer.triggerRename({
+            staged_file_id: item.staged_file_id,
+            staging_session_id: item.staging_session_id || (window.saveStaging ? window.saveStaging.sessionId : null),
+            original_name: item.name,
+            client_name: currentClientName,
+            client_file_no: clientSelect ? clientSelect.value : null,
+            onRenamed: (newName) => {
+              item.name = newName;
+              if (item.fileObj) {
+                try { Object.defineProperty(item.fileObj, 'name', { value: newName, configurable: true }); } catch(_) {}
+              }
+              renderSelectedFiles();
+            }
+          });
         }
       };
     });
@@ -3919,7 +4261,7 @@ function save() {
           staging_session_id: f.staging_session_id || (window.saveStaging ? window.saveStaging.sessionId : undefined),
           fileObj: f.fileObj || f,
           file_base64: f.base64 || '',
-          client_visibility: f.client_visibility !== false,
+          client_visibility: Boolean(f.client_visibility),
           source_local_path: f.source_local_path || f.localPath || '',
           source_url: f.source_url || f.url || '',
           downloadId: f.downloadId
@@ -3932,7 +4274,7 @@ function save() {
           period: docPeriod,
           save_local: field('save-local').checked,
           save_drive: (settings.google_drive_mode !== 'only_client' && settings.google_drive_mode !== 'disabled') ? field('save-drive').checked : false,
-          client_visibility: true,
+          client_visibility: filesToQueue.some(f => f.client_visibility),
           upload_practive: field('practive').checked,
           files: filesToQueue
         });
@@ -3983,7 +4325,7 @@ function save() {
             source_local_path: file.source_local_path || file.localPath || '',
             source_url: file.source_url || file.url || '',
             downloadId: file.downloadId,
-            client_visibility: file.client_visibility !== false
+            client_visibility: Boolean(file.client_visibility)
           };
         }));
 
@@ -3997,7 +4339,7 @@ function save() {
           relative_path: selectedTargetFolder || '',
           save_local: field('save-local').checked,
           save_drive: allowDriveOffice,
-          client_visibility: true,
+          client_visibility: preparedFiles.some(f => f.client_visibility),
           upload_practive: field('practive').checked,
           files: preparedFiles
         };
@@ -4026,7 +4368,7 @@ function save() {
           downloadId: file.downloadId,
           save_local: field('save-local').checked,
           save_drive: allowDriveOffice,
-          client_visibility: file.client_visibility !== false,
+          client_visibility: Boolean(file.client_visibility),
           upload_practive: field('practive').checked
         };
         if (selectedTargetFolder) {
@@ -4189,8 +4531,23 @@ async function drive() {
 
 async function activity() {
   let jobs = [], activityLog = [];
-  try { jobs = await api('/api/jobs'); } catch (_) {}
-  try { activityLog = await api('/api/activity-log'); } catch (_) {}
+  try {
+    const res = await api('/api/jobs');
+    jobs = Array.isArray(res) ? res : (res && Array.isArray(res.jobs) ? res.jobs : []);
+  } catch (_) {}
+  try {
+    const res = await api('/api/activity-log');
+    activityLog = Array.isArray(res) ? res : (res && Array.isArray(res.events) ? res.events : (res && Array.isArray(res.logs) ? res.logs : []));
+  } catch (_) {}
+
+  // Fetch Studio Recent Operations from localStorage
+  let studioOps = [];
+  try {
+    const rawOps = localStorage.getItem('vs_studio_recent_ops');
+    if (rawOps) studioOps = JSON.parse(rawOps);
+  } catch (_) {}
+  if (!Array.isArray(studioOps)) studioOps = [];
+
   const eventIcon = (type) => {
     if (type.includes('import')) return '<div class="event-icon import"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#upload"/></svg></div>';
     if (type.includes('replace')) return '<div class="event-icon replace"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#refresh"/></svg></div>';
@@ -4200,14 +4557,60 @@ async function activity() {
     if (type.includes('revok') || type.includes('revert')) return '<div class="event-icon skip" style="background:#fee2e2;color:#991b1b;"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#refresh"/></svg></div>';
     return '<div class="event-icon import"><svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#activity"/></svg></div>';
   };
+
+  // State for filing activity filters
+  let filterDate = '';
+  let filterUser = '';
+  let filterClient = '';
+  let filterDoc = '';
+
+  const renderFilingTableRows = (filteredJobs) => {
+    if (filteredJobs.length === 0) {
+      return '<tr><td colspan="7" class="muted" style="text-align:center;padding:18px;">No matching filing activity found.</td></tr>';
+    }
+    return filteredJobs.map((j) => `
+      <tr style="${j.status === 'revoked' ? 'opacity:0.65;background:#f8fafc;' : ''}">
+        <td>${new Date(j.created_at).toLocaleString()}</td>
+        <td><b>${escapeHtml(j.actor || 'Host')}</b></td>
+        <td><b>${escapeHtml(j.client_name)}</b><br><small class="muted">${escapeHtml(j.client_file_no)}</small></td>
+        <td><code>${escapeHtml(j.destination_folder || j.target_folder || (j.service + ' / ' + j.period))}</code></td>
+        <td><b>${escapeHtml(j.document_name)}</b></td>
+        <td>
+          <span class="chip ${j.status === 'revoked' ? 'w' : (j.status === 'saved' ? '' : 'w')}">${escapeHtml(j.status)}</span>
+          ${j.reverted_at ? `<br><small class="muted">Reverted ${new Date(j.reverted_at).toLocaleTimeString()}</small>` : ''}
+        </td>
+        <td style="text-align:right;">
+          ${j.is_revocable && j.status !== 'revoked' ? `
+            <button class="btn ib d tip btn-revert-job" data-t="Revert" data-id="${escapeHtml(j.id)}" data-doc="${escapeHtml(j.document_name)}" aria-label="Revert"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg></button>
+          ` : (j.status === 'revoked' ? `
+            <span style="color:#64748b;font-size:11px;font-style:italic;">Safe Archived</span>
+          ` : `
+            <span class="muted" style="font-size:11px;">Completed</span>
+          `)}
+        </td>
+      </tr>
+    `).join('');
+  };
+
   content.innerHTML = `
+    <!-- 1. RECENT FILING ACTIVITY WITH FILTERS -->
     <div class="glass card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div>
           <h1>Recent filing activity</h1>
-          <p class="muted">Live log of saved filings. The top 5 recent tasks can be reverted with 30-day safe archive auto-cleanup.</p>
+          <p class="muted">Live log of saved filings. Filter by date, user, client, or document. Revert top 5 tasks with 30-day auto-cleanup.</p>
         </div>
       </div>
+
+      <!-- FILTER CONTROLS BAR -->
+      <div class="activity-filter-bar">
+        <input type="date" class="activity-filter-input" id="act-filter-date" title="Filter by date">
+        <input type="text" class="activity-filter-input" id="act-filter-user" placeholder="Filter User..." title="Filter by user">
+        <input type="text" class="activity-filter-input" id="act-filter-client" placeholder="Filter Client..." title="Filter by client">
+        <input type="text" class="activity-filter-input" id="act-filter-doc" placeholder="Filter Document..." title="Filter by document name">
+        <button type="button" class="activity-clear-btn" id="act-filter-clear">Clear Filters</button>
+      </div>
+
       <div id="activity-alert"></div>
       <div class="tw">
         <table>
@@ -4222,26 +4625,49 @@ async function activity() {
               <th style="text-align:right;">Action</th>
             </tr>
           </thead>
-          <tbody>
-            ${jobs.length === 0 ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:18px;">No filing activity recorded yet.</td></tr>' : jobs.map((j, idx) => `
-              <tr style="${j.status === 'revoked' ? 'opacity:0.65;background:#f8fafc;' : ''}">
-                <td>${new Date(j.created_at).toLocaleString()}</td>
-                <td><b>${escapeHtml(j.actor || 'Host')}</b></td>
-                <td><b>${escapeHtml(j.client_name)}</b><br><small class="muted">${escapeHtml(j.client_file_no)}</small></td>
-                <td><code>${escapeHtml(j.destination_folder || j.target_folder || (j.service + ' / ' + j.period))}</code></td>
-                <td><b>${escapeHtml(j.document_name)}</b></td>
-                <td>
-                  <span class="chip ${j.status === 'revoked' ? 'w' : (j.status === 'saved' ? '' : 'w')}">${escapeHtml(j.status)}</span>
-                  ${j.reverted_at ? `<br><small class="muted">Reverted ${new Date(j.reverted_at).toLocaleTimeString()}</small>` : ''}
-                </td>
+          <tbody id="activity-jobs-tbody">
+            ${renderFilingTableRows(jobs)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 2. PDF STUDIO OPERATIONS LOG -->
+    <div class="glass card" style="margin-top: 20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div>
+          <h2 style="display:flex;align-items:center;gap:8px;">
+            <svg class="i" style="width:20px;height:20px;stroke:#2563eb;"><use href="#file"/></svg>
+            PDF Studio Operations
+          </h2>
+          <p class="muted">Historical audit trail of all merges, splits, watermarks, compressions, and page extractions.</p>
+        </div>
+        ${studioOps.length > 0 ? `
+          <button type="button" class="btn btn-sm secondary" id="btn-clear-studio-ops" style="font-size:11.5px;padding:4px 10px;">
+            Clear History
+          </button>
+        ` : ''}
+      </div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Operation</th>
+              <th>Timestamp</th>
+              <th>Status</th>
+              <th style="text-align:right;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="activity-studio-tbody">
+            ${studioOps.length === 0 ? '<tr><td colspan="5" class="muted" style="text-align:center;padding:18px;">No PDF Studio operations recorded yet.</td></tr>' : studioOps.map(op => `
+              <tr>
+                <td><b>${escapeHtml(op.file)}</b></td>
+                <td><span class="chip" style="font-weight:600;color:#2563eb;background:#eff6ff;">${escapeHtml(op.operation)}</span></td>
+                <td><small class="muted">${escapeHtml(op.date)}</small></td>
+                <td><span class="chip" style="color:#16a34a;background:#f0fdf4;">${escapeHtml(op.status || 'Completed')}</span></td>
                 <td style="text-align:right;">
-                  ${j.is_revocable && j.status !== 'revoked' ? `
-                    <button class="btn ib d tip btn-revert-job" data-t="Revert" data-id="${escapeHtml(j.id)}" data-doc="${escapeHtml(j.document_name)}" aria-label="Revert"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg></button>
-                  ` : (j.status === 'revoked' ? `
-                    <span style="color:#64748b;font-size:11px;font-style:italic;">Safe Archived</span>
-                  ` : `
-                    <span class="muted" style="font-size:11px;">Completed</span>
-                  `)}
+                  <button type="button" class="btn btn-sm" onclick="safeNavigate('studio')" style="font-size:11px;padding:3px 8px;">Open Studio</button>
                 </td>
               </tr>
             `).join('')}
@@ -4249,7 +4675,9 @@ async function activity() {
         </table>
       </div>
     </div>
-    <div class="glass card">
+
+    <!-- 3. SYSTEM ACTIVITY LOG -->
+    <div class="glass card" style="margin-top: 20px;">
       <h2>System Activity Log</h2>
       <p class="muted">Import, replace, rename, reconciliation, folder, and security events.</p>
       ${activityLog.length === 0 ? '<p class="muted">No activity events recorded yet.</p>' :
@@ -4269,26 +4697,95 @@ async function activity() {
     </div>
   `;
 
-  content.querySelectorAll('.btn-revert-job').forEach(btn => {
-    btn.onclick = async () => {
-      const docName = btn.dataset.doc;
-      if (!confirm(`Are you sure you want to revert "${docName}"?\n\nThe saved file will be safely shifted to the Revoked Archive folder (auto-cleaned per 30-day retention).`)) return;
-      try {
-        btn.disabled = true;
-        btn.textContent = 'Reverting...';
-        const res = await api('/api/jobs/revert', { method: 'POST', body: JSON.stringify({ job_id: btn.dataset.id }) });
-        await activity();
-        const alertBox = document.getElementById('activity-alert');
-        if (alertBox) {
-          alertBox.innerHTML = message(`✓ ${res.message || 'Task reverted successfully.'}`);
-        }
-      } catch (e) {
-        alert(e.message);
-        btn.disabled = false;
-        btn.textContent = '↩ Revert';
+  // Bind Filtering Logic
+  const dateInput = document.getElementById('act-filter-date');
+  const userInput = document.getElementById('act-filter-user');
+  const clientInput = document.getElementById('act-filter-client');
+  const docInput = document.getElementById('act-filter-doc');
+  const clearBtn = document.getElementById('act-filter-clear');
+  const tbody = document.getElementById('activity-jobs-tbody');
+
+  const applyFilters = () => {
+    const fDate = dateInput.value.trim();
+    const fUser = userInput.value.trim().toLowerCase();
+    const fClient = clientInput.value.trim().toLowerCase();
+    const fDoc = docInput.value.trim().toLowerCase();
+
+    const filtered = jobs.filter(j => {
+      if (fDate) {
+        const jDate = new Date(j.created_at).toISOString().split('T')[0];
+        if (jDate !== fDate) return false;
       }
+      if (fUser) {
+        const u = (j.actor || 'Host').toLowerCase();
+        if (!u.includes(fUser)) return false;
+      }
+      if (fClient) {
+        const cName = (j.client_name || '').toLowerCase();
+        const cNo = (j.client_file_no || '').toLowerCase();
+        if (!cName.includes(fClient) && !cNo.includes(fClient)) return false;
+      }
+      if (fDoc) {
+        const d = (j.document_name || '').toLowerCase();
+        if (!d.includes(fDoc)) return false;
+      }
+      return true;
+    });
+
+    if (tbody) tbody.innerHTML = renderFilingTableRows(filtered);
+    bindRevertButtons();
+  };
+
+  if (dateInput) dateInput.oninput = applyFilters;
+  if (userInput) userInput.oninput = applyFilters;
+  if (clientInput) clientInput.oninput = applyFilters;
+  if (docInput) docInput.oninput = applyFilters;
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      dateInput.value = '';
+      userInput.value = '';
+      clientInput.value = '';
+      docInput.value = '';
+      applyFilters();
     };
-  });
+  }
+
+  // Clear Studio History button
+  const clearStudioBtn = document.getElementById('btn-clear-studio-ops');
+  if (clearStudioBtn) {
+    clearStudioBtn.onclick = () => {
+      localStorage.removeItem('vs_studio_recent_ops');
+      const studioTbody = document.getElementById('activity-studio-tbody');
+      if (studioTbody) {
+        studioTbody.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;padding:18px;">No PDF Studio operations recorded yet.</td></tr>';
+      }
+      clearStudioBtn.remove();
+    };
+  }
+
+  function bindRevertButtons() {
+    content.querySelectorAll('.btn-revert-job').forEach(btn => {
+      btn.onclick = async () => {
+        const docName = btn.dataset.doc;
+        if (!confirm(`Are you sure you want to revert "${docName}"?\n\nThe saved file will be safely shifted to the Revoked Archive folder (auto-cleaned per 30-day retention).`)) return;
+        try {
+          btn.disabled = true;
+          btn.textContent = 'Reverting...';
+          const res = await api('/api/jobs/revert', { method: 'POST', body: JSON.stringify({ job_id: btn.dataset.id }) });
+          await activity();
+          const alertBox = document.getElementById('activity-alert');
+          if (alertBox) {
+            alertBox.innerHTML = message(`✓ ${res.message || 'Task reverted successfully.'}`);
+          }
+        } catch (e) {
+          alert(e.message);
+          btn.disabled = false;
+          btn.textContent = '↩ Revert';
+        }
+      };
+    });
+  }
+  bindRevertButtons();
 }
 
 async function usersPage() {
@@ -4574,7 +5071,7 @@ function showChangePasswordModal(userId, onSave) {
   };
 }
 
-const escapeHtml = value => String(value || '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+var escapeHtml = window.escapeHtml || (value => String(value || '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])));
 
 /* ==========================================================================
    Dashboard Implementation
@@ -5066,7 +5563,7 @@ async function backupPage() {
     settings = await api('/api/settings');
   } catch (_) {}
 
-  const backupDir = settings.backup_dir || 'D:\\AntiGravity Automation\\VS_Desktop_App Old\\data\\backups';
+  const backupDir = settings.backup_dir || 'D:\\AntiGravity Automation\\VS Desktop App\\data\\backups';
 
   content.innerHTML = `
     <!-- Top Banner -->
@@ -5317,10 +5814,16 @@ async function render() {
   else if (current === 'save') save();
   else if (current === 'backup') await backupPage();
   else if (current === 'users') await usersPage();
-  else if (current === 'pdf-studio' || current === 'studio') { if (typeof pdfStudioPage === 'function') await pdfStudioPage(); }
+  else if (current === 'pdf-studio' || current === 'studio') {
+    const fn = window.pdfStudioPage || (typeof pdfStudioPage === 'function' ? pdfStudioPage : null);
+    if (fn) await fn();
+  }
   else if (current === 'vs-ai' || current === 'ai') {
     if (typeof renderVsAi === 'function') await renderVsAi();
     else if (typeof render_page_vs_ai === 'function') await render_page_vs_ai();
+  }
+  else if (current === 'automation') {
+    if (typeof automationPage === 'function') await automationPage();
   }
   else await activity();
 }

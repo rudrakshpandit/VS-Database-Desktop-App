@@ -32,3 +32,6 @@ winforms_error.log
 Thumbs.db
 .vscode/
 .idea/
+
+database.db
+*.db

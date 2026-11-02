@@ -1,3 +1,6 @@
+(function () {
+'use strict';
+
 /**
  * VS Database — Save Tab Durable Disk Staging Coordinator (Desktop Application)
  * Coordinates persistent on-disk staging sessions with Save Tab & PDF Studio.
@@ -177,7 +180,11 @@ function safeNavigate(page) {
     else render();
   }
 }
+window.SaveStagingCoordinator = SaveStagingCoordinator;
 window.safeNavigate = safeNavigate;
 
 // Global coordinator singleton for Desktop App
 window.saveStaging = new SaveStagingCoordinator('vs_desktop_app');
+
+})();
+

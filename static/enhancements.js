@@ -1380,7 +1380,7 @@
             <button class="tpl-btn" id="btn-client-pdf-passwords" style="display:flex;align-items:center;gap:4px;background:#fef3c7;border-color:#fde68a;color:#92400e;">🔑 PDF Passwords</button>
             <button class="tpl-btn" id="btn-customize-override" style="display:flex;align-items:center;gap:4px;background:#f0fdf4;border-color:#bbf7d0;color:#166534;">⚙ Customize Structure</button>
             <button class="tpl-btn" id="btn-open-in-explorer" style="display:flex;align-items:center;gap:4px;">🗁 Open Local Folder</button>
-            <button class="tpl-btn" id="btn-reconcile-this" style="display:flex;align-items:center;gap:4px;">🔄 Scan & Reconcile</button>
+            <button class="tpl-btn" id="btn-reconcile-this" style="display:flex;align-items:center;gap:5px;background:linear-gradient(135deg, #10b981, #059669);border-color:#059669;color:#ffffff;font-weight:700;">🔄 Scan & Reconcile</button>
           </div>
         </div>
 
@@ -1623,11 +1623,12 @@
               <td><span style="font-size:11px;color:var(--muted);">${formatModifiedTime(item.modified_at)}</span></td>
               <td style="text-align:right;">
                 <div class="item-actions" style="justify-content:flex-end;">
-                  <a class="item-act-btn" href="/api/client-files/download?client_file_no=${encodeURIComponent(fileNo)}&path=${encodeURIComponent(itemRel)}&storage_kind=${storageKind}" target="_blank" title="View / Download">👁 View</a>
+                  <button type="button" class="item-act-btn btn-view-inapp-pdf" onclick="window.openUniversalPdfViewer('${escapeHtml(fileNo)}', '${escapeHtml(itemRel).replace(/\\/g, '/')}', '${escapeHtml(storageKind)}', '${escapeHtml(item.name)}')" title="View in App">👁 View</button>
                   ${item.name.toLowerCase().endsWith('.pdf') ? `
                     <button class="item-act-btn btn-lock-pdf" data-name="${escapeHtml(item.name)}" data-path="${escapeHtml(itemRel)}" title="Lock PDF with Password">🔒 Lock</button>
                     <button class="item-act-btn btn-unlock-pdf" data-name="${escapeHtml(item.name)}" data-path="${escapeHtml(itemRel)}" title="Unlock PDF">🔓 Unlock</button>
                   ` : ''}
+                  <button type="button" class="item-act-btn btn-ai-ren-file" data-name="${escapeHtml(item.name)}" data-path="${escapeHtml(itemRel)}" title="AI Auto Rename (First 2 Pages)">✨ AI Rename</button>
                   <button class="item-act-btn btn-ren-file" data-name="${escapeHtml(item.name)}" data-path="${escapeHtml(itemRel)}" title="Rename">✏</button>
                   <button class="item-act-btn btn-mv-file" data-name="${escapeHtml(item.name)}" data-path="${escapeHtml(itemRel)}" title="Move">⤹</button>
                   <button class="item-act-btn btn-cp-file" data-name="${escapeHtml(item.name)}" data-path="${escapeHtml(itemRel)}" title="Copy">📋</button>
@@ -1729,6 +1730,26 @@
       });
 
       // Bind File Actions
+      bodyEl.querySelectorAll('.btn-ai-ren-file').forEach(btn => {
+        btn.onclick = async e => {
+          e.stopPropagation();
+          const oldPath = btn.dataset.path;
+          const oldName = btn.dataset.name;
+          if (window.aiAutoRenamer) {
+            await window.aiAutoRenamer.triggerRename({
+              client_file_no: fileNo,
+              client_name: clientData ? clientData.name : null,
+              relative_path: oldPath,
+              storage_kind: storageKind,
+              original_name: oldName,
+              onRenamed: async () => {
+                await loadData();
+              }
+            });
+          }
+        };
+      });
+
       bodyEl.querySelectorAll('.btn-ren-file').forEach(btn => {
         btn.onclick = async e => {
           e.stopPropagation();
@@ -1863,7 +1884,7 @@
                 ${isFolder ? `
                   <button class="item-act-btn btn-jump-folder" data-path="${escapeHtml(item.full_relative_path)}">📂 Jump to Folder</button>
                 ` : `
-                  <a class="item-act-btn" href="/api/client-files/download?client_file_no=${encodeURIComponent(fileNo)}&path=${encodeURIComponent(item.full_relative_path)}&storage_kind=${storageKind}" target="_blank">👁 View</a>
+                  <button type="button" class="item-act-btn btn-view-inapp-pdf" onclick="window.openUniversalPdfViewer('${escapeHtml(fileNo)}', '${escapeHtml(item.full_relative_path).replace(/\\/g, '/')}', '${escapeHtml(storageKind)}', '${escapeHtml(item.name)}')" title="View in App">👁 View</button>
                   <button class="item-act-btn btn-jump-folder" data-path="${escapeHtml(item.parent_path)}">📂 Open Folder</button>
                 `}
               </div>
@@ -2194,7 +2215,7 @@
 
           html += `
             <li>
-              <div class="tpl-node ${isSelected ? 'selected' : ''}" data-path="${nodePath}">
+              <div class="tpl-node ${isSelected ? 'selected' : ''}" data-path="${nodePath}" role="treeitem" tabindex="0" aria-selected="${isSelected ? 'true' : 'false'}" aria-label="Folder ${escapeHtml(node.name)}">
                 <div class="node-label">
                   <span>${hasChildren ? '📁' : '📂'}</span>
                   <span>${escapeHtml(node.name)}</span>
@@ -2765,7 +2786,7 @@
     
     // Bind checkboxes and Actions buttons to each row
     table.querySelectorAll('tbody tr').forEach((tr) => {
-      const fileNo = tr.dataset.fno || tr.cells[1]?.textContent.trim() || tr.cells[0]?.textContent.trim();
+      const fileNo = (tr.dataset && tr.dataset.fno) || tr.cells?.[1]?.textContent?.trim() || tr.cells?.[0]?.textContent?.trim();
       if (!fileNo) return;
       const client = clients.find(c => c.file_no === fileNo);
       if (!client) return;
@@ -2887,6 +2908,192 @@
       });
     });
   }
+
+  // Universal In-App PDF Viewer Modal (Prevents Chrome redirection & auth loss)
+  window.openUniversalPdfViewer = async function(clientFileNo, relPath, storageKind, filename) {
+    const displayName = filename || (relPath ? relPath.split('/').pop() : 'Document.pdf');
+    let session = null;
+    let pageCount = 1;
+    let currentPage = 1;
+    let zoomLevel = 1.0;
+
+    // Create Modal Overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'vs-pdf-viewer-overlay';
+    overlay.id = 'vs-universal-pdf-viewer-modal';
+
+    overlay.innerHTML = `
+      <div class="vs-pdf-viewer-topbar">
+        <div class="vs-pdf-viewer-title-group">
+          <svg class="i" style="width:20px;height:20px;stroke:#60a5fa;flex-shrink:0;"><use href="#file"/></svg>
+          <span class="vs-pdf-viewer-filename" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+          <span id="uv-page-indicator" style="font-size:12px;color:#94a3b8;font-weight:500;">Loading...</span>
+        </div>
+        <div class="vs-pdf-viewer-controls">
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-zoom-out" title="Zoom Out">−</button>
+          <span id="uv-zoom-label" style="font-size:12px;font-weight:600;min-width:40px;text-align:center;">100%</span>
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-zoom-in" title="Zoom In">+</button>
+          <span style="color:#475569;margin:0 4px;">|</span>
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-prev-page" title="Previous Page" disabled>◀</button>
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-next-page" title="Next Page" disabled>▶</button>
+          <span style="color:#475569;margin:0 4px;">|</span>
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-save-win-btn" title="Save to Windows">
+            <svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#download"/></svg>Save As
+          </button>
+          <button type="button" class="vs-pdf-viewer-btn primary" id="uv-open-studio-btn" title="Edit in PDF Studio">
+            <svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#edit"/></svg>Open in Studio
+          </button>
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-close-btn" style="background:#dc2626;border-color:#dc2626;color:#fff;">✕ Close</button>
+        </div>
+      </div>
+      <div class="vs-pdf-viewer-viewport" id="uv-viewport">
+        <div style="color:#cbd5e1;font-size:14px;display:flex;align-items:center;gap:10px;margin-top:60px;">
+          <span class="studio-spinner" style="border-top-color:#60a5fa;"></span> Loading document...
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const closeViewer = () => {
+      overlay.remove();
+      if (window.VSKeyboard && window.VSKeyboard.releaseFocus) {
+        window.VSKeyboard.releaseFocus(overlay);
+      }
+    };
+
+    overlay.querySelector('#uv-close-btn').onclick = closeViewer;
+
+    // Handle ESC key
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        closeViewer();
+        document.removeEventListener('keydown', onKey);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+
+    const viewport = overlay.querySelector('#uv-viewport');
+    const pageInd = overlay.querySelector('#uv-page-indicator');
+    const zoomLbl = overlay.querySelector('#uv-zoom-label');
+    const prevBtn = overlay.querySelector('#uv-prev-page');
+    const nextBtn = overlay.querySelector('#uv-next-page');
+    const zoomInBtn = overlay.querySelector('#uv-zoom-in');
+    const zoomOutBtn = overlay.querySelector('#uv-zoom-out');
+    const saveWinBtn = overlay.querySelector('#uv-save-win-btn');
+    const openStudioBtn = overlay.querySelector('#uv-open-studio-btn');
+
+    const renderPage = () => {
+      if (!session) return;
+      pageInd.textContent = `Page ${currentPage} of ${pageCount}`;
+      prevBtn.disabled = (currentPage <= 1);
+      nextBtn.disabled = (currentPage >= pageCount);
+      zoomLbl.textContent = `${Math.round(zoomLevel * 100)}%`;
+
+      viewport.innerHTML = `
+        <div style="transform: scale(${zoomLevel}); transform-origin: top center; transition: transform 0.15s ease;">
+          <img src="/api/pdf-studio/sessions/${encodeURIComponent(session.session_id)}/page/${currentPage}?dpi=130&t=${Date.now()}"
+               alt="Page ${currentPage}"
+               style="max-width:100%; box-shadow: 0 10px 40px rgba(0,0,0,0.5); border-radius:6px; background:#fff;" />
+        </div>
+      `;
+    };
+
+    prevBtn.onclick = () => {
+      if (currentPage > 1) {
+        currentPage--;
+        renderPage();
+      }
+    };
+
+    nextBtn.onclick = () => {
+      if (currentPage < pageCount) {
+        currentPage++;
+        renderPage();
+      }
+    };
+
+    zoomInBtn.onclick = () => {
+      zoomLevel = Math.min(2.5, zoomLevel + 0.2);
+      renderPage();
+    };
+
+    zoomOutBtn.onclick = () => {
+      zoomLevel = Math.max(0.4, zoomLevel - 0.2);
+      renderPage();
+    };
+
+    saveWinBtn.onclick = async () => {
+      if (typeof window.executeSaveToWindowsLocation === 'function') {
+        await window.executeSaveToWindowsLocation(session ? session.session_id : '', displayName);
+      } else {
+        window.location.href = `/api/client-files/download?client_file_no=${encodeURIComponent(clientFileNo)}&path=${encodeURIComponent(relPath)}&storage_kind=${storageKind}`;
+      }
+    };
+
+    openStudioBtn.onclick = () => {
+      closeViewer();
+      if (window.openPdfStudioSession && session) {
+        window.openPdfStudioSession(session, [], { clientFileNo, relPath });
+      } else {
+        safeNavigate('studio');
+      }
+    };
+
+    // Fetch PDF in-app and mount into a PDF Studio preview session
+    try {
+      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token') || '';
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const downloadUrl = `/api/client-files/download?client_file_no=${encodeURIComponent(clientFileNo)}&path=${encodeURIComponent(relPath)}&storage_kind=${storageKind}`;
+      const resp = await fetch(downloadUrl, { method: 'GET', headers, credentials: 'include' });
+      if (!resp.ok) {
+        throw new Error(`Failed to load file: HTTP ${resp.status}`);
+      }
+
+      const blob = await resp.blob();
+      const reader = new FileReader();
+      const b64 = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      // Create PDF Studio Session
+      const sessRes = await api('/api/pdf-studio/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          original_name: displayName,
+          file_base64: b64
+        })
+      });
+
+      if (sessRes && sessRes.ok && sessRes.session) {
+        session = sessRes.session;
+        pageCount = session.page_count || 1;
+        currentPage = 1;
+        renderPage();
+      } else {
+        throw new Error('Failed to create in-app preview session.');
+      }
+    } catch (err) {
+      console.error('[Universal PDF Viewer Error]', err);
+      viewport.innerHTML = `
+        <div style="color:#ef4444;text-align:center;margin-top:60px;">
+          <p style="font-weight:600;font-size:15px;margin-bottom:8px;">Unable to display PDF preview</p>
+          <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;">${escapeHtml(err.message)}</p>
+          <button type="button" class="vs-pdf-viewer-btn" id="uv-err-fallback-btn">Download File Directly</button>
+        </div>
+      `;
+      const fallbackBtn = viewport.querySelector('#uv-err-fallback-btn');
+      if (fallbackBtn) {
+        fallbackBtn.onclick = () => {
+          window.location.href = `/api/client-files/download?client_file_no=${encodeURIComponent(clientFileNo)}&path=${encodeURIComponent(relPath)}&storage_kind=${storageKind}`;
+        };
+      }
+    }
+  };
 
   attachModalCredits(document);
   document.addEventListener('click', () => {

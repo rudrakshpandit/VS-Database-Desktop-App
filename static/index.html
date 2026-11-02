@@ -22,16 +22,96 @@
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=20260822">
     <link rel="manifest" href="/manifest.json?v=20260822">
     
-    <!-- Google Fonts Collection: Plus Jakarta Sans, Inter, Montserrat, Roboto Slab, Merriweather, Playfair Display, Fira Code, Source Serif 4 -->
+    <script>
+      (function() {
+        try {
+          var p = new URLSearchParams(window.location.search);
+          var skip = p.get('from_extension') === '1' ||
+                     p.get('skip_animation') === '1' ||
+                     window.location.hash === '#save' ||
+                     window.location.hash === '#save-files';
+          document.documentElement.classList.add(skip ? 'vs-boot-skip' : 'vs-booting');
+        } catch (e) {
+          document.documentElement.classList.add('vs-booting');
+        }
+        // Safety boot watchdog: guaranteed unblock after 3.5s under any condition
+        setTimeout(function() {
+          document.documentElement.classList.remove('vs-booting');
+          var sp = document.getElementById('vs-daily-startup-splash');
+          if (sp && sp.style.display !== 'none' && !window.__vsSplashDismissed) {
+            sp.classList.add('fade-out');
+            setTimeout(function() { sp.style.display = 'none'; }, 400);
+          }
+        }, 3500);
+      })();
+    </script>
+    <style id="vs-critical-boot-css">
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #eef2ff;
+        overflow: hidden;
+      }
+      #vs-daily-startup-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at center, #ffffff 0%, #f1f5f9 65%, #e2e8f0 100%);
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.85s ease;
+      }
+      #vs-daily-startup-splash.fade-out {
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+      #vs-startup-video {
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        display: block;
+        pointer-events: none;
+      }
+      html.vs-booting .app {
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+      html.vs-boot-skip #vs-daily-startup-splash {
+        display: none !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+      #vs-global-drop-overlay {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+    </style>
+
+    <!-- Design Tokens & Local Stylesheets (Prioritized before external network fonts) -->
+    <link rel="stylesheet" href="tokens.css?v=20261011_v3">
+    <link rel="stylesheet" href="app.css?v=20261011_v3">
+    <link rel="stylesheet" href="vs-ai.css?v=20261011_v3">
+    <link rel="stylesheet" href="studio.css?v=20261011_v3">
+    <link rel="stylesheet" href="keyboard.css?v=20261011_v3">
+    <link rel="stylesheet" href="automation.css?v=20261013_v1">
+
+    <!-- Google Fonts Collection (Non-blocking async load with print media swap) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap">
-
-    <!-- Design Tokens & Stylesheets -->
-    <link rel="stylesheet" href="tokens.css?v=20260924_unified">
-    <link rel="stylesheet" href="app.css?v=20260924_unified">
-    <link rel="stylesheet" href="vs-ai.css?v=20260924_unified">
-    <link rel="stylesheet" href="studio.css?v=20260924_unified">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap" media="print" onload="this.media='all'">
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap">
+    </noscript>
 </head>
 
 <body>
@@ -49,6 +129,7 @@
     <symbol id="backup" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
     <symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
     <symbol id="setup" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="automation" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3.5"/></symbol>
     <symbol id="users" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
     <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
@@ -65,6 +146,8 @@
     <symbol id="logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
     <symbol id="check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
     <symbol id="close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+    <symbol id="tick" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   </defs>
 </svg>
 
@@ -81,10 +164,10 @@
 </div>
 
 <!-- 4K Startup Intro Glassmorphic Splash Screen -->
-<div id="vs-daily-startup-splash" class="startup-splash-overlay" style="display:none;">
+<div id="vs-daily-startup-splash" class="startup-splash-overlay">
     <div class="startup-frosted-glass-card glass">
         <div class="startup-glass-reflection"></div>
-        <video id="vs-startup-video" src="Startup.mp4?v=20260827_smooth_fade_v2" playsinline muted autoplay preload="auto"></video>
+        <video id="vs-startup-video" src="Startup.mp4?v=20260924_orig" playsinline muted autoplay preload="metadata"></video>
     </div>
 </div>
 
@@ -167,12 +250,13 @@
             <button data-page="vs-ai" id="nav-vs-ai" class="btn-vs-ai" title="VS AI"><svg class="i" aria-hidden="true"><use href="#ai"/></svg><span>VS AI</span></button>
             <button data-page="drive"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Drive Sharing</span></button>
             <button data-page="backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg><span>Backup & Restore</span></button>
+            <button data-page="automation" id="nav-automation" class="btn-automation" title="Automation"><svg class="i" aria-hidden="true"><use href="#automation"/></svg><span>Automation</span></button>
             <button data-page="activity"><svg class="i" aria-hidden="true"><use href="#activity"/></svg><span>Activity</span></button>
             <button data-page="setup"><svg class="i" aria-hidden="true"><use href="#setup"/></svg><span>Setup</span></button>
             <button data-page="users" id="nav-users" style="display:none"><svg class="i" aria-hidden="true"><use href="#users"/></svg><span>Users & Devices</span></button>
         </nav>
 
-        <footer class="side-foot">v1.0.0 · Designed by Rudraksh Sikhwal</footer>
+        <footer class="side-foot">v1.0.1 · Designed by Rudraksh Sikhwal</footer>
     </aside>
 
     <!-- Main Workspace Container -->
@@ -239,23 +323,20 @@
 
 <div id="auth-modal-root"></div>
 
-<!-- Visual Diagrams (Mermaid.js) -->
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-<script>
-  if (window.mermaid) {
-    try {
-      mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
-    } catch(e) {}
-  }
-</script>
+<!-- Application Scripts (Local first so startup never blocks on external CDN) -->
+<script src="keyboard-engine.js?v=20261011_v4"></script>
+<script src="glass-ui-kit.js?v=20261013_v1"></script>
+<script src="save-staging.js?v=20261011_v4"></script>
+<script src="ai-rename.js?v=20261011_v4"></script>
+<script src="pdf-studio.js?v=20261011_v4"></script>
+<script src="vs-ai.js?v=20261011_v4"></script>
+<script src="automation.js?v=20261013_v1"></script>
+<script src="app.js?v=20261011_v4"></script>
+<script src="enhancements.js?v=20261011_v4"></script>
+<script src="client-portal.js?v=20261011_v4"></script>
 
-<!-- Application Scripts -->
-<script src="save-staging.js?v=20260917"></script>
-<script src="pdf-studio.js?v=20260917"></script>
-<script src="vs-ai.js?v=20260930_enhanced"></script>
-<script src="app.js?v=20260924_unified"></script>
-<script src="enhancements.js?v=20260821_isolated_portals"></script>
-<script src="client-portal.js?v=20260821_isolated_portals"></script>
+<!-- Visual Diagrams (Mermaid.js loaded non-blockingly) -->
+<script defer src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" onload="try{if(window.mermaid){mermaid.initialize({startOnLoad:false,theme:'neutral',securityLevel:'loose'});}}catch(e){}"></script>
 
 </body>
 </html>

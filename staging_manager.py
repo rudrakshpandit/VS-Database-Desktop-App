@@ -316,6 +316,25 @@ class StagingSessionManager:
             self._save_manifest(session_id, manifest)
         return found
 
+    def rename_staged_file(self, session_id: str, staged_file_id: str, new_name: str) -> Optional[Dict[str, Any]]:
+        """Renames a staged file in the manifest, updating name, filename, and original_name."""
+        manifest = self._load_manifest(session_id)
+        if not manifest:
+            return None
+        found_entry = None
+        for f in manifest.get("files", []):
+            if f["staged_file_id"] == staged_file_id:
+                clean_name = os.path.basename(new_name).strip()
+                if clean_name:
+                    f["name"] = clean_name
+                    f["filename"] = clean_name
+                    f["original_name"] = clean_name
+                    found_entry = f
+                break
+        if found_entry:
+            self._save_manifest(session_id, manifest)
+        return found_entry
+
     def replace_files_with_processed_result(
         self,
         session_id: str,

@@ -1,1316 +1,2360 @@
+(function () {
+'use strict';
+
 /**
- * VS Database — Studio Subsystem Frontend Module
- * 100% Parity with UI/Desired/PDF Studio.png
- * 12 Modular Tools, Multi-File Queue, Dynamic Settings, Real-Time Preview, and Operation History.
+ * VS Database — Studio Subsystem
+ * Complete implementation matching UI/Desired/HTML/studioui.html
+ * Strictly scoped under #studio-root and #studio-portal.
+ * Zero console / sidebar / topbar contamination.
  */
 
-// Active Studio Global State
-let studioSelectedTool = 'merge_pdf';
-let studioFiles = []; // Array of { id, file, name, size, base64 }
-let currentPdfSession = null;
-let currentThumbnails = [];
-let currentPreviewPage = 1;
-let currentZoom = 1.0;
-let pdfStudioOriginContext = null;
-let isExecutingStudioTool = false;
-
-// 12 Tool Definitions matching Mockup
-const STUDIO_TOOLS = [
+// ============================================================
+// DATA-DRIVEN CATEGORIES & TOOLS REGISTRY
+// ============================================================
+const STUDIO_CATEGORIES = [
   {
-    id: 'merge_pdf',
-    name: 'Merge PDF',
-    desc: 'Combine multiple PDFs into a single document',
-    badgeClass: 'badge-blue',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.5-1.5M8 8l1.5 1.5M16 8l-1.5 1.5M8 16l1.5-1.5"/></svg>`
-  },
-  {
-    id: 'split_pdf',
-    name: 'Split PDF',
-    desc: 'Extract specific pages or page ranges',
-    badgeClass: 'badge-orange',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>`
-  },
-  {
-    id: 'rotate_pages',
-    name: 'Rotate PDF',
-    desc: 'Rotate pages 90, 180, or 270 degrees',
-    badgeClass: 'badge-purple',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>`
-  },
-  {
-    id: 'compress_pdf',
-    name: 'Compress PDF',
-    desc: 'Reduce PDF file size while preserving quality',
-    badgeClass: 'badge-emerald',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6m-6-4h6m4 0h6m-6 4h6M7 4v16m10-16v16"/></svg>`
-  },
-  {
-    id: 'unlock_pdf',
-    name: 'Unlock PDF',
-    desc: 'Remove password and restrictions from PDF',
-    badgeClass: 'badge-rose',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`
-  },
-  {
-    id: 'lock_pdf',
-    name: 'Protect PDF',
-    desc: 'Secure your PDF with a password',
-    badgeClass: 'badge-blue',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
-  },
-  {
-    id: 'extract_pages',
-    name: 'Extract Pages',
-    desc: 'Save selected pages as a new PDF',
-    badgeClass: 'badge-indigo',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
-  },
-  {
-    id: 'delete_pages',
-    name: 'Delete Pages',
-    desc: 'Remove unwanted pages from your document',
-    badgeClass: 'badge-red',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`
-  },
-  {
-    id: 'rearrange_pages',
-    name: 'Reorder Pages',
-    desc: 'Rearrange the page sequence in your PDF',
-    badgeClass: 'badge-amber',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 15 12 20 17 15"/><polyline points="7 9 12 4 17 9"/></svg>`
-  },
-  {
-    id: 'watermark_pdf',
-    name: 'Add Watermark',
-    desc: 'Overlay text or image watermarks onto pages',
-    badgeClass: 'badge-teal',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>`
-  },
-  {
-    id: 'page_numbers',
-    name: 'Add Page Numbers',
-    desc: 'Insert customizable page numbers to your document',
-    badgeClass: 'badge-azure',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="12" y1="8" x2="12" y2="14"/></svg>`
-  },
-  {
-    id: 'convert_images',
-    name: 'Convert to Images',
-    desc: 'Export PDF pages as JPG or PNG images',
-    badgeClass: 'badge-purple',
-    iconSvg: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`
+    id: "pdf",
+    name: "PDF Tools",
+    icon: "M6 3h8l4 4v14H6zM14 3v4h4",
+    tools: [
+      {
+        id: "merge",
+        name: "Merge PDF",
+        desc: "Combine PDFs into one",
+        icon: "M6 4v6a4 4 0 004 4h8M14 10l4 4-4 4",
+        gradient: "#7f98ff,#4c5fe0",
+        minFiles: 2,
+        backendTool: "merge_pdf"
+      },
+      {
+        id: "split",
+        name: "Split PDF",
+        desc: "Pages or page ranges",
+        icon: "M12 4v16M5 8l-2 4 2 4M19 8l2 4-2 4",
+        gradient: "#ffa561,#f25f22",
+        minFiles: 1,
+        backendTool: "split_pdf"
+      },
+      {
+        id: "rotate",
+        name: "Rotate PDF",
+        desc: "Rotate pages 90, 180, 270",
+        icon: "M20 12a8 8 0 10-3 6.2M20 5v5h-5",
+        gradient: "#c08bff,#7a4be0",
+        minFiles: 1,
+        backendTool: "rotate_pages"
+      },
+      {
+        id: "compress",
+        name: "Compress PDF",
+        desc: "Reduce file size",
+        icon: "M12 3v7M8 7l4 4 4-4M12 21v-7M8 17l4-4 4 4",
+        gradient: "#45e6a6,#0f9a57",
+        minFiles: 1,
+        backendTool: "compress_pdf"
+      },
+      {
+        id: "unlock",
+        name: "Unlock PDF",
+        desc: "Remove the password",
+        icon: "M7 11V8a5 5 0 019-3M5 11h14v9H5z",
+        gradient: "#ff8aa6,#d91f3d",
+        minFiles: 1,
+        backendTool: "unlock_pdf"
+      },
+      {
+        id: "protect",
+        name: "Protect PDF",
+        desc: "Secure with a password",
+        icon: "M6 11h12v9H6zM8 11V8a4 4 0 018 0v3",
+        gradient: "#7f98ff,#3a55d9",
+        minFiles: 1,
+        backendTool: "lock_pdf"
+      },
+      {
+        id: "extract",
+        name: "Extract Pages",
+        desc: "Save pages as a new PDF",
+        icon: "M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h6",
+        gradient: "#8d9bff,#5560d8",
+        minFiles: 1,
+        backendTool: "extract_pages"
+      },
+      {
+        id: "delete",
+        name: "Delete Pages",
+        desc: "Remove unwanted pages",
+        icon: "M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13",
+        gradient: "#ff8aa6,#e0245a",
+        minFiles: 1,
+        backendTool: "delete_pages"
+      },
+      {
+        id: "reorder",
+        name: "Reorder Pages",
+        desc: "Rearrange the sequence",
+        icon: "M8 4v16M5 7l3-3 3 3M16 20V4M13 17l3 3 3-3",
+        gradient: "#ffc15f,#e8870a",
+        minFiles: 1,
+        backendTool: "rearrange_pages"
+      },
+      {
+        id: "watermark",
+        name: "Add Watermark",
+        desc: "Text or image overlay",
+        icon: "M12 3c4 5 6 8 6 11a6 6 0 01-12 0c0-3 2-6 6-11z",
+        gradient: "#5eead0,#17a98e",
+        minFiles: 1,
+        backendTool: "watermark_pdf"
+      },
+      {
+        id: "numbers",
+        name: "Page Numbers",
+        desc: "Insert page numbers",
+        icon: "M5 4h14v16H5zM10 9l2-2v7",
+        gradient: "#6fb4ff,#2756d9",
+        minFiles: 1,
+        backendTool: "page_numbers"
+      },
+      {
+        id: "images",
+        name: "Convert to Images",
+        desc: "Export pages as JPG or PNG",
+        icon: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M9 9h.01",
+        gradient: "#d79bff,#a24be0",
+        minFiles: 1,
+        backendTool: "convert_images"
+      }
+    ]
   }
 ];
 
-// Recent Operations Store in LocalStorage
-function getRecentOperations() {
-  try {
-    const raw = localStorage.getItem('vs_studio_recent_ops');
-    if (raw) return JSON.parse(raw);
-  } catch (e) {}
-  // Default mock recent operations matching aesthetic mockup
-  return [
-    {
-      id: 'op_1',
-      file: 'financial_report_2024.pdf',
-      operation: 'Merge',
-      date: 'Today, 2:45 PM',
-      status: 'Completed',
-      actionUrl: '#'
-    },
-    {
-      id: 'op_2',
-      file: 'tax_audit_dossier.pdf',
-      operation: 'Compress',
-      date: 'Today, 1:12 PM',
-      status: 'Completed',
-      actionUrl: '#'
-    },
-    {
-      id: 'op_3',
-      file: 'gst_annual_return_signed.pdf',
-      operation: 'Watermark',
-      date: 'Yesterday, 5:30 PM',
-      status: 'Completed',
-      actionUrl: '#'
-    }
-  ];
+const STUDIO_TOOL_ACTIONS = {
+  merge: "Merge PDFs",
+  split: "Split PDF",
+  rotate: "Rotate pages",
+  compress: "Compress PDF",
+  unlock: "Unlock PDF",
+  protect: "Protect PDF",
+  extract: "Extract pages",
+  delete: "Delete pages",
+  reorder: "Apply order",
+  watermark: "Add watermark",
+  numbers: "Add page numbers",
+  images: "Convert to images"
+};
+
+const STUDIO_OUTPUT_SUFFIXES = {
+  merge: "merge-pdf",
+  split: "split-pdf",
+  rotate: "rotate-pdf",
+  compress: "compress-pdf",
+  unlock: "unlock-pdf",
+  protect: "protect-pdf",
+  extract: "extract-pages",
+  delete: "delete-pages",
+  reorder: "rearrange-pages",
+  watermark: "watermark",
+  numbers: "page-numbers",
+  images: "images"
+};
+
+const STUDIO_ORGANIZER_MODES = {
+  delete: "delete",
+  extract: "extract",
+  reorder: "reorder",
+  images: "convert"
+};
+
+// ============================================================
+// STATE
+// ============================================================
+let currentCategory = "pdf";
+let isCategoryOpen = true;
+let currentToolId = "split";
+let studioDocs = []; // Array of { id, name, kb, numbered, num, hist, orig, pages: [{ o, rot, imgUrl }], file, sessionId, pageCount }
+let activeDocId = null;
+let studioZoom = 1.0;
+let studioPreviewPage = 0;
+let currentPdfSession = null;
+let pdfStudioOriginContext = null;
+let uidCounter = 1;
+let isUploadingDocs = false;
+
+// Organizer State
+let M = null;
+let modalOpener = null;
+let dragIndex = null;
+
+const MODE_DESCS = {
+  delete: ["Delete pages", "Tick the pages you want to remove."],
+  extract: ["Extract pages", "Tick the pages to save as a new PDF."],
+  reorder: ["Reorder pages", "Drag pages into the new order, or focus one and press Alt + arrow keys."],
+  convert: ["Convert to images", "Tick the pages to export as images."]
+};
+
+const STUDIO_VALUES = {
+  mode: "Extract page range",
+  angle: "90° clockwise",
+  which: "All pages",
+  level: "Balanced",
+  pos: "Center",
+  fmt: "Page 1",
+  npos: "Bottom center",
+  em: "One combined PDF",
+  cf: "JPG",
+  dpi: "150 DPI"
+};
+
+const STUDIO_SELECTIONS = {
+  delete: new Set(),
+  extract: new Set(),
+  convert: new Set()
+};
+
+const STUDIO_INPUTS = {
+  rg: "",
+  adv: "",
+  seq: "",
+  pw: "",
+  wm: "CONFIDENTIAL",
+  ns: "1",
+  all: false,
+  out: ""
+};
+
+// SVG icons
+const SVG_TICK = '<svg viewBox="0 0 24 24"><path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const SVG_CROSS = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const svgIcon = p => `<svg viewBox="0 0 24 24"><path d="${p}"/></svg>`;
+
+function escapeHtml(str) {
+  return String(str || "").replace(/[&<>"]/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;"
+  }[c]));
 }
 
-function saveRecentOperation(op) {
+function currentDoc() {
+  return studioDocs.find(d => d.id === activeDocId) || null;
+}
+
+function baseDocName(d) {
+  return (d && d.name ? d.name : "document").replace(/\.pdf$/i, "");
+}
+
+function getExpectedOutputName(d) {
+  if (!d) return "output.pdf";
+  const suffix = STUDIO_OUTPUT_SUFFIXES[currentToolId] || currentToolId;
+  const ext = currentToolId === "images" ? ".zip" : ".pdf";
+  return `${baseDocName(d)}_${suffix}${ext}`;
+}
+
+function snapDoc(d) {
+  return JSON.stringify({
+    p: (d.pages || []).map(p => ({ ...p })),
+    n: d.numbered,
+    ns: d.numberingSettings || null,
+    s: d.num,
+    k: d.kb,
+    c: d.pageCount,
+    v: d.version || 1
+  });
+}
+
+function restoreDoc(d, snapshotStr) {
   try {
-    const ops = getRecentOperations();
-    ops.unshift(op);
-    if (ops.length > 20) ops.pop();
-    localStorage.setItem('vs_studio_recent_ops', JSON.stringify(ops));
-  } catch (e) {}
+    const o = JSON.parse(snapshotStr);
+    d.pages = o.p || [];
+    d.numbered = o.n || false;
+    d.numberingSettings = o.ns || null;
+    d.num = o.s || 1;
+    d.kb = o.k || d.kb;
+    d.pageCount = o.c || d.pages.length;
+    d.version = (o.v || 1) + 1;
+  } catch (err) {
+    console.warn("Restore snapshot failed:", err);
+  }
+}
+
+function pushSnapshot(d) {
+  if (!d.hist) d.hist = [];
+  d.hist.push(snapDoc(d));
+}
+
+function parseRange(s, n) {
+  s = (s || "").trim();
+  if (!s) return { err: "Enter at least one page" };
+  const out = new Set();
+  for (const part of s.split(",")) {
+    const t = part.trim();
+    if (!t) continue;
+    const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(t);
+    if (!m) return { err: `"${t}" is not a valid page or range` };
+    const a = +m[1];
+    const b = m[2] ? +m[2] : a;
+    if (a < 1 || b < a) return { err: `"${t}" is not a valid range` };
+    if (b > n) return { err: `Page ${b} does not exist. This file has ${n} page${n > 1 ? "s" : ""}` };
+    for (let i = a; i <= b; i++) out.add(i - 1);
+  }
+  return { set: out };
+}
+
+// ============================================================
+// PORTAL & TOAST
+// ============================================================
+function ensureStudioPortal() {
+  let portal = document.getElementById("studio-portal");
+  if (!portal) {
+    portal = document.createElement("div");
+    portal.id = "studio-portal";
+    portal.innerHTML = `
+      <div id="gsp" class="glass" role="listbox"></div>
+      <div id="mbg">
+        <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="mtl" id="modal">
+          <div class="mh">
+            <div><h2 id="mtl"></h2><p id="msub"></p></div>
+            <button class="xb" id="mx" aria-label="Close">${SVG_CROSS}</button>
+          </div>
+          <div class="mt" id="mtool"></div>
+          <div class="mb"><div class="mg" id="mgrid"></div></div>
+          <div class="mf" id="mfoot"></div>
+        </div>
+      </div>
+      <div class="toast glass" id="toast" role="status"></div>
+    `;
+    document.body.appendChild(portal);
+  }
+  return portal;
+}
+
+let toastTimer = null;
+function studioToast(msg) {
+  ensureStudioPortal();
+  const t = document.getElementById("toast");
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    t.classList.remove("on");
+  }, 2400);
+}
+
+function promptPageNumberingUpdate() {
+  return new Promise(resolve => {
+    ensureStudioPortal();
+    const portal = document.getElementById("studio-portal");
+    let bg = document.getElementById("st-pnum-dialog");
+    if (!bg) {
+      bg = document.createElement("div");
+      bg.id = "st-pnum-dialog";
+      bg.style.cssText = "position:fixed;inset:0;z-index:2500;display:grid;place-items:center;background:rgba(20,15,40,0.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;pointer-events:none;transition:opacity 0.25s;";
+      bg.innerHTML = `
+        <div class="glass" style="width:min(440px,90vw);padding:26px 28px;border-radius:22px;box-shadow:0 18px 45px rgba(40,25,80,0.28);background:rgba(255,255,255,0.88);display:flex;flex-direction:column;gap:18px;">
+          <div style="display:flex;align-items:flex-start;gap:14px;">
+            <div style="width:40px;height:40px;border-radius:12px;background:rgba(90,120,255,0.14);display:grid;place-items:center;color:#4c5fe0;flex-shrink:0;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14v16H5zM10 9l2-2v7"/></svg>
+            </div>
+            <div>
+              <h3 style="margin:0;font-size:16px;font-weight:700;color:var(--text,#1e1b4b);">Page Numbers Notice</h3>
+              <p style="margin:6px 0 0;font-size:13.5px;color:var(--dim,#6b7280);line-height:1.45;">This task will change your page numbers. Do you want to:</p>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:4px;">
+            <button class="btn ghost" id="st-pnum-keep" style="padding:9px 18px;border-radius:10px;font-size:13px;font-weight:600;">Keep Same</button>
+            <button class="btn" id="st-pnum-update" style="padding:9px 20px;border-radius:10px;font-size:13px;font-weight:600;background:linear-gradient(135deg,#6fb4ff,#2756d9);color:#fff;">Update</button>
+          </div>
+        </div>
+      `;
+      portal.appendChild(bg);
+    }
+
+    const keepBtn = document.getElementById("st-pnum-keep");
+    const updateBtn = document.getElementById("st-pnum-update");
+
+    function cleanup(choice) {
+      bg.style.opacity = "0";
+      bg.style.pointerEvents = "none";
+      if (keepBtn) keepBtn.onclick = null;
+      if (updateBtn) updateBtn.onclick = null;
+      resolve(choice);
+    }
+
+    if (keepBtn) keepBtn.onclick = () => cleanup("keep");
+    if (updateBtn) updateBtn.onclick = () => cleanup("update");
+
+    bg.style.pointerEvents = "auto";
+    bg.style.opacity = "1";
+  });
+}
+
+// ============================================================
+// GLASS SELECT DROPDOWN (1:1 with studioui.html)
+// ============================================================
+let gsEl = null;
+let gsOpts = [];
+let gsAct = 0;
+let gsType = "";
+
+function mkSel(el) {
+  const id = el.dataset.id;
+  const o = el.dataset.opts.split("|");
+  const currentVal = STUDIO_VALUES[id] || o[0];
+  STUDIO_VALUES[id] = currentVal;
+
+  el.innerHTML = `
+    <button type="button" class="gs-btn" role="combobox" aria-haspopup="listbox" aria-expanded="false">
+      <span>${escapeHtml(currentVal)}</span>
+      <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+  `;
+
+  const b = el.querySelector(".gs-btn");
+  if (!b) return;
+
+  b.onclick = e => {
+    e.stopPropagation();
+    if (gsEl === el) {
+      gsClose();
+    } else {
+      gsOpen(el, id, o);
+    }
+  };
+
+  b.onkeydown = e => {
+    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+      e.preventDefault();
+      if (gsEl !== el) gsOpen(el, id, o);
+    }
+  };
+}
+
+function gsOpen(el, id, o) {
+  gsClose();
+  ensureStudioPortal();
+  const gsp = document.getElementById("gsp");
+  if (!gsp) return;
+
+  gsEl = el;
+  gsOpts = o;
+  gsAct = Math.max(0, o.indexOf(STUDIO_VALUES[id]));
+  gsType = id;
+
+  const b = el.querySelector(".gs-btn");
+  if (b) b.setAttribute("aria-expanded", "true");
+
+  gsp.innerHTML = o.map((x, i) => `
+    <div class="go ${x === STUDIO_VALUES[id] ? "sl" : ""} ${i === gsAct ? "act" : ""}" role="option" data-i="${i}">
+      ${escapeHtml(x)}
+      ${x === STUDIO_VALUES[id] ? SVG_TICK : ""}
+    </div>
+  `).join("");
+
+  const r = b.getBoundingClientRect();
+  const width = Math.max(r.width, 180);
+  gsp.style.width = width + "px";
+  gsp.style.left = Math.min(r.left, window.innerWidth - width - 8) + "px";
+
+  const h = Math.min(280, o.length * 40 + 12);
+  const fitsBelow = window.innerHeight - r.bottom >= h + 16;
+  gsp.style.top = (fitsBelow ? r.bottom + 8 : Math.max(8, r.top - h - 8)) + "px";
+
+  requestAnimationFrame(() => gsp.classList.add("show"));
+}
+
+function gsClose() {
+  if (!gsEl) return;
+  const b = gsEl.querySelector(".gs-btn");
+  if (b) b.setAttribute("aria-expanded", "false");
+  const gsp = document.getElementById("gsp");
+  if (gsp) gsp.classList.remove("show");
+  gsEl = null;
+}
+
+function gsPick(i) {
+  const id = gsType;
+  const el = gsEl;
+  const v = gsOpts[i];
+  STUDIO_VALUES[id] = v;
+  if (el) {
+    const span = el.querySelector(".gs-btn span");
+    if (span) span.textContent = v;
+  }
+  gsClose();
+  onSelectOption(id);
+}
+
+function onSelectOption(id) {
+  if (M) {
+    renderOrgFoot();
+    return;
+  }
+  if (id === "mode" || id === "fmt" || id === "npos") {
+    renderSettingsPanel();
+  }
+  validateSettings();
+}
+
+// Global dismiss listeners for Glass Select
+document.addEventListener("click", e => {
+  const go = e.target.closest("#gsp .go");
+  if (go) {
+    gsPick(+go.dataset.i);
+    return;
+  }
+  if (gsEl && !e.target.closest("#gsp") && !e.target.closest(".gs-btn")) {
+    gsClose();
+  }
+});
+
+document.addEventListener("mousemove", e => {
+  const go = e.target.closest("#gsp .go");
+  if (go && gsEl) {
+    gsAct = +go.dataset.i;
+    const gsp = document.getElementById("gsp");
+    if (gsp) {
+      gsp.querySelectorAll(".go").forEach((x, i) => x.classList.toggle("act", i === gsAct));
+    }
+  }
+});
+
+window.addEventListener("scroll", () => {
+  if (gsEl) gsClose();
+}, true);
+window.addEventListener("resize", gsClose);
+
+document.addEventListener("keydown", e => {
+  if (gsEl) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      const b = gsEl.querySelector(".gs-btn");
+      gsClose();
+      if (b) b.focus();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      gsAct = (gsAct + (e.key === "ArrowDown" ? 1 : -1) + gsOpts.length) % gsOpts.length;
+      const gsp = document.getElementById("gsp");
+      if (gsp) {
+        gsp.querySelectorAll(".go").forEach((x, i) => x.classList.toggle("act", i === gsAct));
+      }
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      gsPick(gsAct);
+      return;
+    }
+    if (e.key.length === 1) {
+      const idx = gsOpts.findIndex(x => x.toLowerCase().startsWith(e.key.toLowerCase()));
+      if (idx >= 0) {
+        gsAct = idx;
+        const gsp = document.getElementById("gsp");
+        if (gsp) {
+          gsp.querySelectorAll(".go").forEach((x, k) => x.classList.toggle("act", k === idx));
+        }
+      }
+      return;
+    }
+  }
+});
+
+// ============================================================
+// RENDERING: CATEGORY BAR & COLLAPSE
+// ============================================================
+function renderCategoryBar() {
+  const catsEl = document.getElementById("cats");
+  const tcolEl = document.getElementById("tcol");
+  if (!catsEl) return;
+
+  catsEl.innerHTML = STUDIO_CATEGORIES.map(cat => {
+    const isSelected = cat.id === currentCategory;
+    const isExpanded = isSelected ? isCategoryOpen : false;
+    return `
+      <button class="cat ${isSelected ? "on" : ""}" role="tab" data-cat="${cat.id}" aria-selected="${isSelected}" aria-expanded="${isExpanded}">
+        <svg viewBox="0 0 24 24"><path d="${cat.icon}"/></svg>
+        ${escapeHtml(cat.name)} (${cat.tools.length})
+        <svg class="chev" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+      </button>
+    `;
+  }).join("");
+
+  if (tcolEl) {
+    tcolEl.classList.toggle("closed", !isCategoryOpen);
+  }
+}
+
+// ============================================================
+// RENDERING: 12 TOOL CARDS
+// ============================================================
+function renderToolCards() {
+  const toolsEl = document.getElementById("tools");
+  const bannerEl = document.getElementById("banner");
+  if (!toolsEl) return;
+
+  const currentCatObj = STUDIO_CATEGORIES.find(c => c.id === currentCategory) || STUDIO_CATEGORIES[0];
+  const n = studioDocs.length;
+
+  if (bannerEl) {
+    bannerEl.classList.toggle("hide", n > 0);
+  }
+
+  toolsEl.innerHTML = currentCatObj.tools.map(t => {
+    const isMerge = t.id === "merge";
+    const isDis = !n || (isMerge && n < 2);
+    const isSelected = currentToolId === t.id;
+    const subtext = (isMerge && n === 1) ? "Add one more PDF" : t.desc;
+
+    return `
+      <button class="tool ${isSelected ? "on" : ""}" data-tool="${t.id}" ${isDis ? "disabled" : ""} aria-label="${escapeHtml(t.name)}">
+        <span class="ti" style="background:linear-gradient(135deg, ${t.gradient})">
+          <svg viewBox="0 0 24 24"><path d="${t.icon}"/></svg>
+        </span>
+        <span>
+          <b>${escapeHtml(t.name)}</b>
+          <small>${escapeHtml(subtext)}</small>
+        </span>
+      </button>
+    `;
+  }).join("");
+}
+
+// ============================================================
+// RENDERING: TWO-COLUMN WORKSPACE SHELL
+// ============================================================
+function renderAddFilesPanel() {
+  const addp = document.getElementById("addp");
+  if (!addp) return;
+
+  const rows = studioDocs.map((d, i) => `
+    <div class="fr ${d.id === activeDocId ? "on" : ""}" data-doc-id="${d.id}" tabindex="0" role="button" aria-label="Select ${escapeHtml(d.name)}">
+      <span class="pdf">PDF</span>
+      <div class="fi">
+        <b>${escapeHtml(d.name)}</b>
+        <small>${d.kb} KB · ${d.pages.length} page${d.pages.length > 1 ? "s" : ""}</small>
+      </div>
+      <div class="ctl">
+        ${studioDocs.length > 1 ? `
+          <button data-action="up" aria-label="Move up" ${i ? "" : "disabled"}>
+            <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+          </button>
+          <button data-action="dn" aria-label="Move down" ${i < studioDocs.length - 1 ? "" : "disabled"}>
+            <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        ` : ""}
+        <button class="x" data-action="rm" aria-label="Remove">${SVG_CROSS}</button>
+      </div>
+    </div>
+  `).join("");
+
+  addp.innerHTML = `
+    <h2>Add Files<small>Max 50 MB</small></h2>
+    <div class="drop" id="drop">
+      <b>Choose PDF files</b>
+      <span>or drag and drop them here</span>
+      <button class="btn" id="choose" ${isUploadingDocs ? "disabled" : ""}>
+        ${isUploadingDocs ? "Processing..." : "+ Choose files"}
+      </button>
+      <input type="file" id="fin" accept=".pdf,application/pdf" multiple hidden>
+    </div>
+    <div class="fl">
+      <h3>Selected files (${studioDocs.length})${studioDocs.length ? `<button class="link" id="clr">Clear all</button>` : ""}</h3>
+      ${rows || `<div class="none">No files yet.<br>Choose or drop PDF files above to begin.</div>`}
+    </div>
+  `;
+}
+
+function field(id, l, o) {
+  return `<div class="fld"><label>${escapeHtml(l)}</label><div class="sel" data-id="${id}" data-opts="${escapeHtml(o)}"></div></div>`;
+}
+
+function tfield(id, l, ph, help, type) {
+  return `
+    <div class="fld">
+      <label for="${id}">${escapeHtml(l)}</label>
+      <input class="inp" id="${id}" type="${type || "text"}" value="${escapeHtml(STUDIO_INPUTS[id] || "")}" placeholder="${escapeHtml(ph || "")}">
+      ${help ? `<small>${escapeHtml(help)}</small>` : ""}
+    </div>
+  `;
+}
+
+function renderSettingsPanel() {
+  const setp = document.getElementById("setp");
+  if (!setp) return;
+
+  const currentCatObj = STUDIO_CATEGORIES.find(c => c.id === currentCategory) || STUDIO_CATEGORIES[0];
+  const toolObj = currentCatObj.tools.find(t => t.id === currentToolId) || currentCatObj.tools[0];
+  const d = currentDoc();
+
+  if (!d) {
+    setp.innerHTML = `
+      <h2>${escapeHtml(toolObj.name)} settings</h2>
+      <div class="ph">
+        <b>No PDF selected</b>
+        Add a PDF to see the tool settings.
+      </div>
+    `;
+    return;
+  }
+
+  const n = d.pages.length;
+  let fieldsHtml = tfield("out", "Output file name", "", "");
+  fieldsHtml = fieldsHtml.replace(`value="${escapeHtml("")}"`, `value="${escapeHtml(STUDIO_INPUTS.out || getExpectedOutputName(d))}"`);
+
+  const tool = currentToolId;
+  const mode = STUDIO_ORGANIZER_MODES[tool] || null;
+
+  if (tool === "split") {
+    fieldsHtml += field("mode", "Split mode", "Extract page range|Every N pages|Single pages");
+    if (STUDIO_VALUES.mode === "Extract page range") {
+      fieldsHtml += tfield("rg", "Page range", `e.g. 1-${Math.min(3, n)}`, "Comma-separated pages and ranges.");
+    } else if (STUDIO_VALUES.mode === "Every N pages") {
+      fieldsHtml += tfield("ns", "Pages per file", "2");
+    }
+  }
+
+  if (tool === "rotate") {
+    fieldsHtml += field("angle", "Angle", "90° clockwise|180°|90° counter-clockwise") +
+                  field("which", "Pages", "All pages|Odd pages|Even pages");
+  }
+
+  if (tool === "compress") {
+    fieldsHtml += field("level", "Compression level", "Light|Balanced|Maximum");
+  }
+
+  if (tool === "unlock" || tool === "protect") {
+    fieldsHtml += tfield("pw", "Password", "Enter password", "", "password");
+  }
+
+  if (tool === "watermark") {
+    fieldsHtml += tfield("wm", "Watermark text", "") + field("pos", "Position", "Center|Diagonal|Footer");
+  }
+
+  if (tool === "numbers") {
+    fieldsHtml += field("fmt", "Format", "1|Page 1|Page 1 of N") +
+                  field("npos", "Position", "Bottom center|Bottom right|Top right") +
+                  tfield("ns", "Start number", "1");
+  }
+
+  if (tool === "merge") {
+    fieldsHtml += `
+      <div class="fld">
+        <small>Files are merged in the order shown in the list (${studioDocs.length} files). Use the arrows to reorder them.</small>
+      </div>
+    `;
+  }
+
+  if (mode) {
+    const c = mode === "reorder" ? 0 : (STUDIO_SELECTIONS[mode] ? STUDIO_SELECTIONS[mode].size : 0);
+    fieldsHtml += `
+      <div class="pickrow">
+        <span>${mode === "reorder" ? "Drag pages into the order you want" : c ? c + " of " + n + " pages selected" : "No pages selected yet"}</span>
+        <button class="btn" id="pickb">
+          ${svgIcon("M4 5h7v7H4zM13 5h7v7h-7zM4 14h7v6H4zM13 14h7v6h-7z")}Select pages
+        </button>
+      </div>
+    `;
+    if (mode === "reorder") {
+      fieldsHtml += tfield("seq", "New page sequence (advanced)", "e.g. 3, 1, 2", "Type every page number once.");
+    } else {
+      fieldsHtml += tfield("adv", "Pages (advanced)", `e.g. 1-${Math.min(3, n)}, ${n}`, "Stays in sync with the visual selection.");
+    }
+  }
+
+  const allHtml = studioDocs.length > 1 ? `
+    <button class="cbx" role="checkbox" aria-checked="${STUDIO_INPUTS.all}" id="allc" style="margin:2px 0 12px">
+      <span class="box">${SVG_TICK}</span>
+      <span>Apply the same settings to all ${studioDocs.length} loaded PDFs</span>
+    </button>
+  ` : "";
+
+  setp.innerHTML = `
+    <h2>${escapeHtml(toolObj.name)} settings<span class="ready">Ready</span></h2>
+    ${fieldsHtml}
+    <div class="err" id="err"></div>
+    ${allHtml}
+    <button class="btn wide" id="go">
+      ${STUDIO_TOOL_ACTIONS[currentToolId] || "Run Tool"}
+      <svg class="nudge" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </button>
+    <div class="row2">
+      <button class="btn ghost" id="undo" ${d.hist && d.hist.length ? "" : "disabled"}>
+        ${svgIcon("M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3")}Undo
+      </button>
+      <button class="btn ghost" id="reset" ${d.hist && d.hist.length ? "" : "disabled"}>
+        ${svgIcon("M4 12a8 8 0 108-8M4 4v5h5")}Reset
+      </button>
+      <button class="btn ghost" id="dl">
+        ${svgIcon("M12 4v11M7 11l5 5 5-5M5 20h14")}Download
+      </button>
+    </div>
+    <button class="btn ghost wide" id="save" style="margin-top:8px">
+      ${svgIcon("M3 6h7l2 2h9v11H3z")}Save to client
+    </button>
+  `;
+
+  setp.querySelectorAll(".sel").forEach(mkSel);
+  validateSettings();
+}
+
+function validateSettings() {
+  const d = currentDoc();
+  if (!d) return { ok: false, err: "" };
+  const n = d.pages.length;
+  let e = "";
+  let ok = true;
+  const tool = currentToolId;
+  const mode = STUDIO_ORGANIZER_MODES[tool] || null;
+
+  if (tool === "split" && STUDIO_VALUES.mode === "Extract page range") {
+    const r = parseRange(STUDIO_INPUTS.rg, n);
+    if (r.err && STUDIO_INPUTS.rg) e = r.err;
+    if (r.err) ok = false;
+    const rgEl = document.getElementById("rg");
+    if (rgEl) rgEl.classList.toggle("bad", !!(STUDIO_INPUTS.rg && r.err));
+  }
+
+  if (["delete", "extract", "images"].includes(tool)) {
+    if (STUDIO_INPUTS.adv && STUDIO_INPUTS.adv.trim()) {
+      const r = parseRange(STUDIO_INPUTS.adv, n);
+      if (r.err) {
+        e = r.err;
+        ok = false;
+      }
+    }
+    const advEl = document.getElementById("adv");
+    if (advEl) advEl.classList.toggle("bad", !!e);
+    if (!e && mode) {
+      const c = STUDIO_SELECTIONS[mode] ? STUDIO_SELECTIONS[mode].size : 0;
+      if (!c) ok = false;
+      if (tool === "delete" && c >= n) {
+        ok = false;
+        e = c ? "You can't delete every page." : "";
+      }
+    }
+  }
+
+  if (tool === "reorder") {
+    const s = (STUDIO_INPUTS.seq || "").trim();
+    if (s) {
+      const a = s.split(/[,\s]+/).filter(Boolean).map(Number);
+      const okp = a.length === n && new Set(a).size === n && a.every(x => x >= 1 && x <= n);
+      if (!okp) {
+        e = `Enter each page from 1 to ${n} exactly once.`;
+        ok = false;
+      }
+    } else {
+      ok = false;
+    }
+    const seqEl = document.getElementById("seq");
+    if (seqEl) seqEl.classList.toggle("bad", !!e);
+  }
+
+  if (["unlock", "protect"].includes(tool) && !STUDIO_INPUTS.pw) {
+    ok = false;
+  }
+
+  if (tool === "numbers" && !(+STUDIO_INPUTS.ns >= 1)) {
+    ok = false;
+  }
+
+  const errEl = document.getElementById("err");
+  const goBtn = document.getElementById("go");
+  const undoBtn = document.getElementById("undo");
+  const resetBtn = document.getElementById("reset");
+
+  if (errEl) errEl.textContent = e;
+  if (goBtn) goBtn.disabled = !ok;
+  if (undoBtn) undoBtn.disabled = !d.hist || !d.hist.length;
+  if (resetBtn) resetBtn.disabled = !d.hist || !d.hist.length;
+
+  return { ok, err: e };
+}
+
+// ============================================================
+// RENDERING: PREVIEW PANEL
+// ============================================================
+const LINE_WIDTHS = [92, 78, 96, 64, 86, 54, 80];
+
+function renderProceduralLines(d, p) {
+  let lines = "";
+  for (let k = 0; k < 7; k++) {
+    lines += `<div class="ln" style="width:${LINE_WIDTHS[(k + p.o) % 7]}%"></div>`;
+  }
+  return `
+    <div class="pgi">
+      <div class="hd"></div>
+      <div class="tt">${escapeHtml(baseDocName(d))}</div>
+      ${lines}
+      <div class="big">${p.o}</div>
+    </div>
+  `;
+}
+
+function renderPageThumbnail(d, p, i) {
+  const pageNum = (p && p.o) ? p.o : (i + 1);
+  const version = d.version || 1;
+  const imgUrl = (d.sessionId)
+    ? `/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/page/${pageNum}?dpi=130&t=${version}`
+    : (p.imgUrl || "");
+
+  if (imgUrl) {
+    return `
+      <div class="pg" style="--r:${p.rot || 0}deg" data-page-idx="${i}">
+        <img class="real-page-img" src="${imgUrl}" alt="Page ${pageNum}" loading="lazy"
+             onerror="this.style.opacity='0.25';">
+        ${(!d.sessionId && d.numbered) ? `<div class="pn">${i + (d.num || 1)}</div>` : ""}
+      </div>
+    `;
+  }
+  return `
+    <div class="pg" style="--r:${p.rot || 0}deg" data-page-idx="${i}">
+      <div class="pg-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;font-size:12px;color:rgba(255,255,255,0.4);">Page ${pageNum}</div>
+      ${d.numbered ? `<div class="pn">${i + (d.num || 1)}</div>` : ""}
+    </div>
+  `;
+}
+
+function updatePreviewNavButtons() {
+  const d = currentDoc();
+  if (!d) return;
+  const pp = document.getElementById("pp");
+  const pnx = document.getElementById("pnx");
+  const pn = document.getElementById("pn");
+  if (pp) pp.disabled = studioPreviewPage <= 0;
+  if (pnx) pnx.disabled = studioPreviewPage >= d.pages.length - 1;
+  if (pn) pn.textContent = `Page ${studioPreviewPage + 1} of ${d.pages.length}`;
+}
+
+function renderPreviewPanel() {
+  const prevp = document.getElementById("prevp");
+  if (!prevp) return;
+
+  const d = currentDoc();
+  if (!d) {
+    prevp.innerHTML = `
+      <div class="ph2"><h2>Preview</h2></div>
+      <div class="scr">
+        <div class="empty">
+          <div>
+            <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h4"/></svg>
+            <b>No PDF selected</b>
+            Choose or drop a PDF to preview it and unlock the tools.
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const n = d.pages.length;
+  studioPreviewPage = Math.max(0, Math.min(studioPreviewPage, n - 1));
+
+  prevp.innerHTML = `
+    <div class="ph2">
+      <h2>Preview · ${escapeHtml(d.name)}</h2>
+      <div class="pc">
+        <button id="zo" aria-label="Zoom out">−</button>
+        <span id="zv">${Math.round(studioZoom * 100)}%</span>
+        <button id="zi" aria-label="Zoom in">+</button>
+        <button id="pp" aria-label="Previous page" ${studioPreviewPage <= 0 ? "disabled" : ""}>
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span id="pn">Page ${studioPreviewPage + 1} of ${n}</span>
+        <button id="pnx" aria-label="Next page" ${studioPreviewPage >= n - 1 ? "disabled" : ""}>
+          <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="scr" id="scr">
+      <div class="pgs" id="pgs" style="--z:${studioZoom}">
+        ${d.pages.map((p, i) => `<div data-i="${i}">${renderPageThumbnail(d, p, i)}</div>`).join("")}
+      </div>
+    </div>
+  `;
+
+  updatePreviewNavButtons();
+}
+
+function renderStudioAll() {
+  renderCategoryBar();
+  renderToolCards();
+  renderAddFilesPanel();
+  renderPreviewPanel();
+  renderSettingsPanel();
+}
+
+// ============================================================
+// PRIMARY ACTION EXECUTION & TOOL ACTIONS
+// ============================================================
+async function executeStudioTool() {
+  const d = currentDoc();
+  if (!d || !d.sessionId) {
+    studioToast("Please select a document with an active session first.");
+    return;
+  }
+
+  const valid = validateSettings();
+  if (!valid.ok) {
+    if (valid.err) studioToast(valid.err);
+    return;
+  }
+
+  const goBtn = document.getElementById("go");
+  if (goBtn) {
+    goBtn.disabled = true;
+    goBtn.style.opacity = "0.7";
+  }
+
+  const t = currentToolId;
+  const mode = STUDIO_ORGANIZER_MODES[t] || null;
+  const applyAll = STUDIO_INPUTS.all && studioDocs.length > 1;
+  const targetDocs = applyAll ? studioDocs : [d];
+  const tag = applyAll ? ` (applied to ${studioDocs.length} files)` : "";
+
+  studioToast(`Running ${STUDIO_TOOL_ACTIONS[t]}...`);
+
+  try {
+    const apiFn = window.api || (typeof api === "function" ? api : null);
+    if (!apiFn) throw new Error("API not available");
+
+    let backendTool = "split_pdf";
+    let params = {};
+
+    if (t === "merge") {
+      backendTool = "merge_pdf";
+      if (studioDocs.length < 2) {
+        studioToast("Merge requires at least 2 loaded PDF files.");
+        return;
+      }
+      const otherDocs = studioDocs.filter(sd => sd.id !== d.id);
+      const addFiles = [];
+      for (const od of otherDocs) {
+        if (od.file) {
+          const b = await fileToBase64(od.file);
+          const cleanB = cleanBase64(b);
+          if (cleanB) addFiles.push(cleanB);
+        }
+      }
+      if (!addFiles.length) {
+        studioToast("No secondary PDF data found to merge.");
+        return;
+      }
+      params = { additional_files: addFiles, order: "append" };
+    } else if (t === "split") {
+      backendTool = "split_pdf";
+      params = { mode: "extract_range", page_range: STUDIO_INPUTS.rg || "1" };
+    } else if (t === "rotate") {
+      backendTool = "rotate_pages";
+      let angleVal = 90;
+      if (STUDIO_VALUES.angle.includes("180")) angleVal = 180;
+      else if (STUDIO_VALUES.angle.includes("counter")) angleVal = 270;
+      let whichVal = "all";
+      if (STUDIO_VALUES.which.includes("Odd")) whichVal = "odd";
+      else if (STUDIO_VALUES.which.includes("Even")) whichVal = "even";
+      params = { angle: angleVal, which_pages: whichVal };
+    } else if (t === "compress") {
+      backendTool = "compress_pdf";
+      params = { level: (STUDIO_VALUES.level || "balanced").toLowerCase() };
+    } else if (t === "unlock") {
+      backendTool = "unlock_pdf";
+      params = { password: STUDIO_INPUTS.pw || "" };
+    } else if (t === "protect") {
+      backendTool = "lock_pdf";
+      params = { user_password: STUDIO_INPUTS.pw || "", owner_password: STUDIO_INPUTS.pw || "" };
+    } else if (t === "extract") {
+      backendTool = "split_pdf";
+      const selPages = Array.from(STUDIO_SELECTIONS.extract || []).map(i => i + 1);
+      const rangeVal = selPages.length ? selPages.join(",") : (STUDIO_INPUTS.adv || "1");
+      params = { mode: "extract_range", page_range: rangeVal };
+    } else if (t === "delete") {
+      backendTool = "delete_pages";
+      const delPages = Array.from(STUDIO_SELECTIONS.delete || []).map(i => i + 1);
+      const delRange = delPages.length ? delPages.join(",") : (STUDIO_INPUTS.adv || "");
+      params = { page_range: delRange };
+    } else if (t === "reorder") {
+      backendTool = "rearrange_pages";
+      const seqArr = (STUDIO_INPUTS.seq || "").split(/[,\s]+/).filter(Boolean).map(Number);
+      params = { new_order: seqArr };
+    } else if (t === "watermark") {
+      backendTool = "watermark_pdf";
+      let pos = "center_diagonal";
+      if (STUDIO_VALUES.pos === "Center") pos = "center";
+      else if (STUDIO_VALUES.pos === "Footer") pos = "bottom";
+      params = { text: STUDIO_INPUTS.wm || "CONFIDENTIAL", position: pos, opacity: 0.25, color: "#DC2626" };
+    } else if (t === "numbers") {
+      backendTool = "add_page_numbers";
+      let npos = "bottom_right";
+      if (STUDIO_VALUES.npos === "Bottom center") npos = "bottom_center";
+      else if (STUDIO_VALUES.npos === "Top right") npos = "top_right";
+      let fmt = "Page {n} of {total}";
+      if (STUDIO_VALUES.fmt === "1") fmt = "{n}";
+      else if (STUDIO_VALUES.fmt === "Page 1") fmt = "Page {n}";
+      params = { format: fmt, position: npos, start_number: parseInt(STUDIO_INPUTS.ns) || 1 };
+    } else if (t === "images") {
+      backendTool = "convert_images";
+      params = { format: (STUDIO_VALUES.cf || "png").toLowerCase(), dpi: parseInt(STUDIO_VALUES.dpi) || 150 };
+    }
+
+    let shouldUpdateNumbering = false;
+    if (d.numbered && d.numberingSettings && ["delete", "reorder", "split", "extract"].includes(t)) {
+      const choice = await promptPageNumberingUpdate();
+      if (choice === "update") {
+        shouldUpdateNumbering = true;
+      }
+    }
+    if (params && typeof params === "object") {
+      params.update_numbering = shouldUpdateNumbering;
+    }
+
+    for (const doc of targetDocs) {
+      if (!doc.sessionId) continue;
+      pushSnapshot(doc);
+
+      const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(doc.sessionId)}/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          tool_id: backendTool,
+          parameters: params
+        })
+      });
+
+      if (resp && resp.ok && resp.session) {
+        const sess = resp.session;
+        doc.kb = Math.max(1, Math.round((sess.current_size || 0) / 1024));
+        const pageCount = (resp.thumbnails && resp.thumbnails.length) ? resp.thumbnails.length : (sess.page_count || 1);
+        doc.pageCount = pageCount;
+        doc.version = (doc.version || 1) + 1;
+        doc.pages = Array.from({ length: pageCount }, (_, i) => ({
+          o: i + 1,
+          rot: 0,
+          imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${doc.version}`
+        }));
+
+        if (t === "numbers") {
+          doc.numbered = true;
+          doc.numberingSettings = { ...params };
+        }
+
+        if (t === "images" && resp.result && resp.result.zip_base64) {
+          const zipData = "data:application/zip;base64," + resp.result.zip_base64;
+          const a = document.createElement("a");
+          a.href = zipData;
+          a.download = resp.result.zip_filename || `${baseDocName(doc)}_Images.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      } else {
+        const errMsg = (resp && resp.error) || "Tool execution failed.";
+        throw new Error(errMsg);
+      }
+    }
+
+    studioToast(`${STUDIO_TOOL_ACTIONS[t]} completed${tag}.`);
+    STUDIO_INPUTS.adv = "";
+    STUDIO_INPUTS.seq = "";
+    if (STUDIO_SELECTIONS[mode]) STUDIO_SELECTIONS[mode].clear();
+    renderStudioAll();
+  } catch (err) {
+    console.error("Studio execution error:", err);
+    studioToast("Operation failed: " + (err.message || "Unknown error"));
+  } finally {
+    if (goBtn) {
+      goBtn.disabled = false;
+      goBtn.style.opacity = "1";
+    }
+  }
+}
+
+async function undoWorkingDoc() {
+  const d = currentDoc();
+  if (!d || !d.sessionId || !d.hist || !d.hist.length) return;
+
+  try {
+    const apiFn = window.api || (typeof api === "function" ? api : null);
+    if (!apiFn) return;
+    const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/undo`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    if (resp && resp.ok && resp.session) {
+      d.hist.pop();
+      const sess = resp.session;
+      d.kb = Math.max(1, Math.round((sess.current_size || 0) / 1024));
+      const pageCount = (resp.thumbnails && resp.thumbnails.length) ? resp.thumbnails.length : (sess.page_count || 1);
+      d.pageCount = pageCount;
+      d.version = (d.version || 1) + 1;
+      d.pages = Array.from({ length: pageCount }, (_, i) => ({
+        o: i + 1,
+        rot: 0,
+        imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${d.version}`
+      }));
+      renderStudioAll();
+      studioToast(resp.undo?.message || "Undo applied.");
+    } else {
+      studioToast((resp && resp.error) || "Undo failed.");
+    }
+  } catch (e) {
+    studioToast("Undo error: " + (e.message || e));
+  }
+}
+
+async function resetWorkingDoc() {
+  const d = currentDoc();
+  if (!d || !d.sessionId || !d.hist || !d.hist.length) return;
+
+  try {
+    const apiFn = window.api || (typeof api === "function" ? api : null);
+    if (!apiFn) return;
+    const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/reset`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    if (resp && resp.ok && resp.session) {
+      d.hist = [];
+      const sess = resp.session;
+      d.kb = Math.max(1, Math.round((sess.current_size || 0) / 1024));
+      const pageCount = (resp.thumbnails && resp.thumbnails.length) ? resp.thumbnails.length : (sess.page_count || 1);
+      d.pageCount = pageCount;
+      d.version = (d.version || 1) + 1;
+      d.pages = Array.from({ length: pageCount }, (_, i) => ({
+        o: i + 1,
+        rot: 0,
+        imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${d.version}`
+      }));
+      renderStudioAll();
+      studioToast("Reset to original document.");
+    } else {
+      studioToast((resp && resp.error) || "Reset failed.");
+    }
+  } catch (e) {
+    studioToast("Reset error: " + (e.message || e));
+  }
+}
+
+async function downloadWorkingDoc() {
+  const d = currentDoc();
+  if (!d || !d.sessionId) {
+    studioToast("No PDF selected to download.");
+    return;
+  }
+
+  const downloadName = STUDIO_INPUTS.out || getExpectedOutputName(d);
+
+  // 1. Try desktop native Windows Save dialog via backend
+  try {
+    const apiFn = window.api || (typeof api === "function" ? api : null);
+    if (apiFn && d.sessionId) {
+      const res = await apiFn("/api/ai/native-save-dialog", {
+        method: "POST",
+        body: JSON.stringify({
+          session_id: d.sessionId,
+          default_name: downloadName,
+          ext: currentToolId === "images" ? "zip" : "pdf"
+        })
+      });
+      if (res && res.ok && (res.path || res.saved_path)) {
+        const dest = res.path || res.saved_path;
+        studioToast(`Saved successfully to:\n${dest}`);
+        return;
+      }
+      if (res && res.cancelled) {
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("Native save dialog fallback:", err);
+  }
+
+  // 2. Direct browser download fallback
+  if (d.sessionId) {
+    const a = document.createElement("a");
+    a.href = `/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/download`;
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    studioToast(`Downloading ${downloadName}...`);
+  }
+}
+
+async function saveToClientWorkflow() {
+  const d = currentDoc();
+  if (!d || !d.sessionId) {
+    studioToast("No PDF selected to save.");
+    return;
+  }
+
+  studioToast("Applying document to Save Files queue...");
+
+  // 1. Ensure staging coordinator is initialized
+  if (window.saveStaging && !window.saveStaging.sessionId) {
+    try {
+      await window.saveStaging.init();
+    } catch (e) {
+      console.warn("Staging init error:", e);
+    }
+  }
+
+  // 2. If opened with saveStaging context (from Save tab)
+  if (window.saveStaging && window.saveStaging.activePdfStudioContext) {
+    try {
+      await window.saveStaging.applyPdfStudioResult(d.sessionId, d.name);
+      studioToast("Document returned to Save Files queue.");
+      safeNavigate("save");
+      return;
+    } catch (e) {
+      console.warn("Save staging context apply error:", e);
+    }
+  }
+
+  // 3. Direct transfer to Save Files workspace via backend staging
+  try {
+    const apiFn = window.api || (typeof api === "function" ? api : null);
+    const stagingSessionId = window.saveStaging ? window.saveStaging.sessionId : null;
+    if (apiFn && stagingSessionId) {
+      const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/apply-to-staging`, {
+        method: "POST",
+        body: JSON.stringify({
+          staging_session_id: stagingSessionId,
+          replace_staged_ids: [],
+          result_name: d.name
+        })
+      });
+      if (resp && resp.ok && resp.manifest) {
+        if (window.saveStaging) {
+          window.saveStaging.manifest = resp.manifest;
+          window.lastAppliedStagingResult = resp.new_entry;
+        }
+        studioToast("Document added to Save Files queue.");
+        safeNavigate("save");
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("Save to client error:", err);
+    studioToast("Failed to save to client queue: " + (err.message || err));
+    return;
+  }
+
+  studioToast(`Document "${d.name}" ready in Save Files.`);
+  safeNavigate("save");
+}
+
+// ============================================================
+// PAGE ORGANIZER MODAL (1:1 with studioui.html)
+// ============================================================
+function openOrg(mode) {
+  const d = currentDoc();
+  if (!d) return;
+  modalOpener = document.activeElement;
+  ensureStudioPortal();
+
+  let initialSel = new Set(mode === "reorder" ? [] : STUDIO_SELECTIONS[mode]);
+  if (mode !== "reorder" && initialSel.size === 0 && STUDIO_INPUTS.adv) {
+    const r = parseRange(STUDIO_INPUTS.adv, d.pages.length);
+    if (r.set) initialSel = new Set(r.set);
+  }
+  let workPages = d.pages.map(p => ({ ...p }));
+  if (mode === "reorder" && STUDIO_INPUTS.seq) {
+    const seqNums = STUDIO_INPUTS.seq.split(/[,\s]+/).filter(Boolean).map(Number);
+    if (seqNums.length === d.pages.length && seqNums.every(n => n >= 1 && n <= d.pages.length)) {
+      workPages = seqNums.map(n => ({ ...d.pages[n - 1] }));
+    }
+  }
+
+  M = {
+    mode,
+    d,
+    work: workPages,
+    sel: initialSel,
+    last: null,
+    busy: false,
+    arm: false,
+    t: null
+  };
+
+  const modal = document.getElementById("modal");
+  const mbg = document.getElementById("mbg");
+  const mtl = document.getElementById("mtl");
+  const msub = document.getElementById("msub");
+  const mtool = document.getElementById("mtool");
+
+  if (!modal || !mbg) return;
+
+  modal.className = "modal glass m-" + mode;
+  if (mtl) mtl.textContent = MODE_DESCS[mode][0];
+  if (msub) msub.textContent = `${d.name} · ${d.pages.length} pages. ${MODE_DESCS[mode][1]}`;
+
+  if (mtool) {
+    mtool.innerHTML = mode === "reorder"
+      ? `<button class="btn ghost" id="rst">Reset order</button><span class="sp"></span><label>Size<input type="range" id="szr" min="110" max="240" value="150"></label>`
+      : `<button class="btn ghost" data-q="all">Select all</button><button class="btn ghost" data-q="none">Clear</button><button class="btn ghost" data-q="inv">Invert</button><button class="btn ghost" data-q="odd">Odd pages</button><button class="btn ghost" data-q="even">Even pages</button><span class="sp"></span><label>Size<input type="range" id="szr" min="110" max="240" value="150"></label>`;
+  }
+
+  mbg.classList.add("show");
+  renderOrgGrid();
+  renderOrgFoot();
+
+  setTimeout(() => {
+    const f = document.querySelector("#mgrid .th") || document.getElementById("mx");
+    if (f) f.focus();
+  }, 320);
+}
+
+function closeOrg() {
+  if (!M || (M.busy && false)) return;
+  const mbg = document.getElementById("mbg");
+  if (mbg) mbg.classList.remove("show");
+  gsClose();
+  if (M && M.t) clearTimeout(M.t);
+  M = null;
+  if (modalOpener && typeof modalOpener.focus === "function") {
+    modalOpener.focus();
+  }
+}
+
+function renderOrgGrid(keep) {
+  if (!M) return;
+  const d = M.d;
+  const g = document.getElementById("mgrid");
+  if (!g) return;
+
+  g.innerHTML = M.work.map((p, i) => `
+    <div class="th" role="checkbox" aria-checked="${M.sel.has(i)}" tabindex="0" data-i="${i}" ${M.mode === "reorder" ? 'draggable="true"' : ""}>
+      <span class="box">${SVG_TICK}</span>
+      ${renderPageThumbnail(d, p, i)}
+      <span class="ov">${M.mode === "delete" ? SVG_CROSS : SVG_TICK}</span>
+      <div class="cap">
+        Page ${M.mode === "reorder" ? i + 1 : p.o}
+        ${M.mode === "reorder" && p.o !== i + 1 ? `<i>was ${p.o}</i>` : ""}
+      </div>
+    </div>
+  `).join("");
+
+  if (keep != null) {
+    const t = g.querySelector(`.th[data-i="${keep}"]`);
+    if (t) {
+      t.focus();
+      t.classList.add("land");
+    }
+  }
+}
+
+function renderOrgFoot() {
+  if (!M) return;
+  const f = document.getElementById("mfoot");
+  if (!f) return;
+
+  const n = M.work.length;
+  const c = M.sel.size;
+  const m = M.mode;
+  let h = "";
+
+  if (m === "reorder") {
+    const ch = M.work.some((p, i) => p.o !== i + 1);
+    h = `
+      <span class="cnt">${ch ? "Order changed" : "Original order"}${M.d.numbered ? " · page numbers will follow" : ""}</span>
+      <button class="btn ghost" id="mc">Cancel</button>
+      <button class="btn" id="ma" ${ch ? "" : "disabled"}>Apply order</button>
+    `;
+  } else {
+    h = `<span class="cnt">${c} of ${n} pages selected</span>`;
+    if (m === "extract") {
+      h += `<div class="sel" data-id="em" data-opts="One combined PDF|One file per page"></div>`;
+    }
+    if (m === "convert") {
+      h += `<div class="sel" data-id="cf" data-opts="JPG|PNG"></div><div class="sel" data-id="dpi" data-opts="72 DPI|150 DPI|300 DPI"></div><div class="prog" id="prog"><i></i></div>`;
+    }
+    const lab = {
+      delete: M.arm ? `Click again to delete ${c}` : `Delete ${c || ""} page${c === 1 ? "" : "s"}`,
+      extract: `Extract ${c || ""} page${c === 1 ? "" : "s"}`,
+      convert: `Convert ${c || ""} page${c === 1 ? "" : "s"}`
+    }[m] || "Confirm";
+
+    const dis = !c || (m === "delete" && c >= n) || M.busy;
+    h += `
+      <button class="btn ghost" id="mc">Cancel</button>
+      <button class="btn ${m === "delete" ? "red" : ""}" id="ma" ${dis ? "disabled" : ""}>${lab}</button>
+    `;
+  }
+
+  f.innerHTML = h;
+  f.querySelectorAll(".sel").forEach(mkSel);
+}
+
+function toggleOrgPage(i, shift) {
+  if (!M) return;
+  if (shift && M.last != null) {
+    const a = Math.min(M.last, i);
+    const b = Math.max(M.last, i);
+    const on = !M.sel.has(i);
+    for (let k = a; k <= b; k++) {
+      if (on) M.sel.add(k);
+      else M.sel.delete(k);
+    }
+  } else {
+    if (M.sel.has(i)) M.sel.delete(i);
+    else M.sel.add(i);
+  }
+  M.last = i;
+  M.arm = false;
+  if (M.mode !== "reorder") {
+    STUDIO_SELECTIONS[M.mode] = new Set(M.sel);
+    STUDIO_INPUTS.adv = Array.from(M.sel).sort((a, b) => a - b).map(k => k + 1).join(", ");
+  }
+  const thEls = document.querySelectorAll("#mgrid .th");
+  thEls.forEach((t, k) => t.setAttribute("aria-checked", M.sel.has(k)));
+  renderOrgFoot();
+}
+
+function moveOrgPage(from, to) {
+  if (!M || to < 0 || to >= M.work.length) return;
+  const [x] = M.work.splice(from, 1);
+  M.work.splice(to, 0, x);
+  renderOrgGrid(to);
+  renderOrgFoot();
+}
+
+function initPortalEvents() {
+  const portal = ensureStudioPortal();
+  if (portal._portalEventsBound) return;
+  portal._portalEventsBound = true;
+
+  const mx = document.getElementById("mx");
+  if (mx) mx.onclick = closeOrg;
+
+  const mbg = document.getElementById("mbg");
+  if (mbg) {
+    mbg.addEventListener("mousedown", e => {
+      if (e.target.id === "mbg") closeOrg();
+    });
+  }
+
+  const mtool = document.getElementById("mtool");
+  if (mtool) {
+    mtool.addEventListener("click", e => {
+      if (!M) return;
+      const q = e.target.closest("[data-q]");
+      if (q) {
+        const k = q.dataset.q;
+        if (k === "all") M.sel = new Set(M.work.map((_, i) => i));
+        if (k === "none") M.sel = new Set();
+        if (k === "inv") M.sel = new Set(M.work.map((_, i) => i).filter(i => !M.sel.has(i)));
+        if (k === "odd") M.sel = new Set(M.work.map((_, i) => i).filter(i => i % 2 === 0));
+        if (k === "even") M.sel = new Set(M.work.map((_, i) => i).filter(i => i % 2 === 1));
+        M.arm = false;
+        if (M.mode !== "reorder") {
+          STUDIO_SELECTIONS[M.mode] = new Set(M.sel);
+          STUDIO_INPUTS.adv = Array.from(M.sel).sort((a, b) => a - b).map(k => k + 1).join(", ");
+        }
+        document.querySelectorAll("#mgrid .th").forEach((t, i) => t.setAttribute("aria-checked", M.sel.has(i)));
+        renderOrgFoot();
+      }
+      if (e.target.id === "rst") {
+        M.work = M.d.pages.map(p => ({ ...p }));
+        renderOrgGrid();
+        renderOrgFoot();
+      }
+    });
+
+    mtool.addEventListener("input", e => {
+      if (e.target.id === "szr") {
+        document.documentElement.style.setProperty("--tw", e.target.value + "px");
+      }
+    });
+  }
+
+  const grid = document.getElementById("mgrid");
+  if (grid) {
+    grid.addEventListener("click", e => {
+      const t = e.target.closest(".th");
+      if (t && M && M.mode !== "reorder") {
+        toggleOrgPage(+t.dataset.i, e.shiftKey);
+      }
+    });
+
+    grid.addEventListener("keydown", e => {
+      const t = e.target.closest(".th");
+      if (!t || !M) return;
+      const i = +t.dataset.i;
+      if (M.mode === "reorder") {
+        if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          e.preventDefault();
+          moveOrgPage(i, i + (e.key === "ArrowRight" ? 1 : -1));
+        }
+      } else if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        toggleOrgPage(i, e.shiftKey);
+      }
+    });
+
+    grid.addEventListener("dragstart", e => {
+      const t = e.target.closest(".th");
+      if (!t || !M || M.mode !== "reorder") return;
+      dragIndex = +t.dataset.i;
+      t.classList.add("drag");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", dragIndex);
+    });
+
+    grid.addEventListener("dragend", () => {
+      dragIndex = null;
+      grid.querySelectorAll(".th").forEach(t => t.classList.remove("drag", "dl", "dr"));
+    });
+
+    grid.addEventListener("dragover", e => {
+      const t = e.target.closest(".th");
+      if (!t || dragIndex == null) return;
+      e.preventDefault();
+      const r = t.getBoundingClientRect();
+      const isLeft = e.clientX < r.left + r.width / 2;
+      grid.querySelectorAll(".th").forEach(x => x.classList.remove("dl", "dr"));
+      t.classList.add(isLeft ? "dl" : "dr");
+      t.dataset.side = isLeft ? "l" : "r";
+    });
+
+    grid.addEventListener("drop", e => {
+      const t = e.target.closest(".th");
+      if (!t || dragIndex == null) return;
+      e.preventDefault();
+      let j = +t.dataset.i;
+      if (t.dataset.side === "r") j++;
+      if (dragIndex < j) j--;
+      const from = dragIndex;
+      dragIndex = null;
+      if (from !== j) moveOrgPage(from, j);
+      else renderOrgGrid();
+    });
+  }
+
+  const foot = document.getElementById("mfoot");
+  if (foot) {
+    foot.addEventListener("click", async e => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      if (btn.id === "mc") closeOrg();
+      if (btn.id === "ma" && M) {
+        const m = M.mode;
+        const d = M.d;
+
+        if (m === "reorder") {
+          const newOrder = M.work.map(p => p.o);
+          let shouldUpdateNumbering = false;
+          if (d.numbered && d.numberingSettings) {
+            const choice = await promptPageNumberingUpdate();
+            if (choice === "update") shouldUpdateNumbering = true;
+          }
+
+          pushSnapshot(d);
+          M.busy = true;
+          btn.disabled = true;
+
+          try {
+            if (d.sessionId) {
+              const apiFn = window.api || (typeof api === "function" ? api : null);
+              if (apiFn) {
+                const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    tool_id: "rearrange_pages",
+                    parameters: { new_order: newOrder, update_numbering: shouldUpdateNumbering }
+                  })
+                });
+                if (resp && resp.ok && resp.session) {
+                  const sess = resp.session;
+                  d.kb = Math.max(1, Math.round((sess.current_size || 0) / 1024));
+                  const pageCount = (resp.thumbnails && resp.thumbnails.length) ? resp.thumbnails.length : (sess.page_count || 1);
+                  d.pageCount = pageCount;
+                  d.version = (d.version || 1) + 1;
+                  d.pages = Array.from({ length: pageCount }, (_, i) => ({
+                    o: i + 1,
+                    rot: 0,
+                    imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${d.version}`
+                  }));
+                } else {
+                  throw new Error((resp && resp.error) || "Failed to reorder pages on server.");
+                }
+              }
+            }
+            STUDIO_INPUTS.seq = newOrder.join(", ");
+            closeOrg();
+            STUDIO_SELECTIONS.reorder.clear();
+            renderStudioAll();
+            studioToast("Order applied" + (shouldUpdateNumbering ? " and page numbers updated." : "."));
+          } catch (err) {
+            console.error("Reorder execution error:", err);
+            studioToast("Failed to reorder pages: " + (err.message || err));
+          } finally {
+            if (M) M.busy = false;
+            btn.disabled = false;
+          }
+          return;
+        }
+
+        if (m === "delete") {
+          if (!M.arm) {
+            M.arm = true;
+            renderOrgFoot();
+            clearTimeout(M.t);
+            M.t = setTimeout(() => {
+              if (M) {
+                M.arm = false;
+                renderOrgFoot();
+              }
+            }, 3000);
+            return;
+          }
+          const delIndices = Array.from(M.sel).map(i => i + 1);
+          let shouldUpdateNumbering = false;
+          if (d.numbered && d.numberingSettings) {
+            const choice = await promptPageNumberingUpdate();
+            if (choice === "update") shouldUpdateNumbering = true;
+          }
+
+          pushSnapshot(d);
+          M.busy = true;
+          btn.disabled = true;
+
+          try {
+            if (d.sessionId) {
+              const apiFn = window.api || (typeof api === "function" ? api : null);
+              if (apiFn) {
+                const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    tool_id: "delete_pages",
+                    parameters: { pages: delIndices, update_numbering: shouldUpdateNumbering }
+                  })
+                });
+                if (resp && resp.ok && resp.session) {
+                  const sess = resp.session;
+                  d.kb = Math.max(1, Math.round((sess.current_size || 0) / 1024));
+                  const pageCount = (resp.thumbnails && resp.thumbnails.length) ? resp.thumbnails.length : (sess.page_count || 1);
+                  d.pageCount = pageCount;
+                  d.version = (d.version || 1) + 1;
+                  d.pages = Array.from({ length: pageCount }, (_, i) => ({
+                    o: i + 1,
+                    rot: 0,
+                    imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${d.version}`
+                  }));
+                } else {
+                  throw new Error((resp && resp.error) || "Failed to delete pages on server.");
+                }
+              }
+            }
+            const count = delIndices.length;
+            STUDIO_INPUTS.adv = "";
+            closeOrg();
+            STUDIO_SELECTIONS.delete.clear();
+            renderStudioAll();
+            studioToast(`${count} page${count > 1 ? "s" : ""} deleted` + (shouldUpdateNumbering ? " and page numbers updated." : "."));
+          } catch (err) {
+            console.error("Delete execution error:", err);
+            studioToast("Failed to delete pages: " + (err.message || err));
+          } finally {
+            if (M) M.busy = false;
+            btn.disabled = false;
+          }
+          return;
+        }
+
+        if (m === "extract") {
+          const selPages = Array.from(M.sel).map(i => i + 1);
+          if (!selPages.length) {
+            studioToast("No pages selected to extract.");
+            return;
+          }
+          const rangeStr = selPages.join(",");
+          pushSnapshot(d);
+          M.busy = true;
+          btn.disabled = true;
+
+          try {
+            if (d.sessionId) {
+              const apiFn = window.api || (typeof api === "function" ? api : null);
+              if (apiFn) {
+                const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    tool_id: "split_pdf",
+                    parameters: { mode: "extract_range", page_range: rangeStr }
+                  })
+                });
+                if (resp && resp.ok && resp.session) {
+                  const sess = resp.session;
+                  d.kb = Math.max(1, Math.round((sess.current_size || 0) / 1024));
+                  const pageCount = (resp.thumbnails && resp.thumbnails.length) ? resp.thumbnails.length : (sess.page_count || 1);
+                  d.pageCount = pageCount;
+                  d.version = (d.version || 1) + 1;
+                  d.pages = Array.from({ length: pageCount }, (_, i) => ({
+                    o: i + 1,
+                    rot: 0,
+                    imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${d.version}`
+                  }));
+                } else {
+                  throw new Error((resp && resp.error) || "Failed to extract pages on server.");
+                }
+              }
+            }
+            STUDIO_INPUTS.adv = rangeStr;
+            closeOrg();
+            STUDIO_SELECTIONS.extract.clear();
+            renderStudioAll();
+            studioToast(`Extracted ${selPages.length} page${selPages.length > 1 ? "s" : ""}.`);
+          } catch (err) {
+            console.error("Extract execution error:", err);
+            studioToast("Failed to extract pages: " + (err.message || err));
+          } finally {
+            if (M) M.busy = false;
+            btn.disabled = false;
+          }
+          return;
+        }
+
+        if (m === "convert") {
+          M.busy = true;
+          const pr = document.getElementById("prog");
+          if (pr) pr.classList.add("on");
+          btn.disabled = true;
+
+          try {
+            if (d.sessionId) {
+              const apiFn = window.api || (typeof api === "function" ? api : null);
+              if (apiFn) {
+                const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    tool_id: "convert_images",
+                    parameters: {
+                      format: (STUDIO_VALUES.cf || "png").toLowerCase(),
+                      dpi: parseInt(STUDIO_VALUES.dpi) || 150
+                    }
+                  })
+                });
+                if (resp && resp.ok && resp.result && resp.result.zip_base64) {
+                  const zipData = "data:application/zip;base64," + resp.result.zip_base64;
+                  const a = document.createElement("a");
+                  a.href = zipData;
+                  a.download = resp.result.zip_filename || `${baseDocName(d)}_Images.zip`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                }
+              }
+            }
+            closeOrg();
+            renderStudioAll();
+            studioToast(`Pages converted to ${STUDIO_VALUES.cf || "PNG"}. ZIP downloaded.`);
+          } catch (err) {
+            console.error("Convert execution error:", err);
+            studioToast("Failed to convert pages: " + (err.message || err));
+          } finally {
+            if (M) M.busy = false;
+            btn.disabled = false;
+          }
+          return;
+        }
+      }
+    });
+  }
+
+  // Keyboard trap inside modal
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && M) {
+      e.preventDefault();
+      closeOrg();
+      return;
+    }
+    if (e.key === "Tab" && M) {
+      const modal = document.getElementById("modal");
+      if (!modal) return;
+      const focusables = modal.querySelectorAll("button:not(:disabled), [tabindex='0'], input");
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, true);
+}
+
+// ============================================================
+// FILE UPLOAD & BACKEND SESSION INITIALIZATION
+// ============================================================
+function cleanBase64(data) {
+  if (!data || typeof data !== "string") return "";
+  const commaIdx = data.indexOf(",");
+  return commaIdx !== -1 ? data.substring(commaIdx + 1) : data;
+}
+
+function fileToBase64(file) {
+  if (!file) return Promise.resolve("");
+  if (file._b64) return Promise.resolve(cleanBase64(file._b64));
+  if (file.base64) return Promise.resolve(cleanBase64(file.base64));
+  if (file.file_base64) return Promise.resolve(cleanBase64(file.file_base64));
+  if (typeof file === "string") return Promise.resolve(cleanBase64(file));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(cleanBase64(reader.result || ""));
+    reader.onerror = err => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function createBackendPdfSession(file, b64Data) {
+  const apiFn = window.api || (typeof api === "function" ? api : null);
+  if (!apiFn) throw new Error("API client not available");
+  const cleanB64 = cleanBase64(b64Data);
+  if (!cleanB64) {
+    throw new Error("Could not read file data.");
+  }
+  const res = await apiFn("/api/pdf-studio/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      file_base64: cleanB64,
+      original_name: file.name
+    })
+  });
+  if (res && res.ok && res.session) {
+    return res;
+  }
+  const err = (res && res.error) || "Server returned invalid session response.";
+  throw new Error(err);
+}
+
+async function addIncomingFiles(fileList) {
+  const files = Array.from(fileList || []).filter(f => /pdf$/i.test(f.name) || f.type === "application/pdf");
+  if (!files.length) {
+    studioToast("Please select valid PDF documents.");
+    return;
+  }
+
+  const MAX_SIZE = 50 * 1024 * 1024;
+  for (const f of files) {
+    if (f.size > MAX_SIZE) {
+      studioToast(`"${f.name}" exceeds the 50 MB limit.`);
+      return;
+    }
+  }
+
+  isUploadingDocs = true;
+  renderAddFilesPanel();
+  studioToast(`Adding ${files.length} document${files.length > 1 ? "s" : ""}...`);
+
+  let addedCount = 0;
+  for (const f of files) {
+    try {
+      const b64 = await fileToBase64(f);
+      const sessRes = await createBackendPdfSession(f, b64);
+      if (sessRes && sessRes.session) {
+        const sess = sessRes.session;
+        const pageCount = sess.page_count || 1;
+        const version = 1;
+        const pages = Array.from({ length: pageCount }, (_, i) => ({
+          o: i + 1,
+          rot: 0,
+          imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(sess.session_id)}/page/${i + 1}?dpi=130&t=${version}`
+        }));
+
+        const docEntry = {
+          id: uidCounter++,
+          name: sess.current_name || f.name,
+          kb: Math.max(1, Math.round((sess.current_size || f.size) / 1024)),
+          numbered: false,
+          num: 1,
+          hist: [],
+          file: f,
+          sessionId: sess.session_id,
+          pageCount: pageCount,
+          version: version,
+          pages: pages
+        };
+        docEntry.orig = snapDoc(docEntry);
+        studioDocs.push(docEntry);
+        if (!activeDocId) {
+          activeDocId = docEntry.id;
+        }
+        addedCount++;
+      }
+    } catch (e) {
+      console.error("Session init failed for", f.name, e);
+      studioToast(`Failed to load "${f.name}": ${e.message || e}`);
+    }
+  }
+
+  isUploadingDocs = false;
+  studioPreviewPage = 0;
+  renderStudioAll();
+  if (addedCount > 0) {
+    studioToast(`Added ${addedCount} document${addedCount > 1 ? "s" : ""} to Studio.`);
+  }
+}
+
+// ============================================================
+// EVENT DELEGATION & ACTIONS
+// ============================================================
+function initStudioEvents() {
+  const root = document.getElementById("studio-root");
+  if (!root || root._studioEventsBound) return;
+  root._studioEventsBound = true;
+
+  // Click Delegation
+  root.addEventListener("click", e => {
+    // Category click
+    const catBtn = e.target.closest("[data-cat]");
+    if (catBtn) {
+      const catId = catBtn.dataset.cat;
+      if (catId === currentCategory) {
+        isCategoryOpen = !isCategoryOpen;
+      } else {
+        currentCategory = catId;
+        isCategoryOpen = true;
+        const catObj = STUDIO_CATEGORIES.find(c => c.id === currentCategory);
+        if (catObj && catObj.tools.length) {
+          currentToolId = catObj.tools[0].id;
+        }
+      }
+      renderCategoryBar();
+      renderToolCards();
+      renderSettingsPanel();
+      return;
+    }
+
+    // Tool click
+    const toolBtn = e.target.closest(".tool[data-tool]");
+    if (toolBtn && !toolBtn.disabled) {
+      currentToolId = toolBtn.dataset.tool;
+      renderToolCards();
+      renderSettingsPanel();
+      return;
+    }
+
+    // Selected file row click or row action buttons
+    const fr = e.target.closest(".fr");
+    if (fr) {
+      const actBtn = e.target.closest("button[data-action]");
+      const docId = +fr.dataset.docId;
+      const idx = studioDocs.findIndex(d => d.id === docId);
+
+      if (actBtn) {
+        const action = actBtn.dataset.action;
+        if (action === "rm") {
+          studioDocs.splice(idx, 1);
+          if (activeDocId === docId) {
+            activeDocId = studioDocs[0] ? studioDocs[0].id : null;
+          }
+          studioPreviewPage = 0;
+          if (currentToolId === "merge" && studioDocs.length < 2) {
+            currentToolId = "split";
+          }
+          renderStudioAll();
+          return;
+        } else if (action === "up" && idx > 0) {
+          [studioDocs[idx - 1], studioDocs[idx]] = [studioDocs[idx], studioDocs[idx - 1]];
+          renderStudioAll();
+          return;
+        } else if (action === "dn" && idx < studioDocs.length - 1) {
+          [studioDocs[idx + 1], studioDocs[idx]] = [studioDocs[idx], studioDocs[idx + 1]];
+          renderStudioAll();
+          return;
+        }
+      }
+
+      if (activeDocId !== docId) {
+        activeDocId = docId;
+        studioPreviewPage = 0;
+        renderStudioAll();
+      }
+      return;
+    }
+
+    // Buttons
+    const btn = e.target.closest("button, .link");
+    if (!btn) return;
+
+    if (btn.id === "choose") {
+      const fin = document.getElementById("fin");
+      if (fin) fin.click();
+    } else if (btn.id === "clr") {
+      studioDocs = [];
+      activeDocId = null;
+      currentToolId = "split";
+      renderStudioAll();
+    } else if (btn.id === "allc" || btn.closest("#allc")) {
+      STUDIO_INPUTS.all = !STUDIO_INPUTS.all;
+      const allc = document.getElementById("allc");
+      if (allc) allc.setAttribute("aria-checked", STUDIO_INPUTS.all);
+    } else if (btn.id === "go") {
+      executeStudioTool();
+    } else if (btn.id === "undo") {
+      undoWorkingDoc();
+    } else if (btn.id === "reset") {
+      resetWorkingDoc();
+    } else if (btn.id === "dl") {
+      downloadWorkingDoc();
+    } else if (btn.id === "save") {
+      saveToClientWorkflow();
+    } else if (btn.id === "pickb") {
+      const mode = STUDIO_ORGANIZER_MODES[currentToolId];
+      if (mode) openOrg(mode);
+    } else if (btn.id === "zo" || btn.id === "zi") {
+      studioZoom = Math.max(0.6, Math.min(1.35, studioZoom + (btn.id === "zi" ? 0.15 : -0.15)));
+      const pgs = document.getElementById("pgs");
+      const zv = document.getElementById("zv");
+      if (pgs) pgs.style.setProperty("--z", studioZoom);
+      if (zv) zv.textContent = Math.round(studioZoom * 100) + "%";
+    } else if (btn.id === "pp" || btn.id === "pnx") {
+      const d = currentDoc();
+      if (!d) return;
+      studioPreviewPage = Math.max(0, Math.min(d.pages.length - 1, studioPreviewPage + (btn.id === "pnx" ? 1 : -1)));
+      const targetPageEl = document.querySelector(`#pgs [data-i="${studioPreviewPage}"]`);
+      if (targetPageEl) targetPageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      updatePreviewNavButtons();
+    }
+  });
+
+  // Dynamic input handling
+  root.addEventListener("input", e => {
+    const id = e.target.id;
+    if (id in STUDIO_INPUTS && id !== "all") {
+      STUDIO_INPUTS[id] = e.target.value;
+      if (id === "adv") {
+        const d = currentDoc();
+        if (d) {
+          const mode = STUDIO_ORGANIZER_MODES[currentToolId] || null;
+          if (mode && STUDIO_SELECTIONS[mode]) {
+            const r = parseRange(e.target.value, d.pages.length);
+            if (r.set) {
+              STUDIO_SELECTIONS[mode] = r.set;
+              const pr = root.querySelector(".pickrow span");
+              if (pr) pr.textContent = `${r.set.size} of ${d.pages.length} pages selected`;
+            }
+          }
+        }
+      }
+      if (id === "out") return;
+      validateSettings();
+    }
+  });
+
+  // Continuous Scroll Sync on Preview Container
+  root.addEventListener("scroll", e => {
+    if (e.target.id === "scr") {
+      const d = currentDoc();
+      if (!d || !d.pages || !d.pages.length) return;
+      const s = e.target;
+      const y = s.scrollTop + s.clientHeight * 0.35;
+      let k = 0;
+      const pageEls = root.querySelectorAll("#pgs [data-i]");
+      pageEls.forEach(c => {
+        if (c.offsetTop - s.offsetTop <= y) {
+          k = +c.dataset.i;
+        }
+      });
+      if (k !== studioPreviewPage) {
+        studioPreviewPage = k;
+        updatePreviewNavButtons();
+      }
+    }
+  }, true);
+
+  // Keyboard shortcuts and accessibility for Studio
+  root.addEventListener("keydown", e => {
+    // Ctrl+O / Cmd+O: Choose/Open Files
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      const fin = document.getElementById("fin");
+      if (fin) fin.click();
+      return;
+    }
+
+    // Ctrl+Enter / Cmd+Enter: Run primary action
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      const goBtn = document.getElementById("go");
+      if (goBtn && !goBtn.disabled) goBtn.click();
+      return;
+    }
+
+    // Ctrl+Z / Cmd+Z: Undo (outside inputs)
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
+      e.preventDefault();
+      const undoBtn = document.getElementById("undo");
+      if (undoBtn && !undoBtn.disabled) undoBtn.click();
+      return;
+    }
+
+    // File list keyboard navigation
+    if (e.target.classList && e.target.classList.contains("fr")) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.target.click();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = e.target.nextElementSibling;
+        if (next && next.classList.contains("fr")) next.focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = e.target.previousElementSibling;
+        if (prev && prev.classList.contains("fr")) prev.focus();
+      }
+    }
+  });
+
+  // File Input Handler
+  root.addEventListener("change", e => {
+    if (e.target.id === "fin" && e.target.files) {
+      addIncomingFiles(e.target.files);
+      e.target.value = "";
+    }
+  });
+
+  // Drag and Drop on drop zone
+  root.addEventListener("dragover", e => {
+    const drop = e.target.closest("#drop");
+    if (drop) {
+      e.preventDefault();
+      drop.classList.add("over");
+    }
+  });
+
+  root.addEventListener("dragleave", e => {
+    const drop = e.target.closest("#drop");
+    if (drop) {
+      drop.classList.remove("over");
+    }
+  });
+
+  root.addEventListener("drop", e => {
+    const drop = e.target.closest("#drop");
+    if (drop) {
+      e.preventDefault();
+      drop.classList.remove("over");
+      if (e.dataTransfer && e.dataTransfer.files) {
+        addIncomingFiles(e.dataTransfer.files);
+      }
+    }
+  });
+}
+
+// ============================================================
+// MAIN MOUNT & GLOBAL EXPORTS
+// ============================================================
+async function pdfStudioPage() {
+  ensureStudioPortal();
+  initPortalEvents();
+
+  const content = document.getElementById("content");
+  if (!content) return;
+
+  content.innerHTML = `
+    <main id="studio-root">
+      <div class="shead">
+        <div>
+          <h1>Studio</h1>
+          <p>Organize, convert, secure, and edit PDF documents with ease</p>
+        </div>
+        <span class="tag">&ldquo; Same Files. A Smarter Way.<sup>&reg;</sup> &rdquo;</span>
+      </div>
+      <section class="cbar glass" aria-label="Tool categories">
+        <div class="cats" id="cats" role="tablist"></div>
+        <p class="chint">Select a tool to apply transformations</p>
+        <div class="banner" id="banner">
+          <svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01M12 3a9 9 0 100 18 9 9 0 000-18z"/></svg>
+          Add a PDF to unlock the tools.
+        </div>
+      </section>
+      <div class="tcollapse" id="tcol">
+        <div>
+          <div class="tools" id="tools"></div>
+        </div>
+      </div>
+      <div class="work">
+        <div class="left">
+          <div class="panel glass" id="addp"></div>
+          <div class="panel glass" id="setp"></div>
+        </div>
+        <div class="panel glass prev" id="prevp"></div>
+      </div>
+    </main>
+  `;
+
+  initStudioEvents();
+  renderStudioAll();
 }
 
 function safeNavigate(page) {
-  if (typeof window.safeNavigate === 'function' && window.safeNavigate !== safeNavigate) {
+  if (typeof window.safeNavigate === "function" && window.safeNavigate !== safeNavigate) {
     window.safeNavigate(page);
     return;
   }
-  if (typeof window.navigateTo === 'function') {
+  if (typeof window.navigateTo === "function") {
     window.navigateTo(page);
     return;
   }
   window.location.hash = page;
 }
-window.safeNavigate = safeNavigate;
 
-// Expose open session helper globally
 window.openPdfStudioSession = function(session, thumbnails, originContext) {
   currentPdfSession = session;
-  currentThumbnails = thumbnails || [];
-  currentPreviewPage = 1;
-  currentZoom = 1.0;
   pdfStudioOriginContext = originContext || null;
 
   if (session && session.current_name) {
-    studioFiles = [{
-      id: 'sess_file_' + Date.now(),
+    const pages = (thumbnails || []).map((t, idx) => ({
+      o: idx + 1,
+      rot: 0,
+      imgUrl: t.url || `/api/pdf-studio/sessions/${encodeURIComponent(session.session_id)}/page/${idx + 1}`
+    }));
+
+    studioDocs = [{
+      id: uidCounter++,
       name: session.current_name,
-      size: session.current_size || 0,
-      isSession: true
+      kb: Math.max(1, Math.round((session.current_size || 0) / 1024)),
+      numbered: false,
+      num: 1,
+      hist: [],
+      pages: pages.length ? pages : Array.from({ length: session.page_count || 1 }, (_, i) => ({
+        o: i + 1,
+        rot: 0,
+        imgUrl: `/api/pdf-studio/sessions/${encodeURIComponent(session.session_id)}/page/${i + 1}`
+      })),
+      sessionId: session.session_id,
+      pageCount: session.page_count
     }];
+    studioDocs[0].orig = snapDoc(studioDocs[0]);
+    activeDocId = studioDocs[0].id;
+    studioPreviewPage = 0;
   }
 
-  safeNavigate('studio');
+  safeNavigate("studio");
 };
 
-// Main Studio Entry Page
-async function pdfStudioPage() {
-  const content = document.getElementById('content');
-  if (!content) return;
-  renderStudioLayout(content);
-}
-
-// Render Complete Studio Layout (Parity with Desired/PDF Studio.png)
-function renderStudioLayout(content) {
-  content.innerHTML = `
-    <div class="studio-page-container">
-      <!-- HEADER SECTION -->
-      <header class="studio-header">
-        <div class="studio-header-left">
-          <h1 class="studio-title">Studio</h1>
-          <p class="studio-subtitle">Organize, convert, secure, and edit PDF documents with ease</p>
-        </div>
-        <div class="studio-header-right">
-          <div class="studio-quote-badge">
-            <span>“ Same Files. A Smarter Way.® ”</span>
-          </div>
-        </div>
-      </header>
-
-      <!-- 12 TOOL CARDS GRID (2 Rows of 6) -->
-      <section class="studio-tools-grid" id="studio-tools-grid">
-        ${renderToolCardsHtml()}
-      </section>
-
-      <!-- WORKSPACE GRID: 3 COLUMNS -->
-      <main class="studio-workspace-grid">
-        <!-- COLUMN 1: ADD FILES -->
-        <div class="studio-files-col studio-card">
-          <div class="studio-card-header">
-            <span class="studio-card-title">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Add Files
-            </span>
-            <span id="studio-file-limit-badge" style="font-size: 11px; color: #94a3b8; font-weight: 500;">Max 50MB</span>
-          </div>
-
-          <!-- DROPZONE -->
-          <div class="studio-dropzone" id="studio-dropzone">
-            <div class="studio-drop-icon">
-              <svg class="i" style="width:36px;height:36px;stroke:var(--pri);stroke-width:1.6;"><use href="#folder"/></svg>
-            </div>
-            <div class="studio-drop-title">Choose PDF files</div>
-            <div class="studio-drop-sub">or drag & drop files here</div>
-            <button type="button" class="studio-choose-btn" id="studio-choose-btn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-              Choose Files
-            </button>
-            <div class="studio-drop-foot">Supports PDF documents up to 50MB</div>
-            <input type="file" id="studio-hidden-file-input" multiple accept="application/pdf,.pdf" style="display:none;">
-          </div>
-
-          <!-- SELECTED FILES LIST -->
-          <div class="studio-files-header">
-            <span class="studio-files-count" id="studio-files-count">Selected Files (${studioFiles.length})</span>
-            ${studioFiles.length > 0 ? `<button type="button" class="studio-clear-btn" id="studio-clear-files-btn">Clear all</button>` : ''}
-          </div>
-
-          <div class="studio-files-list" id="studio-files-list">
-            ${renderSelectedFilesListHtml()}
-          </div>
-        </div>
-
-        <!-- COLUMN 2: TOOL SETTINGS -->
-        <div class="studio-settings-col studio-card" id="studio-settings-container">
-          ${renderToolSettingsHtml(studioSelectedTool)}
-        </div>
-
-        <!-- COLUMN 3: PREVIEW & RECENT OPERATIONS -->
-        <div class="studio-preview-col">
-          <!-- PREVIEW CARD -->
-          <div class="studio-card studio-preview-card" style="margin-bottom: 16px;">
-            <div class="studio-card-header" style="margin-bottom: 8px;">
-              <span class="studio-card-title">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                Preview
-              </span>
-              <div class="studio-preview-toolbar">
-                <button type="button" class="studio-prev-tool-btn" id="btn-studio-zoom-out" title="Zoom Out">−</button>
-                <span class="studio-zoom-label" id="studio-zoom-label">${Math.round(currentZoom * 100)}%</span>
-                <button type="button" class="studio-prev-tool-btn" id="btn-studio-zoom-in" title="Zoom In">+</button>
-                <div class="studio-tool-sep"></div>
-                <button type="button" class="studio-prev-tool-btn" id="btn-studio-page-prev" ${currentPreviewPage <= 1 ? 'disabled' : ''} title="Previous Page">◀</button>
-                <span class="studio-page-indicator" id="studio-page-indicator">${currentPdfSession ? `Page ${currentPreviewPage} of ${currentPdfSession.page_count}` : 'Page 1 of 1'}</span>
-                <button type="button" class="studio-prev-tool-btn" id="btn-studio-page-next" ${(!currentPdfSession || currentPreviewPage >= currentPdfSession.page_count) ? 'disabled' : ''} title="Next Page">▶</button>
-                <div class="studio-tool-sep"></div>
-                <button type="button" class="studio-prev-tool-btn" id="btn-studio-open-ext" title="Open in new window">↗</button>
-              </div>
-            </div>
-
-            <!-- PREVIEW STAGE -->
-            <div class="studio-preview-stage" id="studio-preview-stage">
-              ${renderPreviewStageHtml()}
-            </div>
-          </div>
-
-          <!-- RECENT OPERATIONS CARD -->
-          <div class="studio-card studio-recent-card">
-            <div class="studio-card-header" style="margin-bottom: 10px;">
-              <span class="studio-card-title">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                Recent Operations
-              </span>
-              <button type="button" class="studio-prev-tool-btn" id="btn-clear-recent-ops" title="Refresh Operations">↺</button>
-            </div>
-
-            <div class="studio-recent-table-wrap">
-              <table class="studio-recent-table">
-                <thead>
-                  <tr>
-                    <th>FILE</th>
-                    <th>OPERATION</th>
-                    <th>DATE</th>
-                    <th>STATUS</th>
-                    <th style="text-align: right;">ACTION</th>
-                  </tr>
-                </thead>
-                <tbody id="studio-recent-tbody">
-                  ${renderRecentOperationsHtml()}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  `;
-
-  bindStudioEvents();
-}
-
-// Render 12 Tool Cards HTML
-function renderToolCardsHtml() {
-  return STUDIO_TOOLS.map(t => {
-    const isActive = (t.id === studioSelectedTool);
-    return `
-      <div class="studio-tool-card ${isActive ? 'active' : ''}" data-tool-id="${t.id}" id="tool-card-${t.id}">
-        <div class="studio-tool-badge ${t.badgeClass}">
-          ${t.iconSvg}
-        </div>
-        <div class="studio-tool-info">
-          <div class="studio-tool-title">${t.name}</div>
-          <div class="studio-tool-desc">${t.desc}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-// Format bytes to human readable
-function formatFileSize(bytes) {
-  if (!bytes || bytes === 0) return '0 KB';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-// Render Selected Files List
-function renderSelectedFilesListHtml() {
-  if (studioFiles.length === 0) {
-    return `
-      <div style="text-align: center; padding: 24px 12px; color: #94a3b8; font-size: 12.5px;">
-        No files selected yet.<br>Choose or drop PDF files above to begin.
-      </div>
-    `;
-  }
-
-  return studioFiles.map((f, idx) => `
-    <div class="studio-file-item" data-index="${idx}">
-      <div class="studio-file-drag">⋮⋮</div>
-      <div class="studio-file-icon">PDF</div>
-      <div class="studio-file-details">
-        <div class="studio-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
-        <div class="studio-file-size">${formatFileSize(f.size)}</div>
-      </div>
-      <button type="button" class="studio-file-remove" data-remove-index="${idx}" title="Remove file"><svg class="i" style="width:12px;height:12px;"><use href="#close"/></svg></button>
-    </div>
-  `).join('');
-}
-
-// Render Dynamic Tool Settings
-function renderToolSettingsHtml(toolId) {
-  const tool = STUDIO_TOOLS.find(t => t.id === toolId) || STUDIO_TOOLS[0];
-  let customControlsHtml = '';
-
-  switch (toolId) {
-    case 'merge_pdf':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Merge Order</label>
-          <select class="studio-input" id="setting-merge-order">
-            <option value="append" selected>Append in listed order</option>
-            <option value="prepend">Prepend to first document</option>
-          </select>
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-check-label">
-            <input type="checkbox" id="setting-merge-bookmarks" checked>
-            <span>Add bookmark for each document</span>
-          </label>
-          <label class="studio-check-label">
-            <input type="checkbox" id="setting-merge-normalize" checked>
-            <span>Normalize page sizes to standard A4</span>
-          </label>
-        </div>
-      `;
-      break;
-
-    case 'split_pdf':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Split Mode</label>
-          <select class="studio-input" id="setting-split-mode">
-            <option value="extract_range" selected>Extract Page Range</option>
-            <option value="split_single">Split each page into separate PDF</option>
-          </select>
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Page Range</label>
-          <input type="text" class="studio-input" id="setting-split-range" value="1-3, 5" placeholder="e.g. 1-5, 8, 11-14">
-          <div class="studio-hint">Specify comma-separated pages and ranges.</div>
-        </div>
-      `;
-      break;
-
-    case 'rotate_pages':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Rotation Angle</label>
-          <div style="display:flex;gap:8px;">
-            <button type="button" class="studio-opt-btn active" data-angle="90">90° CW ↻</button>
-            <button type="button" class="studio-opt-btn" data-angle="180">180° ↺</button>
-            <button type="button" class="studio-opt-btn" data-angle="270">270° (90° CCW)</button>
-          </div>
-          <input type="hidden" id="setting-rotate-angle" value="90">
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Pages to Rotate</label>
-          <select class="studio-input" id="setting-rotate-target">
-            <option value="all" selected>All pages</option>
-            <option value="even">Even pages only</option>
-            <option value="odd">Odd pages only</option>
-          </select>
-        </div>
-      `;
-      break;
-
-    case 'compress_pdf':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Compression Level</label>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px;">
-            <div class="studio-level-card" data-level="low">
-              <strong>Low</strong>
-              <span>Minor reduction, max quality</span>
-            </div>
-            <div class="studio-level-card active" data-level="balanced">
-              <strong>Balanced</strong>
-              <span>Recommended (40-60% saved)</span>
-            </div>
-            <div class="studio-level-card" data-level="high">
-              <strong>High</strong>
-              <span>Smallest size, web/email</span>
-            </div>
-          </div>
-          <input type="hidden" id="setting-compress-level" value="balanced">
-        </div>
-      `;
-      break;
-
-    case 'unlock_pdf':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Document Password</label>
-          <input type="password" class="studio-input" id="setting-unlock-pw" placeholder="Enter password to decrypt">
-          <div class="studio-hint">Unlocks and permanently removes password restrictions.</div>
-        </div>
-      `;
-      break;
-
-    case 'lock_pdf':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">User Password (To Open)</label>
-          <input type="password" class="studio-input" id="setting-lock-user-pw" placeholder="Required to open PDF">
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Owner Password (Optional)</label>
-          <input type="password" class="studio-input" id="setting-lock-owner-pw" placeholder="Administrative permissions password">
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-check-label">
-            <input type="checkbox" id="setting-lock-allow-print" checked>
-            <span>Allow High Quality Printing</span>
-          </label>
-        </div>
-      `;
-      break;
-
-    case 'extract_pages':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Pages to Extract</label>
-          <input type="text" class="studio-input" id="setting-extract-pages" value="1, 3, 5" placeholder="e.g. 1, 3, 5-8">
-          <div class="studio-hint">Only selected pages will be kept in the new PDF.</div>
-        </div>
-      `;
-      break;
-
-    case 'delete_pages':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Pages to Delete</label>
-          <input type="text" class="studio-input" id="setting-delete-pages" placeholder="e.g. 2, 4-6">
-          <div class="studio-hint">Selected pages will be permanently removed from the document.</div>
-        </div>
-      `;
-      break;
-
-    case 'rearrange_pages':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">New Page Sequence</label>
-          <input type="text" class="studio-input" id="setting-reorder-sequence" placeholder="e.g. 3, 1, 2, 4">
-          <div class="studio-hint">Enter the new desired 1-based order of pages.</div>
-        </div>
-      `;
-      break;
-
-    case 'watermark_pdf':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Watermark Text</label>
-          <input type="text" class="studio-input" id="setting-watermark-text" value="CONFIDENTIAL" placeholder="e.g. CONFIDENTIAL, DRAFT, COPY">
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Placement Position</label>
-          <select class="studio-input" id="setting-watermark-pos">
-            <option value="center_diagonal" selected>Center Diagonal (45°)</option>
-            <option value="center_horizontal">Center Horizontal</option>
-            <option value="top_header">Top Header</option>
-            <option value="bottom_footer">Bottom Footer</option>
-          </select>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div class="studio-form-group">
-            <label class="studio-label">Opacity (25%)</label>
-            <input type="range" class="studio-range" id="setting-watermark-opacity" min="0.05" max="1.0" step="0.05" value="0.25">
-          </div>
-          <div class="studio-form-group">
-            <label class="studio-label">Color</label>
-            <input type="color" class="studio-color-picker" id="setting-watermark-color" value="#DC2626">
-          </div>
-        </div>
-      `;
-      break;
-
-    case 'page_numbers':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Position</label>
-          <select class="studio-input" id="setting-num-pos">
-            <option value="bottom_right" selected>Bottom Right</option>
-            <option value="bottom_center">Bottom Center</option>
-            <option value="bottom_left">Bottom Left</option>
-            <option value="top_right">Top Right</option>
-            <option value="top_center">Top Center</option>
-          </select>
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Format Style</label>
-          <select class="studio-input" id="setting-num-format">
-            <option value="Page {n} of {total}" selected>Page 1 of 10</option>
-            <option value="{n} / {total}">1 / 10</option>
-            <option value="Page {n}">Page 1</option>
-            <option value="{n}">1</option>
-          </select>
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Start Page Number</label>
-          <input type="number" class="studio-input" id="setting-num-start" value="1" min="1">
-        </div>
-      `;
-      break;
-
-    case 'convert_images':
-      customControlsHtml = `
-        <div class="studio-form-group">
-          <label class="studio-label">Image Format</label>
-          <select class="studio-input" id="setting-convert-fmt">
-            <option value="png" selected>PNG (Lossless High Quality)</option>
-            <option value="jpeg">JPEG (Compressed Photo)</option>
-          </select>
-        </div>
-        <div class="studio-form-group">
-          <label class="studio-label">Resolution DPI</label>
-          <select class="studio-input" id="setting-convert-dpi">
-            <option value="150" selected>150 DPI (Standard Screen/Print)</option>
-            <option value="300">300 DPI (High Resolution Print)</option>
-            <option value="72">72 DPI (Web Low Size)</option>
-          </select>
-        </div>
-      `;
-      break;
-
-    default:
-      break;
-  }
-
-  const defaultOutName = (currentPdfSession && currentPdfSession.current_name)
-    ? currentPdfSession.current_name.replace(/\.pdf$/i, '') + '_' + toolId.replace('_', '-') + '.pdf'
-    : (studioFiles[0] ? studioFiles[0].name.replace(/\.pdf$/i, '') + '_' + toolId.replace('_', '-') + '.pdf' : 'document_processed.pdf');
-
-  return `
-    <div class="studio-card-header">
-      <span class="studio-card-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        ${tool.name} Settings
-      </span>
-      <span class="studio-status-pill green">Ready</span>
-    </div>
-
-    <div class="studio-form-group">
-      <label class="studio-label">Output File Name</label>
-      <input type="text" class="studio-input" id="setting-output-filename" value="${escapeHtml(defaultOutName)}" placeholder="e.g. document_output.pdf">
-    </div>
-
-    ${customControlsHtml}
-
-    <div style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
-      <button type="button" class="studio-action-btn" id="btn-studio-execute" ${isExecutingStudioTool ? 'disabled' : ''}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        <span>${tool.name}</span>
-      </button>
-
-      <div style="display:flex; gap:8px;">
-        <button type="button" class="btn btn-sm" id="btn-studio-undo" ${(currentPdfSession && currentPdfSession.checkpoint_stack && currentPdfSession.checkpoint_stack.length > 0) ? '' : 'disabled'} style="flex:1;">
-          <svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#refresh"/></svg>Undo
-        </button>
-        <button type="button" class="btn btn-sm" id="btn-studio-reset" ${currentPdfSession ? '' : 'disabled'} style="flex:1;">
-          <svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#refresh"/></svg>Reset
-        </button>
-        ${(currentPdfSession || studioFiles.length > 0) ? `
-          <button type="button" class="btn btn-sm primary" id="btn-studio-save-client" style="flex:1.2;">
-            <svg class="i" style="width:13px;height:13px;margin-right:4px;"><use href="#folder"/></svg>Save to Client
-          </button>
-        ` : ''}
-      </div>
-    </div>
-  `;
-}
-
-// Render Preview Stage HTML
-function renderPreviewStageHtml() {
-  if (currentPdfSession) {
-    return `
-      <div class="studio-preview-canvas" style="transform: scale(${currentZoom}); transform-origin: top center; transition: transform 0.15s ease;">
-        <img id="studio-main-preview-img" 
-             src="/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/page/${currentPreviewPage}?dpi=130&t=${Date.now()}" 
-             alt="Page ${currentPreviewPage}" 
-             style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); background:#fff;" />
-      </div>
-    `;
-  }
-
-  // Realistic mock preview when no active session
-  return `
-    <div class="studio-preview-canvas" style="transform: scale(${currentZoom}); transform-origin: top center; transition: transform 0.15s ease;">
-      <div class="studio-mock-page">
-        <div class="studio-mock-header">
-          <div class="studio-mock-logo">VS</div>
-          <div style="font-size: 11px; font-weight: 700; color: #1e293b;">CHARTERED ACCOUNTANTS & CO.</div>
-        </div>
-        <div class="studio-mock-title">ANNUAL FINANCIAL REPORT & AUDIT DOSSIER</div>
-        <div class="studio-mock-line" style="width: 90%;"></div>
-        <div class="studio-mock-line" style="width: 82%;"></div>
-        <div class="studio-mock-line" style="width: 75%;"></div>
-        <div class="studio-mock-table">
-          <div class="row header">
-            <span>Particulars</span>
-            <span>FY 2023-24</span>
-            <span>FY 2024-25</span>
-          </div>
-          <div class="row">
-            <span>Gross Revenue</span>
-            <span>₹ 1,42,85,000</span>
-            <span>₹ 1,88,40,000</span>
-          </div>
-          <div class="row">
-            <span>Direct Operating Costs</span>
-            <span>₹ 84,20,000</span>
-            <span>₹ 1,02,15,000</span>
-          </div>
-          <div class="row">
-            <span>Net Taxable Income</span>
-            <span>₹ 58,65,000</span>
-            <span>₹ 86,25,000</span>
-          </div>
-        </div>
-        <div class="studio-mock-stamp">VERIFIED & AUDITED</div>
-      </div>
-    </div>
-  `;
-}
-
-// Render Recent Operations Rows
-function renderRecentOperationsHtml() {
-  const ops = getRecentOperations();
-  if (ops.length === 0) {
-    return `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:16px;">No recent operations</td></tr>`;
-  }
-
-  return ops.map(op => `
-    <tr>
-      <td>
-        <div class="studio-recent-file">
-          <svg class="i" style="width:14px;height:14px;margin-right:6px;stroke:#64748b;"><use href="#clip"/></svg>
-          <span class="name" title="${escapeHtml(op.file)}">${escapeHtml(op.file)}</span>
-        </div>
-      </td>
-      <td>
-        <span class="studio-op-badge">${escapeHtml(op.operation)}</span>
-      </td>
-      <td style="color:#64748b;font-size:11.5px;">${escapeHtml(op.date)}</td>
-      <td>
-        <span class="studio-status-pill green">Completed</span>
-      </td>
-      <td style="text-align:right;">
-        <button type="button" class="studio-action-icon-btn" onclick="handleRecentOpAction('${op.id}')" title="Open or Download">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-      </td>
-    </tr>
-  `).join('');
-}
-
-window.handleRecentOpAction = function(opId) {
-  if (currentPdfSession) {
-    window.open(`/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/download`, '_blank');
-  } else {
-    if (typeof showNativeToast === 'function') {
-      showNativeToast('Operation completed and saved.', 'info');
-    }
-  }
+// Global handlers for universal drag & drop routing into Studio
+window.openUploadedPdfInStudio = async function(file) {
+  await addIncomingFiles([file]);
 };
 
-// Bind Interactive Studio Events
-function bindStudioEvents() {
-  // 1. Tool Cards Selection
-  document.querySelectorAll('.studio-tool-card').forEach(card => {
-    card.onclick = () => {
-      const toolId = card.getAttribute('data-tool-id');
-      if (toolId && toolId !== studioSelectedTool) {
-        studioSelectedTool = toolId;
-        // Update active class on cards
-        document.querySelectorAll('.studio-tool-card').forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
-        // Re-render settings container
-        const settingsContainer = document.getElementById('studio-settings-container');
-        if (settingsContainer) {
-          settingsContainer.innerHTML = renderToolSettingsHtml(studioSelectedTool);
-          bindSettingsControls();
-        }
-      }
-    };
-  });
+window.openPdfStudioWithFiles = async function(files) {
+  await addIncomingFiles(files);
+};
 
-  // 2. Dropzone & File Input
-  const dropzone = document.getElementById('studio-dropzone');
-  const fileInput = document.getElementById('studio-hidden-file-input');
-  const chooseBtn = document.getElementById('studio-choose-btn');
-
-  if (dropzone && fileInput) {
-    if (chooseBtn) {
-      chooseBtn.onclick = (e) => {
-        e.stopPropagation();
-        fileInput.click();
-      };
-    }
-    dropzone.onclick = () => fileInput.click();
-
-    fileInput.onchange = async (e) => {
-      const files = Array.from(e.target.files || []);
-      if (files.length > 0) {
-        await handleFilesAdded(files);
-      }
-      fileInput.value = '';
-    };
-
-    dropzone.ondragover = (e) => {
-      e.preventDefault();
-      dropzone.classList.add('dragover');
-    };
-    dropzone.ondragleave = () => {
-      dropzone.classList.remove('dragover');
-    };
-    dropzone.ondrop = async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dropzone.classList.remove('dragover');
-      const files = Array.from(e.dataTransfer.files || []).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-      if (files.length > 0) {
-        await handleFilesAdded(files);
-      } else {
-        if (typeof showNativeToast === 'function') {
-          showNativeToast('Please drop valid PDF documents.', 'warning');
-        } else {
-          alert('Please drop valid PDF documents.');
-        }
-      }
-    };
-  }
-
-  // 3. Clear Files
-  const clearBtn = document.getElementById('studio-clear-files-btn');
-  if (clearBtn) {
-    clearBtn.onclick = () => {
-      studioFiles = [];
-      currentPdfSession = null;
-      currentThumbnails = [];
-      refreshFilesUi();
-      refreshPreviewUi();
-      const settingsContainer = document.getElementById('studio-settings-container');
-      if (settingsContainer) {
-        settingsContainer.innerHTML = renderToolSettingsHtml(studioSelectedTool);
-        bindSettingsControls();
-      }
-    };
-  }
-
-  // 4. Preview Toolbar controls
-  const zoomInBtn = document.getElementById('btn-studio-zoom-in');
-  const zoomOutBtn = document.getElementById('btn-studio-zoom-out');
-  const pagePrevBtn = document.getElementById('btn-studio-page-prev');
-  const pageNextBtn = document.getElementById('btn-studio-page-next');
-  const openExtBtn = document.getElementById('btn-studio-open-ext');
-
-  if (zoomInBtn) {
-    zoomInBtn.onclick = () => {
-      currentZoom = Math.min(2.0, currentZoom + 0.15);
-      refreshPreviewUi();
-    };
-  }
-  if (zoomOutBtn) {
-    zoomOutBtn.onclick = () => {
-      currentZoom = Math.max(0.4, currentZoom - 0.15);
-      refreshPreviewUi();
-    };
-  }
-  if (pagePrevBtn) {
-    pagePrevBtn.onclick = () => {
-      if (currentPreviewPage > 1) {
-        currentPreviewPage--;
-        refreshPreviewUi();
-      }
-    };
-  }
-  if (pageNextBtn) {
-    pageNextBtn.onclick = () => {
-      if (currentPdfSession && currentPreviewPage < currentPdfSession.page_count) {
-        currentPreviewPage++;
-        refreshPreviewUi();
-      }
-    };
-  }
-  if (openExtBtn) {
-    openExtBtn.onclick = () => {
-      if (currentPdfSession) {
-        window.open(`/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/page/${currentPreviewPage}?dpi=200`, '_blank');
-      }
-    };
-  }
-
-  // 5. Remove Individual Files
-  bindFileRemoveHandlers();
-
-  // 6. Bind Tool Settings Form Controls
-  bindSettingsControls();
-}
-
-function bindFileRemoveHandlers() {
-  document.querySelectorAll('.studio-file-remove').forEach(btn => {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      const idx = parseInt(btn.getAttribute('data-remove-index'));
-      if (!isNaN(idx) && idx >= 0 && idx < studioFiles.length) {
-        studioFiles.splice(idx, 1);
-        if (studioFiles.length === 0) {
-          currentPdfSession = null;
-        }
-        refreshFilesUi();
-        refreshPreviewUi();
-      }
-    };
-  });
-}
-
-function bindSettingsControls() {
-  // Option buttons (e.g. Rotate angles)
-  document.querySelectorAll('.studio-opt-btn').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('.studio-opt-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const angle = btn.getAttribute('data-angle');
-      const hidden = document.getElementById('setting-rotate-angle');
-      if (hidden) hidden.value = angle;
-    };
-  });
-
-  // Level cards (e.g. Compress)
-  document.querySelectorAll('.studio-level-card').forEach(card => {
-    card.onclick = () => {
-      document.querySelectorAll('.studio-level-card').forEach(c => c.classList.remove('active'));
-      card.classList.add('active');
-      const level = card.getAttribute('data-level');
-      const hidden = document.getElementById('setting-compress-level');
-      if (hidden) hidden.value = level;
-    };
-  });
-
-  // Opacity range
-  const opacityRange = document.getElementById('setting-watermark-opacity');
-  if (opacityRange) {
-    opacityRange.oninput = (e) => {
-      const lbl = opacityRange.parentElement.querySelector('.studio-label');
-      if (lbl) lbl.textContent = `Opacity (${Math.round(e.target.value * 100)}%)`;
-    };
-  }
-
-  // Primary Action Execute Button
-  const execBtn = document.getElementById('btn-studio-execute');
-  if (execBtn) {
-    execBtn.onclick = async () => {
-      await handleStudioToolExecute();
-    };
-  }
-
-  // Undo Button
-  const undoBtn = document.getElementById('btn-studio-undo');
-  if (undoBtn) {
-    undoBtn.onclick = async () => {
-      if (!currentPdfSession) return;
-      try {
-        const res = await api(`/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/undo`, {
-          method: 'POST',
-          body: '{}'
-        });
-        if (res && res.ok && res.session) {
-          currentPdfSession = res.session;
-          currentThumbnails = res.thumbnails;
-          currentPreviewPage = Math.min(currentPreviewPage, res.session.page_count);
-          refreshPreviewUi();
-          const settingsContainer = document.getElementById('studio-settings-container');
-          if (settingsContainer) {
-            settingsContainer.innerHTML = renderToolSettingsHtml(studioSelectedTool);
-            bindSettingsControls();
-          }
-          if (typeof showNativeToast === 'function') {
-            showNativeToast('Undo successful.', 'info');
-          }
-        }
-      } catch (err) {
-        alert('Undo failed: ' + err.message);
-      }
-    };
-  }
-
-  // Reset Button
-  const resetBtn = document.getElementById('btn-studio-reset');
-  if (resetBtn) {
-    resetBtn.onclick = async () => {
-      if (!currentPdfSession) return;
-      if (!confirm('Reset all changes back to original document?')) return;
-      try {
-        const res = await api(`/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/reset`, {
-          method: 'POST',
-          body: '{}'
-        });
-        if (res && res.ok && res.session) {
-          currentPdfSession = res.session;
-          currentThumbnails = res.thumbnails;
-          currentPreviewPage = 1;
-          refreshPreviewUi();
-          const settingsContainer = document.getElementById('studio-settings-container');
-          if (settingsContainer) {
-            settingsContainer.innerHTML = renderToolSettingsHtml(studioSelectedTool);
-            bindSettingsControls();
-          }
-          if (typeof showNativeToast === 'function') {
-            showNativeToast('Reset to original document.', 'info');
-          }
-        }
-      } catch (err) {
-        alert('Reset failed: ' + err.message);
-      }
-    };
-  }
-
-  // Save to Client Button
-  const saveClientBtn = document.getElementById('btn-studio-save-client');
-  if (saveClientBtn) {
-    saveClientBtn.onclick = async () => {
-      await handleSaveToClientHandoff();
-    };
-  }
-}
-
-// Convert File to Base64
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-// Handle Files Added into the Queue
-async function handleFilesAdded(files) {
-  for (const f of files) {
-    const b64 = await fileToBase64(f);
-    studioFiles.push({
-      id: 'file_' + Math.random().toString(36).substr(2, 9),
-      file: f,
-      name: f.name,
-      size: f.size,
-      base64: b64
-    });
-  }
-
-  refreshFilesUi();
-
-  // If no session exists yet, initialize backend session with the first file or multi-file
-  if (!currentPdfSession && studioFiles.length > 0) {
-    try {
-      const payloadFiles = studioFiles.map(sf => ({ name: sf.name, data: sf.base64 }));
-      const res = await api('/api/pdf-studio/sessions', {
-        method: 'POST',
-        body: JSON.stringify({
-          original_name: studioFiles[0].name,
-          files: payloadFiles
-        })
-      });
-      if (res && res.ok && res.session) {
-        currentPdfSession = res.session;
-        currentThumbnails = res.thumbnails || [];
-        currentPreviewPage = 1;
-        refreshPreviewUi();
-      }
-    } catch (err) {
-      console.warn('Backend session init deferred:', err);
-    }
-  }
-
-  const settingsContainer = document.getElementById('studio-settings-container');
-  if (settingsContainer) {
-    settingsContainer.innerHTML = renderToolSettingsHtml(studioSelectedTool);
-    bindSettingsControls();
-  }
-}
-
-// Refresh Left Files List UI
-function refreshFilesUi() {
-  const countEl = document.getElementById('studio-files-count');
-  if (countEl) countEl.textContent = `Selected Files (${studioFiles.length})`;
-
-  const listEl = document.getElementById('studio-files-list');
-  if (listEl) {
-    listEl.innerHTML = renderSelectedFilesListHtml();
-    bindFileRemoveHandlers();
-  }
-
-  // Update clear button
-  const headerEl = document.querySelector('.studio-files-header');
-  if (headerEl) {
-    let clearBtn = document.getElementById('studio-clear-files-btn');
-    if (studioFiles.length > 0 && !clearBtn) {
-      clearBtn = document.createElement('button');
-      clearBtn.type = 'button';
-      clearBtn.className = 'studio-clear-btn';
-      clearBtn.id = 'studio-clear-files-btn';
-      clearBtn.textContent = 'Clear all';
-      headerEl.appendChild(clearBtn);
-      clearBtn.onclick = () => {
-        studioFiles = [];
-        currentPdfSession = null;
-        refreshFilesUi();
-        refreshPreviewUi();
-      };
-    } else if (studioFiles.length === 0 && clearBtn) {
-      clearBtn.remove();
-    }
-  }
-}
-
-// Refresh Preview UI
-function refreshPreviewUi() {
-  const stage = document.getElementById('studio-preview-stage');
-  if (stage) stage.innerHTML = renderPreviewStageHtml();
-
-  const zoomLbl = document.getElementById('studio-zoom-label');
-  if (zoomLbl) zoomLbl.textContent = `${Math.round(currentZoom * 100)}%`;
-
-  const pageInd = document.getElementById('studio-page-indicator');
-  if (pageInd) {
-    pageInd.textContent = currentPdfSession ? `Page ${currentPreviewPage} of ${currentPdfSession.page_count}` : 'Page 1 of 1';
-  }
-
-  const prevBtn = document.getElementById('btn-studio-page-prev');
-  const nextBtn = document.getElementById('btn-studio-page-next');
-  if (prevBtn) prevBtn.disabled = (currentPreviewPage <= 1);
-  if (nextBtn) nextBtn.disabled = (!currentPdfSession || currentPreviewPage >= currentPdfSession.page_count);
-}
-
-// Execute Active Studio Tool
-async function handleStudioToolExecute() {
-  if (isExecutingStudioTool) return;
-
-  if (studioFiles.length === 0 && !currentPdfSession) {
-    if (typeof showNativeToast === 'function') {
-      showNativeToast('Please select or add at least one PDF file first.', 'warning');
-    } else {
-      alert('Please select or add at least one PDF file first.');
-    }
-    return;
-  }
-
-  isExecutingStudioTool = true;
-  const execBtn = document.getElementById('btn-studio-execute');
-  if (execBtn) {
-    execBtn.disabled = true;
-    execBtn.innerHTML = `<span class="studio-spinner"></span> Processing...`;
-  }
-
-  // Ensure active session exists
-  if (!currentPdfSession) {
-    try {
-      const payloadFiles = studioFiles.map(sf => ({ name: sf.name, data: sf.base64 }));
-      const sRes = await api('/api/pdf-studio/sessions', {
-        method: 'POST',
-        body: JSON.stringify({
-          original_name: studioFiles[0].name,
-          files: payloadFiles
-        })
-      });
-      if (sRes && sRes.ok && sRes.session) {
-        currentPdfSession = sRes.session;
-        currentThumbnails = sRes.thumbnails || [];
-      }
-    } catch (err) {
-      alert('Failed to initialize PDF session: ' + err.message);
-      isExecutingStudioTool = false;
-      if (execBtn) {
-        execBtn.disabled = false;
-        execBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg> <span>${studioSelectedTool.replace('_', ' ').toUpperCase()}</span>`;
-      }
-      return;
-    }
-  }
-
-  // Gather Tool Parameters
-  const params = {};
-  const outNameInput = document.getElementById('setting-output-filename');
-  const outputName = outNameInput ? outNameInput.value.trim() : 'document_processed.pdf';
-
-  switch (studioSelectedTool) {
-    case 'merge_pdf':
-      const addFiles = studioFiles.slice(1).map(sf => sf.base64);
-      params.additional_files = addFiles;
-      params.order = document.getElementById('setting-merge-order')?.value || 'append';
-      break;
-
-    case 'split_pdf':
-      params.mode = document.getElementById('setting-split-mode')?.value || 'extract_range';
-      params.page_range = document.getElementById('setting-split-range')?.value || '1';
-      break;
-
-    case 'rotate_pages':
-      params.angle = parseInt(document.getElementById('setting-rotate-angle')?.value || '90');
-      params.pages = document.getElementById('setting-rotate-target')?.value || 'all';
-      break;
-
-    case 'compress_pdf':
-      params.level = document.getElementById('setting-compress-level')?.value || 'balanced';
-      break;
-
-    case 'unlock_pdf':
-      params.password = document.getElementById('setting-unlock-pw')?.value || '';
-      break;
-
-    case 'lock_pdf':
-      params.user_password = document.getElementById('setting-lock-user-pw')?.value || '';
-      params.owner_password = document.getElementById('setting-lock-owner-pw')?.value || '';
-      break;
-
-    case 'extract_pages':
-      params.mode = 'extract_range';
-      params.page_range = document.getElementById('setting-extract-pages')?.value || '1';
-      break;
-
-    case 'delete_pages':
-      const delStr = document.getElementById('setting-delete-pages')?.value || '';
-      params.page_range = delStr;
-      break;
-
-    case 'rearrange_pages':
-      const seqStr = document.getElementById('setting-reorder-sequence')?.value || '';
-      const order = seqStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-      params.new_order = order;
-      break;
-
-    case 'watermark_pdf':
-      params.text = document.getElementById('setting-watermark-text')?.value || 'CONFIDENTIAL';
-      params.position = document.getElementById('setting-watermark-pos')?.value || 'center_diagonal';
-      params.opacity = parseFloat(document.getElementById('setting-watermark-opacity')?.value || '0.25');
-      params.color = document.getElementById('setting-watermark-color')?.value || '#DC2626';
-      break;
-
-    case 'page_numbers':
-      params.position = document.getElementById('setting-num-pos')?.value || 'bottom_right';
-      params.format = document.getElementById('setting-num-format')?.value || 'Page {n} of {total}';
-      params.start_number = parseInt(document.getElementById('setting-num-start')?.value || '1');
-      break;
-
-    case 'convert_images':
-      params.format = document.getElementById('setting-convert-fmt')?.value || 'png';
-      params.dpi = parseInt(document.getElementById('setting-convert-dpi')?.value || '150');
-      break;
-  }
-
-  try {
-    const res = await api(`/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/execute`, {
-      method: 'POST',
-      body: JSON.stringify({
-        tool_id: studioSelectedTool,
-        parameters: params
-      })
-    });
-
-    if (res && res.ok) {
-      if (res.session) {
-        currentPdfSession = res.session;
-        if (outputName) currentPdfSession.current_name = outputName;
-      }
-      currentThumbnails = res.thumbnails || [];
-      currentPreviewPage = 1;
-
-      // Log to Recent Operations
-      const activeToolObj = STUDIO_TOOLS.find(t => t.id === studioSelectedTool);
-      saveRecentOperation({
-        id: 'op_' + Date.now(),
-        file: outputName || currentPdfSession.current_name,
-        operation: activeToolObj ? activeToolObj.name : studioSelectedTool,
-        date: 'Just now',
-        status: 'Completed',
-        actionUrl: `/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/download`
-      });
-
-      // Update Recent Operations Table
-      const recentTbody = document.getElementById('studio-recent-tbody');
-      if (recentTbody) recentTbody.innerHTML = renderRecentOperationsHtml();
-
-      refreshPreviewUi();
-
-      const settingsContainer = document.getElementById('studio-settings-container');
-      if (settingsContainer) {
-        settingsContainer.innerHTML = renderToolSettingsHtml(studioSelectedTool);
-        bindSettingsControls();
-      }
-
-      if (typeof showNativeToast === 'function') {
-        const msg = (res.result && res.result.message) ? res.result.message : `${activeToolObj?.name || 'Tool'} completed successfully!`;
-        showNativeToast(msg, 'success', 3500);
-      }
-    }
-  } catch (err) {
-    if (typeof showNativeAlert === 'function') {
-      showNativeAlert(err.message, { title: 'Execution Failed', type: 'error' });
-    } else {
-      alert(`Operation failed: ${err.message}`);
-    }
-  } finally {
-    isExecutingStudioTool = false;
-    const currentBtn = document.getElementById('btn-studio-execute');
-    if (currentBtn) {
-      currentBtn.disabled = false;
-      const t = STUDIO_TOOLS.find(x => x.id === studioSelectedTool);
-      currentBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg> <span>${t ? t.name : 'Execute'}</span>`;
-    }
-  }
-}
-
-// Handle Save to Client Handoff
-async function handleSaveToClientHandoff() {
-  if (!currentPdfSession) {
-    if (typeof showNativeToast === 'function') {
-      showNativeToast('No active PDF session to save.', 'warning');
-    } else {
-      alert('No active PDF session to save.');
-    }
-    return;
-  }
-
-  if (pdfStudioOriginContext && window.saveStaging) {
-    try {
-      const pb = (typeof showGlassProgressBar === 'function')
-        ? showGlassProgressBar({ title: 'Applying to Save Queue', subtitle: 'Updating staging session on disk...' })
-        : null;
-      if (pb) pb.simulate(1000);
-      await window.saveStaging.applyPdfStudioResult(currentPdfSession.session_id, currentPdfSession.current_name);
-      if (pb) await pb.finish('Applied to Save Queue');
-      if (typeof showNativeToast === 'function') {
-        showNativeToast('Document returned to Save Queue successfully.', 'success', 3000);
-      }
-    } catch (err) {
-      alert('Failed to return to Save Tab: ' + err.message);
-    }
-  } else {
-    // Direct switch to Save Tab or trigger direct browser download
-    window.open(`/api/pdf-studio/sessions/${encodeURIComponent(currentPdfSession.session_id)}/download`, '_blank');
-    if (typeof showNativeToast === 'function') {
-      showNativeToast('Document downloaded successfully.', 'success', 3000);
-    }
-  }
-}
-
-// Global Export
+// Global exports
 window.pdfStudioPage = pdfStudioPage;
-window.renderStudioLayout = renderStudioLayout;
-window.STUDIO_TOOLS = STUDIO_TOOLS;
+window.STUDIO_CATEGORIES = STUDIO_CATEGORIES;
+window.STUDIO_TOOLS = STUDIO_CATEGORIES[0].tools;
+window.studioToast = studioToast;
+window.ensureStudioPortal = ensureStudioPortal;
+
+})();
+
