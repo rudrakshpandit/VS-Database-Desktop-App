@@ -201,12 +201,12 @@
 </div>
 
 <!-- Custom Frameless Title Bar (Theme-Merged Glass) -->
-<header id="app-titlebar" class="app-titlebar pywebview-drag-region">
-    <div class="titlebar-drag-area">
-        <div class="titlebar-brand">
-            <img src="logo Monogram.png" alt="VS" class="titlebar-icon">
-            <span class="titlebar-title">VS Database</span>
-            <span class="titlebar-badge">Enterprise Vault</span>
+<header id="app-titlebar" class="app-titlebar pywebview-drag-region" data-tauri-drag-region>
+    <div class="titlebar-drag-area" data-tauri-drag-region>
+        <div class="titlebar-brand" data-tauri-drag-region>
+            <img src="logo Monogram.png" alt="VS" class="titlebar-icon" data-tauri-drag-region>
+            <span class="titlebar-title" data-tauri-drag-region>VS Database</span>
+            <span class="titlebar-badge" data-tauri-drag-region>Enterprise Vault</span>
         </div>
     </div>
     <div class="titlebar-actions no-drag">
@@ -324,6 +324,7 @@
 <div id="auth-modal-root"></div>
 
 <!-- Application Scripts (Local first so startup never blocks on external CDN) -->
+<script src="tauri-bridge.js?v=20261102_v1"></script>
 <script src="keyboard-engine.js?v=20261011_v4"></script>
 <script src="glass-ui-kit.js?v=20261013_v1"></script>
 <script src="save-staging.js?v=20261011_v4"></script>

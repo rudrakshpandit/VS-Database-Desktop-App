@@ -1,0 +1,4997 @@
+{
+  "routes_count": 225,
+  "routes": [
+    {
+      "line": 6996,
+      "method": null,
+      "handler": null,
+      "type": "prefix",
+      "route": "/api/admin/",
+      "code": "if path.startswith(\"/api/admin/\"):"
+    },
+    {
+      "line": 7000,
+      "method": null,
+      "handler": null,
+      "type": "exact",
+      "route": "/api/ai/settings",
+      "code": "if self.command in (\"POST\", \"PUT\", \"DELETE\") and (path == \"/api/ai/settings\" or path.startswith(\"/api/ai/sources/\")):"
+    },
+    {
+      "line": 7028,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/",
+      "code": "if path.startswith(\"/api/\") and not self.protect_api(path):"
+    },
+    {
+      "line": 7031,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/health",
+      "code": "if path == \"/api/health\":"
+    },
+    {
+      "line": 7034,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/ai/",
+      "code": "if path.startswith(\"/api/ai/\"):"
+    },
+    {
+      "line": 7037,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/automation/",
+      "code": "if path.startswith(\"/api/automation/\"):"
+    },
+    {
+      "line": 7040,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/staging/incoming",
+      "code": "if path == \"/api/staging/incoming\":"
+    },
+    {
+      "line": 7062,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/staging/sessions/",
+      "code": "if path.startswith(\"/api/staging/sessions/\"):"
+    },
+    {
+      "line": 7072,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/pdf-studio/tools",
+      "code": "if path == \"/api/pdf-studio/tools\":"
+    },
+    {
+      "line": 7076,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and len(path.split(\"/\")) == 5:"
+    },
+    {
+      "line": 7084,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and \"/page/\" in path:"
+    },
+    {
+      "line": 7102,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and path.endswith(\"/thumbnails\"):"
+    },
+    {
+      "line": 7111,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and path.endswith(\"/download\"):"
+    },
+    {
+      "line": 7129,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/auth/status",
+      "code": "if path == \"/api/auth/status\":"
+    },
+    {
+      "line": 7156,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/auth/request-status",
+      "code": "if path == \"/api/auth/request-status\":"
+    },
+    {
+      "line": 7167,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/auth/extension-status",
+      "code": "if path == \"/api/auth/extension-status\":"
+    },
+    {
+      "line": 7173,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/file-router/recent",
+      "code": "if path == \"/api/file-router/recent\":"
+    },
+    {
+      "line": 7178,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/admin/users",
+      "code": "if path == \"/api/admin/users\":"
+    },
+    {
+      "line": 7203,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/settings",
+      "code": "if path == \"/api/settings\":"
+    },
+    {
+      "line": 7206,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/google/status",
+      "code": "if path == \"/api/google/status\":"
+    },
+    {
+      "line": 7209,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/client-portals/blocks",
+      "code": "if path == \"/api/client-portals/blocks\":"
+    },
+    {
+      "line": 7214,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/client-access-links.zip",
+      "code": "if path == \"/api/client-access-links.zip\":"
+    },
+    {
+      "line": 7231,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/google/callback",
+      "code": "if path == \"/api/google/callback\":"
+    },
+    {
+      "line": 7324,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/firm-types",
+      "code": "if path == \"/api/firm-types\":"
+    },
+    {
+      "line": 7335,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/security-alerts",
+      "code": "if path == \"/api/security-alerts\":"
+    },
+    {
+      "line": 7340,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/clients",
+      "code": "if path == \"/api/clients\":"
+    },
+    {
+      "line": 7345,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/clients/export",
+      "code": "if path == \"/api/clients/export\":"
+    },
+    {
+      "line": 7392,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/system/check-updates",
+      "code": "if path == \"/api/system/check-updates\":"
+    },
+    {
+      "line": 7395,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/system/autostart",
+      "code": "if path == \"/api/system/autostart\":"
+    },
+    {
+      "line": 7398,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/rules",
+      "code": "if path == \"/api/rules\":"
+    },
+    {
+      "line": 7404,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/category-templates/preview",
+      "code": "if path == \"/api/category-templates/preview\":"
+    },
+    {
+      "line": 7425,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/category-templates",
+      "code": "if path == \"/api/category-templates\":"
+    },
+    {
+      "line": 7481,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/tree\"):"
+    },
+    {
+      "line": 7490,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/override\"):"
+    },
+    {
+      "line": 7497,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/client-files/download",
+      "code": "if path == \"/api/client-files/download\":"
+    },
+    {
+      "line": 7522,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/clients/",
+      "code": "if path.startswith(\"/api/clients/\") and path.endswith(\"/pdf-passwords\"):"
+    },
+    {
+      "line": 7526,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\"):"
+    },
+    {
+      "line": 7529,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/activity-log",
+      "code": "if path == \"/api/activity-log\":"
+    },
+    {
+      "line": 7534,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/jobs",
+      "code": "if path == \"/api/jobs\":"
+    },
+    {
+      "line": 7545,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/jobs/",
+      "code": "if path.startswith(\"/api/jobs/\") and path.endswith(\"/file\"):"
+    },
+    {
+      "line": 7561,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/desktop/health",
+      "code": "if path == \"/api/desktop/health\":"
+    },
+    {
+      "line": 7564,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/desktop/state",
+      "code": "if path == \"/api/desktop/state\":"
+    },
+    {
+      "line": 7567,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/desktop/navigate",
+      "code": "if path == \"/api/desktop/navigate\":"
+    },
+    {
+      "line": 7574,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/desktop/pending_browser_return",
+      "code": "if path == \"/api/desktop/pending_browser_return\":"
+    },
+    {
+      "line": 7581,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/stats",
+      "code": "if path == \"/api/dashboard/stats\":"
+    },
+    {
+      "line": 7584,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/clients",
+      "code": "if path == \"/api/dashboard/clients\":"
+    },
+    {
+      "line": 7589,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/folders",
+      "code": "if path == \"/api/dashboard/folders\":"
+    },
+    {
+      "line": 7594,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/files",
+      "code": "if path == \"/api/dashboard/files\":"
+    },
+    {
+      "line": 7600,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/cloud",
+      "code": "if path == \"/api/dashboard/cloud\":"
+    },
+    {
+      "line": 7603,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/activity",
+      "code": "if path == \"/api/dashboard/activity\":"
+    },
+    {
+      "line": 7608,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/dashboard/storage",
+      "code": "if path == \"/api/dashboard/storage\":"
+    },
+    {
+      "line": 7614,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/global-search",
+      "code": "if path == \"/api/global-search\":"
+    },
+    {
+      "line": 7619,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/backups",
+      "code": "if path == \"/api/backups\":"
+    },
+    {
+      "line": 7622,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/backup/settings",
+      "code": "if path == \"/api/backup/settings\":"
+    },
+    {
+      "line": 7625,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "prefix",
+      "route": "/api/backup/download/",
+      "code": "if path.startswith(\"/api/backup/download/\"):"
+    },
+    {
+      "line": 7638,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/api/template.csv",
+      "code": "if path == \"/api/template.csv\":"
+    },
+    {
+      "line": 7647,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/favicon.ico",
+      "code": "if path == \"/favicon.ico\":"
+    },
+    {
+      "line": 7659,
+      "method": "GET",
+      "handler": "do_GET",
+      "type": "exact",
+      "route": "/",
+      "code": "target = (STATIC_ROOT / (\"index.html\" if clean_path == \"/\" else clean_path.lstrip(\"/\"))).resolve()"
+    },
+    {
+      "line": 7726,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/",
+      "code": "if path.startswith(\"/api/\") and not self.protect_api(path):"
+    },
+    {
+      "line": 7729,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/ai/",
+      "code": "if path.startswith(\"/api/ai/\"):"
+    },
+    {
+      "line": 7732,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/automation/",
+      "code": "if path.startswith(\"/api/automation/\"):"
+    },
+    {
+      "line": 7735,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/setup-host",
+      "code": "if path == \"/api/auth/setup-host\":"
+    },
+    {
+      "line": 7765,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/request-access",
+      "code": "if path == \"/api/auth/request-access\":"
+    },
+    {
+      "line": 7797,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/login",
+      "code": "if path == \"/api/auth/login\":"
+    },
+    {
+      "line": 7835,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/logout",
+      "code": "if path == \"/api/auth/logout\":"
+    },
+    {
+      "line": 7848,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/extension-code",
+      "code": "if path == \"/api/auth/extension-code\":"
+    },
+    {
+      "line": 7855,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/extension-exchange",
+      "code": "if path == \"/api/auth/extension-exchange\":"
+    },
+    {
+      "line": 7863,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/auth/extension-direct-connect",
+      "code": "if path == \"/api/auth/extension-direct-connect\":"
+    },
+    {
+      "line": 7900,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/admin/requests/approve",
+      "code": "if path == \"/api/admin/requests/approve\":"
+    },
+    {
+      "line": 7912,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/admin/requests/reject",
+      "code": "if path == \"/api/admin/requests/reject\":"
+    },
+    {
+      "line": 7923,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/admin/devices/revoke",
+      "code": "if path == \"/api/admin/devices/revoke\":"
+    },
+    {
+      "line": 7930,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/admin/devices/status",
+      "code": "if path == \"/api/admin/devices/status\":"
+    },
+    {
+      "line": 7941,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/admin/users/status",
+      "code": "if path == \"/api/admin/users/status\":"
+    },
+    {
+      "line": 7955,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/admin/users/password",
+      "code": "if path == \"/api/admin/users/password\":"
+    },
+    {
+      "line": 7976,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/settings",
+      "code": "if path == \"/api/settings\":"
+    },
+    {
+      "line": 7992,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/setup/provision",
+      "code": "if path == \"/api/setup/provision\":"
+    },
+    {
+      "line": 7995,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/setup/fresh-start",
+      "code": "if path == \"/api/setup/fresh-start\":"
+    },
+    {
+      "line": 7998,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/google/credentials",
+      "code": "if path == \"/api/google/credentials\":"
+    },
+    {
+      "line": 8006,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/google/connect",
+      "code": "if path == \"/api/google/connect\":"
+    },
+    {
+      "line": 8035,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/google/create-client-portals",
+      "code": "if path == \"/api/google/create-client-portals\":"
+    },
+    {
+      "line": 8065,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-portals/block",
+      "code": "if path == \"/api/client-portals/block\":"
+    },
+    {
+      "line": 8070,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-portals/unblock",
+      "code": "if path == \"/api/client-portals/unblock\":"
+    },
+    {
+      "line": 8075,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/firm-types",
+      "code": "if path == \"/api/firm-types\":"
+    },
+    {
+      "line": 8094,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/firm-types/update",
+      "code": "if path == \"/api/firm-types/update\":"
+    },
+    {
+      "line": 8125,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/firm-types/delete",
+      "code": "if path == \"/api/firm-types/delete\":"
+    },
+    {
+      "line": 8150,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/import-clients/analyze",
+      "code": "if path == \"/api/import-clients/analyze\":"
+    },
+    {
+      "line": 8216,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/import-clients/execute",
+      "code": "if path == \"/api/import-clients/execute\":"
+    },
+    {
+      "line": 8330,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/import-clients",
+      "code": "if path == \"/api/import-clients\":"
+    },
+    {
+      "line": 8357,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/clients",
+      "code": "if path == \"/api/clients\":"
+    },
+    {
+      "line": 8437,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/clients/rename",
+      "code": "if path == \"/api/clients/rename\":"
+    },
+    {
+      "line": 8456,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/security-alerts/dismiss",
+      "code": "if path == \"/api/security-alerts/dismiss\":"
+    },
+    {
+      "line": 8466,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/clients/bulk-delete",
+      "code": "if path == \"/api/clients/bulk-delete\":"
+    },
+    {
+      "line": 8581,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/clients/bulk-manage-access",
+      "code": "if path == \"/api/clients/bulk-manage-access\":"
+    },
+    {
+      "line": 8616,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/rename-folder\"):"
+    },
+    {
+      "line": 8625,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/rules",
+      "code": "if path == \"/api/rules\":"
+    },
+    {
+      "line": 8639,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/category-templates",
+      "code": "if path == \"/api/category-templates\":"
+    },
+    {
+      "line": 8698,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/reconcile\"):"
+    },
+    {
+      "line": 8701,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/create\"):"
+    },
+    {
+      "line": 8710,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/create-folders",
+      "code": "if path == \"/api/create-folders\":"
+    },
+    {
+      "line": 8713,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/folders/reconcile",
+      "code": "if path == \"/api/folders/reconcile\":"
+    },
+    {
+      "line": 8741,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/override\"):"
+    },
+    {
+      "line": 8746,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and (path.endswith(\"/override/reset\") or path.endswith(\"/reset-override\")):"
+    },
+    {
+      "line": 8750,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/folders\"):"
+    },
+    {
+      "line": 8760,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/folders/rename\"):"
+    },
+    {
+      "line": 8766,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/folders/move\"):"
+    },
+    {
+      "line": 8777,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/folders/delete\"):"
+    },
+    {
+      "line": 8788,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/open-in-explorer\"):"
+    },
+    {
+      "line": 8799,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/system/apply-update",
+      "code": "if path == \"/api/system/apply-update\":"
+    },
+    {
+      "line": 8802,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/system/autostart",
+      "code": "if path == \"/api/system/autostart\":"
+    },
+    {
+      "line": 8806,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/close",
+      "code": "if path == \"/api/desktop/close\":"
+    },
+    {
+      "line": 8810,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/heartbeat",
+      "code": "if path == \"/api/desktop/heartbeat\":"
+    },
+    {
+      "line": 8836,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/navigate",
+      "code": "if path == \"/api/desktop/navigate\":"
+    },
+    {
+      "line": 8844,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/ui-attach",
+      "code": "if path == \"/api/desktop/ui-attach\":"
+    },
+    {
+      "line": 8870,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/ui-detach",
+      "code": "if path == \"/api/desktop/ui-detach\":"
+    },
+    {
+      "line": 8878,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/shutdown",
+      "code": "if path == \"/api/desktop/shutdown\":"
+    },
+    {
+      "line": 8888,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-files/move",
+      "code": "if path == \"/api/client-files/move\":"
+    },
+    {
+      "line": 8899,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-files/copy",
+      "code": "if path == \"/api/client-files/copy\":"
+    },
+    {
+      "line": 8911,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-files/rename",
+      "code": "if path == \"/api/client-files/rename\":"
+    },
+    {
+      "line": 8922,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-files/delete",
+      "code": "if path == \"/api/client-files/delete\":"
+    },
+    {
+      "line": 8932,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/client-files/upload",
+      "code": "if path == \"/api/client-files/upload\":"
+    },
+    {
+      "line": 8945,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/save-document",
+      "code": "if path == \"/api/save-document\":"
+    },
+    {
+      "line": 8955,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/bring_to_front",
+      "code": "if path == \"/api/desktop/bring_to_front\":"
+    },
+    {
+      "line": 8958,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/desktop/return_to_browser",
+      "code": "if path == \"/api/desktop/return_to_browser\":"
+    },
+    {
+      "line": 8970,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/staging/incoming",
+      "code": "if path == \"/api/staging/incoming\":"
+    },
+    {
+      "line": 9114,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/staging/incoming/clear",
+      "code": "if path == \"/api/staging/incoming/clear\":"
+    },
+    {
+      "line": 9120,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/staging/sessions",
+      "code": "if path == \"/api/staging/sessions\":"
+    },
+    {
+      "line": 9128,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/staging/sessions/",
+      "code": "if path.startswith(\"/api/staging/sessions/\") and path.endswith(\"/files\"):"
+    },
+    {
+      "line": 9156,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/staging/sessions/",
+      "code": "if path.startswith(\"/api/staging/sessions/\") and (\"/files/\" in path or \"/remove-file\" in path):"
+    },
+    {
+      "line": 9165,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/staging/sessions/",
+      "code": "if path.startswith(\"/api/staging/sessions/\") and path.endswith(\"/clear\"):"
+    },
+    {
+      "line": 9171,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/pdf-studio/sessions",
+      "code": "if path == \"/api/pdf-studio/sessions\":"
+    },
+    {
+      "line": 9246,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and (\"/execute\" in path or \"/tools/\" in path):"
+    },
+    {
+      "line": 9266,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and path.endswith(\"/undo\"):"
+    },
+    {
+      "line": 9276,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and path.endswith(\"/reset\"):"
+    },
+    {
+      "line": 9286,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/pdf-studio/sessions/",
+      "code": "if path.startswith(\"/api/pdf-studio/sessions/\") and path.endswith(\"/apply-to-staging\"):"
+    },
+    {
+      "line": 9320,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/file-router/route",
+      "code": "if path == \"/api/file-router/route\":"
+    },
+    {
+      "line": 9326,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/file-router/batch-route",
+      "code": "if path == \"/api/file-router/batch-route\":"
+    },
+    {
+      "line": 9344,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/file-router/check-collision",
+      "code": "if path == \"/api/file-router/check-collision\":"
+    },
+    {
+      "line": 9355,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/pdf/detect",
+      "code": "if path == \"/api/pdf/detect\": return self.send_json(api_detect_pdf(payload))"
+    },
+    {
+      "line": 9357,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/pdf/lock",
+      "code": "if path == \"/api/pdf/lock\": return self.send_json(api_lock_pdf(payload))"
+    },
+    {
+      "line": 9359,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/pdf/unlock",
+      "code": "if path == \"/api/pdf/unlock\": return self.send_json(api_unlock_pdf(payload))"
+    },
+    {
+      "line": 9361,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/clients/",
+      "code": "if path.startswith(\"/api/clients/\") and path.endswith(\"/pdf-passwords\"):"
+    },
+    {
+      "line": 9365,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/clients/",
+      "code": "if path.startswith(\"/api/clients/\") and path.endswith(\"/pdf-passwords/update\"):"
+    },
+    {
+      "line": 9369,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "prefix",
+      "route": "/api/clients/",
+      "code": "if path.startswith(\"/api/clients/\") and path.endswith(\"/pdf-passwords/delete\"):"
+    },
+    {
+      "line": 9373,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/backup/create",
+      "code": "if path == \"/api/backup/create\":"
+    },
+    {
+      "line": 9381,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/backup/restore",
+      "code": "if path == \"/api/backup/restore\":"
+    },
+    {
+      "line": 9393,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/backup/upload-restore",
+      "code": "if path == \"/api/backup/upload-restore\":"
+    },
+    {
+      "line": 9411,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/backup/delete",
+      "code": "if path == \"/api/backup/delete\":"
+    },
+    {
+      "line": 9425,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/backup/settings",
+      "code": "if path == \"/api/backup/settings\":"
+    },
+    {
+      "line": 9441,
+      "method": "POST",
+      "handler": "do_POST",
+      "type": "exact",
+      "route": "/api/backup/open-folder",
+      "code": "if path == \"/api/backup/open-folder\":"
+    },
+    {
+      "line": 9466,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/health",
+      "code": "if path == \"/api/ai/health\":"
+    },
+    {
+      "line": 9485,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/hardware",
+      "code": "if path == \"/api/ai/hardware\":"
+    },
+    {
+      "line": 9488,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/settings",
+      "code": "if path == \"/api/ai/settings\":"
+    },
+    {
+      "line": 9502,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/conversations",
+      "code": "if path == \"/api/ai/conversations\":"
+    },
+    {
+      "line": 9522,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "prefix",
+      "route": "/api/ai/conversations/",
+      "code": "if path.startswith(\"/api/ai/conversations/\"):"
+    },
+    {
+      "line": 9537,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/sources",
+      "code": "if path == \"/api/ai/sources\":"
+    },
+    {
+      "line": 9546,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "prefix",
+      "route": "/api/ai/sources/",
+      "code": "if path.startswith(\"/api/ai/sources/\") and path.endswith(\"/chunks\"):"
+    },
+    {
+      "line": 9556,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/recent-files",
+      "code": "if path == \"/api/ai/recent-files\":"
+    },
+    {
+      "line": 9561,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/diagnostics",
+      "code": "if path == \"/api/ai/diagnostics\":"
+    },
+    {
+      "line": 9581,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/open-exports",
+      "code": "if path == \"/api/ai/open-exports\":"
+    },
+    {
+      "line": 9592,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "prefix",
+      "route": "/api/ai/exports/",
+      "code": "if path.startswith(\"/api/ai/exports/\"):"
+    },
+    {
+      "line": 9652,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "prefix",
+      "route": "/api/ai/artifacts/",
+      "code": "if path.startswith(\"/api/ai/artifacts/\"):"
+    },
+    {
+      "line": 9760,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "exact",
+      "route": "/api/ai/jobs",
+      "code": "if path == \"/api/ai/jobs\":"
+    },
+    {
+      "line": 9765,
+      "method": "GET",
+      "handler": "handle_ai_get",
+      "type": "prefix",
+      "route": "/api/ai/jobs/",
+      "code": "if path.startswith(\"/api/ai/jobs/\"):"
+    },
+    {
+      "line": 9782,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/settings",
+      "code": "if path == \"/api/ai/settings\":"
+    },
+    {
+      "line": 9793,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/doc/analyze-rename",
+      "code": "if path == \"/api/ai/doc/analyze-rename\":"
+    },
+    {
+      "line": 9873,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/doc/confirm-rename",
+      "code": "if path == \"/api/ai/doc/confirm-rename\":"
+    },
+    {
+      "line": 9951,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/doc/rename",
+      "code": "if path == \"/api/ai/doc/rename\":"
+    },
+    {
+      "line": 9959,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/export-pdf",
+      "code": "if path == \"/api/ai/export-pdf\":"
+    },
+    {
+      "line": 9986,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/export-docx",
+      "code": "if path == \"/api/ai/export-docx\":"
+    },
+    {
+      "line": 10015,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/export-xlsx",
+      "code": "if path == \"/api/ai/export-xlsx\":"
+    },
+    {
+      "line": 10040,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/export-pptx",
+      "code": "if path == \"/api/ai/export-pptx\":"
+    },
+    {
+      "line": 10064,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/populate-template",
+      "code": "if path == \"/api/ai/populate-template\":"
+    },
+    {
+      "line": 10157,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/extract-style",
+      "code": "if path == \"/api/ai/extract-style\":"
+    },
+    {
+      "line": 10176,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/export-gdoc",
+      "code": "if path == \"/api/ai/export-gdoc\":"
+    },
+    {
+      "line": 10235,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/export-gsheet",
+      "code": "if path == \"/api/ai/export-gsheet\":"
+    },
+    {
+      "line": 10290,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/native-save-dialog",
+      "code": "if path == \"/api/ai/native-save-dialog\":"
+    },
+    {
+      "line": 10450,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/enhance-selection",
+      "code": "if path == \"/api/ai/enhance-selection\":"
+    },
+    {
+      "line": 10486,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/revise-document-area",
+      "code": "if path == \"/api/ai/revise-document-area\" or (path.startswith(\"/api/ai/artifacts/\") and path.endswith(\"/revise-area\")):"
+    },
+    {
+      "line": 10488,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "prefix",
+      "route": "/api/ai/artifacts/",
+      "code": "if not art_id and path.startswith(\"/api/ai/artifacts/\"):"
+    },
+    {
+      "line": 10649,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/save-to-client",
+      "code": "if path == \"/api/ai/save-to-client\" or (path.startswith(\"/api/ai/artifacts/\") and path.endswith(\"/save-to-client\")):"
+    },
+    {
+      "line": 10651,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "prefix",
+      "route": "/api/ai/artifacts/",
+      "code": "if path.startswith(\"/api/ai/artifacts/\"):"
+    },
+    {
+      "line": 10702,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/conversations",
+      "code": "if path == \"/api/ai/conversations\":"
+    },
+    {
+      "line": 10715,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "prefix",
+      "route": "/api/ai/conversations/",
+      "code": "if path.startswith(\"/api/ai/conversations/\") and path.endswith(\"/auto-rename\"):"
+    },
+    {
+      "line": 10729,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "prefix",
+      "route": "/api/ai/conversations/",
+      "code": "if path.startswith(\"/api/ai/conversations/\") and path.endswith(\"/rename\"):"
+    },
+    {
+      "line": 10740,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "prefix",
+      "route": "/api/ai/conversations/",
+      "code": "if path.startswith(\"/api/ai/conversations/\") and path.endswith(\"/clear\"):"
+    },
+    {
+      "line": 10748,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/chat/stream",
+      "code": "if path == \"/api/ai/chat/stream\":"
+    },
+    {
+      "line": 10888,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/chat",
+      "code": "if path == \"/api/ai/chat\":"
+    },
+    {
+      "line": 10969,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "prefix",
+      "route": "/api/ai/tools/",
+      "code": "if path.startswith(\"/api/ai/tools/\"):"
+    },
+    {
+      "line": 10973,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/sources",
+      "code": "if path == \"/api/ai/sources\":"
+    },
+    {
+      "line": 10976,
+      "method": "POST",
+      "handler": "handle_ai_post",
+      "type": "exact",
+      "route": "/api/ai/browse-files",
+      "code": "if path == \"/api/ai/browse-files\":"
+    },
+    {
+      "line": 11013,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:summarize-pdf",
+      "code": "if tool == \"summarize-pdf\":"
+    },
+    {
+      "line": 11032,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:extract-tables",
+      "code": "if tool == \"extract-tables\":"
+    },
+    {
+      "line": 11045,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:draft-document",
+      "code": "if tool == \"draft-document\":"
+    },
+    {
+      "line": 11057,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:rewrite-text",
+      "code": "if tool == \"rewrite-text\":"
+    },
+    {
+      "line": 11064,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:explain-concept",
+      "code": "if tool == \"explain-concept\":"
+    },
+    {
+      "line": 11071,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:check-compliance",
+      "code": "if tool == \"check-compliance\":"
+    },
+    {
+      "line": 11076,
+      "method": "TOOL_CALL",
+      "handler": "handle_ai_tool_call",
+      "type": "tool",
+      "route": "tool:reconcile-excel",
+      "code": "if tool == \"reconcile-excel\":"
+    },
+    {
+      "line": 11098,
+      "method": "DELETE",
+      "handler": "handle_ai_delete",
+      "type": "prefix",
+      "route": "/api/ai/memory/",
+      "code": "if path.startswith(\"/api/ai/memory/\"):"
+    },
+    {
+      "line": 11103,
+      "method": "DELETE",
+      "handler": "handle_ai_delete",
+      "type": "prefix",
+      "route": "/api/ai/conversations/",
+      "code": "if path.startswith(\"/api/ai/conversations/\"):"
+    },
+    {
+      "line": 11111,
+      "method": "DELETE",
+      "handler": "handle_ai_delete",
+      "type": "prefix",
+      "route": "/api/ai/sources/",
+      "code": "if path.startswith(\"/api/ai/sources/\"):"
+    },
+    {
+      "line": 11120,
+      "method": "DELETE",
+      "handler": "handle_ai_delete",
+      "type": "prefix",
+      "route": "/api/ai/recent-files/",
+      "code": "if path.startswith(\"/api/ai/recent-files/\"):"
+    },
+    {
+      "line": 11135,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "exact",
+      "route": "/api/automation/status",
+      "code": "if path == \"/api/automation/status\":"
+    },
+    {
+      "line": 11142,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "exact",
+      "route": "/api/automation/companies",
+      "code": "if path == \"/api/automation/companies\":"
+    },
+    {
+      "line": 11147,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "prefix",
+      "route": "/api/automation/masters",
+      "code": "if path.startswith(\"/api/automation/masters\"):"
+    },
+    {
+      "line": 11154,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "prefix",
+      "route": "/api/automation/sessions/",
+      "code": "if path.startswith(\"/api/automation/sessions/\") and not \"/transactions\" in path and not \"/validate\" in path:"
+    },
+    {
+      "line": 11160,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "prefix",
+      "route": "/api/automation/sessions/",
+      "code": "if path.startswith(\"/api/automation/sessions/\") and path.endswith(\"/transactions\"):"
+    },
+    {
+      "line": 11175,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "prefix",
+      "route": "/api/automation/sessions/",
+      "code": "if path.startswith(\"/api/automation/sessions/\") and path.endswith(\"/validate\"):"
+    },
+    {
+      "line": 11183,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "exact",
+      "route": "/api/automation/rules",
+      "code": "if path == \"/api/automation/rules\":"
+    },
+    {
+      "line": 11192,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "exact",
+      "route": "/api/automation/bank-accounts",
+      "code": "if path == \"/api/automation/bank-accounts\":"
+    },
+    {
+      "line": 11205,
+      "method": "GET",
+      "handler": "handle_automation_get",
+      "type": "prefix",
+      "route": "/api/automation/ask-tally/sessions/",
+      "code": "if path.startswith(\"/api/automation/ask-tally/sessions/\") and path.endswith(\"/messages\"):"
+    },
+    {
+      "line": 11220,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/tally/launch",
+      "code": "if path == \"/api/automation/tally/launch\":"
+    },
+    {
+      "line": 11225,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/select-company",
+      "code": "if path == \"/api/automation/select-company\":"
+    },
+    {
+      "line": 11231,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/upload-statement",
+      "code": "if path == \"/api/automation/upload-statement\":"
+    },
+    {
+      "line": 11268,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/bulk-assign",
+      "code": "if path == \"/api/automation/bulk-assign\":"
+    },
+    {
+      "line": 11286,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/suggest-ledgers",
+      "code": "if path == \"/api/automation/suggest-ledgers\":"
+    },
+    {
+      "line": 11294,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/accept-suggestions",
+      "code": "if path == \"/api/automation/accept-suggestions\":"
+    },
+    {
+      "line": 11301,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/reject-suggestions",
+      "code": "if path == \"/api/automation/reject-suggestions\":"
+    },
+    {
+      "line": 11308,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/update-session",
+      "code": "if path == \"/api/automation/update-session\":"
+    },
+    {
+      "line": 11320,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/post-vouchers",
+      "code": "if path == \"/api/automation/post-vouchers\":"
+    },
+    {
+      "line": 11338,
+      "method": "POST",
+      "handler": "handle_automation_post",
+      "type": "exact",
+      "route": "/api/automation/ask-tally",
+      "code": "if path == \"/api/automation/ask-tally\":"
+    },
+    {
+      "line": 11358,
+      "method": "DELETE",
+      "handler": "do_DELETE",
+      "type": "prefix",
+      "route": "/api/",
+      "code": "if path.startswith(\"/api/\") and not self.protect_api(path):"
+    },
+    {
+      "line": 11361,
+      "method": "DELETE",
+      "handler": "do_DELETE",
+      "type": "prefix",
+      "route": "/api/ai/",
+      "code": "if path.startswith(\"/api/ai/\"):"
+    },
+    {
+      "line": 11364,
+      "method": "DELETE",
+      "handler": "do_DELETE",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/override\"):"
+    },
+    {
+      "line": 11368,
+      "method": "DELETE",
+      "handler": "do_DELETE",
+      "type": "prefix",
+      "route": "/api/client-folders/",
+      "code": "if path.startswith(\"/api/client-folders/\") and path.endswith(\"/folders\"):"
+    },
+    {
+      "line": 11380,
+      "method": "DELETE",
+      "handler": "do_DELETE",
+      "type": "exact",
+      "route": "/api/client-files",
+      "code": "if path == \"/api/client-files\":"
+    }
+  ],
+  "js_calls_summary": {
+    "ai-rename.js": 2,
+    "app.js": 81,
+    "automation.js": 15,
+    "enhancements.js": 48,
+    "pdf-studio.js": 11,
+    "save-staging.js": 6,
+    "vs-ai.js": 31,
+    "background.js": 4,
+    "content.js": 14,
+    "popup.js": 7,
+    "sidepanel.js": 3
+  },
+  "js_calls": {
+    "ai-rename.js": [
+      {
+        "line": 40,
+        "api": "/api/ai/doc/analyze-rename",
+        "method": "GET (assumed)",
+        "snippet": "const analyzeRes = await api('/api/ai/doc/analyze-rename', {"
+      },
+      {
+        "line": 84,
+        "api": "/api/ai/doc/confirm-rename",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/ai/doc/confirm-rename', {"
+      }
+    ],
+    "app.js": [
+      {
+        "line": 283,
+        "api": "/api/ai",
+        "method": "GET (assumed)",
+        "snippet": "const timeoutMs = options.timeout || (path.startsWith('/api/ai') ? 120000 : (path.startsWith('/api/pdf-studio') ? 60000 "
+      },
+      {
+        "line": 283,
+        "api": "/api/pdf-studio",
+        "method": "GET (assumed)",
+        "snippet": "const timeoutMs = options.timeout || (path.startsWith('/api/ai') ? 120000 : (path.startsWith('/api/pdf-studio') ? 60000 "
+      },
+      {
+        "line": 484,
+        "api": "/api/auth/setup-host",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/auth/setup-host', {"
+      },
+      {
+        "line": 512,
+        "api": "/api/auth/login",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/auth/login', {"
+      },
+      {
+        "line": 543,
+        "api": "/api/auth/request-access",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/auth/request-access', {"
+      },
+      {
+        "line": 578,
+        "api": "/api/auth/login",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/auth/login', {"
+      },
+      {
+        "line": 842,
+        "api": "/api/desktop/close",
+        "method": "POST",
+        "snippet": "await fetch('/api/desktop/close', { method: 'POST' });"
+      },
+      {
+        "line": 1058,
+        "api": "/api/auth/status",
+        "method": "GET (assumed)",
+        "snippet": "const authStatus = await api('/api/auth/status');"
+      },
+      {
+        "line": 1075,
+        "api": "/api/auth/logout",
+        "method": "POST",
+        "snippet": "await api('/api/auth/logout', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 1087,
+        "api": "/api/settings",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/settings'),"
+      },
+      {
+        "line": 1088,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/clients'),"
+      },
+      {
+        "line": 1089,
+        "api": "/api/rules",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/rules'),"
+      },
+      {
+        "line": 1090,
+        "api": "/api/firm-types",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/firm-types')"
+      },
+      {
+        "line": 1108,
+        "api": "/api/google/status",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/google/status').then(gStat => {"
+      },
+      {
+        "line": 1447,
+        "api": "/api/settings",
+        "method": "GET (assumed)",
+        "snippet": "settings = await api('/api/settings', {"
+      },
+      {
+        "line": 1474,
+        "api": "/api/system/check-updates",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/system/check-updates');"
+      },
+      {
+        "line": 1498,
+        "api": "/api/system/apply-update",
+        "method": "POST",
+        "snippet": "const res = await api('/api/system/apply-update', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 1517,
+        "api": "/api/system/autostart",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/system/autostart').then(res => {"
+      },
+      {
+        "line": 1526,
+        "api": "/api/system/autostart",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await api('/api/system/autostart', {"
+      },
+      {
+        "line": 1559,
+        "api": "/api/setup/fresh-start",
+        "method": "POST",
+        "snippet": "api('/api/setup/fresh-start', { method: 'POST', body: '{}' })"
+      },
+      {
+        "line": 1572,
+        "api": "/api/firm-types",
+        "method": "GET (assumed)",
+        "snippet": "firmTypes = await api('/api/firm-types');"
+      },
+      {
+        "line": 1612,
+        "api": "/api/firm-types",
+        "method": "POST",
+        "snippet": "const created = await api('/api/firm-types', { method: 'POST', body: JSON.stringify({ name }) });"
+      },
+      {
+        "line": 1730,
+        "api": "/api/firm-types/update",
+        "method": "POST",
+        "snippet": "await api('/api/firm-types/update', { method: 'POST', body: JSON.stringify({ id: parseInt(id), name: newName }) });"
+      },
+      {
+        "line": 1732,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 1749,
+        "api": "/api/firm-types/update",
+        "method": "POST",
+        "snippet": "await api('/api/firm-types/update', { method: 'POST', body: JSON.stringify({ id: parseInt(id), status: newStatus }) });"
+      },
+      {
+        "line": 1798,
+        "api": "/api/firm-types/delete",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/firm-types/delete', {"
+      },
+      {
+        "line": 1803,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 1871,
+        "api": "/api/template.csv",
+        "method": "GET (assumed)",
+        "snippet": "<a class=\"secondary\" href=\"/api/template.csv\" style=\"display:none;\" id=\"btn-download-template\">Download CSV template</a>"
+      },
+      {
+        "line": 2057,
+        "api": "/api/import-clients/analyze",
+        "method": "POST",
+        "snippet": "const r = await api('/api/import-clients/analyze', { method: 'POST', body: JSON.stringify({ filename: file.name, file_ba"
+      },
+      {
+        "line": 2077,
+        "api": "/api/import-clients/execute",
+        "method": "GET (assumed)",
+        "snippet": "const r = await api('/api/import-clients/execute', {"
+      },
+      {
+        "line": 2082,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 2116,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/clients', {"
+      },
+      {
+        "line": 2127,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 2297,
+        "api": "/api/import-clients/execute",
+        "method": "GET (assumed)",
+        "snippet": "const r = await api('/api/import-clients/execute', {"
+      },
+      {
+        "line": 2304,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 2361,
+        "api": "/api/rules",
+        "method": "POST",
+        "snippet": "rules = await api('/api/rules', { method: 'POST', body: JSON.stringify(readRules()) });"
+      },
+      {
+        "line": 2367,
+        "api": "/api/rules",
+        "method": "POST",
+        "snippet": "rules = await api('/api/rules', { method: 'POST', body: JSON.stringify(readRules()) });"
+      },
+      {
+        "line": 2368,
+        "api": "/api/create-folders",
+        "method": "POST",
+        "snippet": "let r = await api('/api/create-folders', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 2378,
+        "api": "/api/folders/reconcile",
+        "method": "POST",
+        "snippet": "const r = await api('/api/folders/reconcile', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 3084,
+        "api": "/api/files/bulk-save",
+        "method": "POST",
+        "snippet": "await api('/api/files/bulk-save', { method: 'POST', body: JSON.stringify(bulkPayload) });"
+      },
+      {
+        "line": 3131,
+        "api": "/api/save-document",
+        "method": "POST",
+        "snippet": "await api('/api/save-document', { method: 'POST', body: JSON.stringify(payload) });"
+      },
+      {
+        "line": 3152,
+        "api": "/api/desktop/return_to_browser",
+        "method": "GET (assumed)",
+        "snippet": "api('/api/desktop/return_to_browser', {"
+      },
+      {
+        "line": 3235,
+        "api": "/api/staging/incoming/clear",
+        "method": "POST",
+        "snippet": "await api('/api/staging/incoming/clear', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 3468,
+        "api": "/api/pdf/detect",
+        "method": "GET (assumed)",
+        "snippet": "const detect = await api('/api/pdf/detect', {"
+      },
+      {
+        "line": 3481,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const unlockRes = await api('/api/pdf/unlock', {"
+      },
+      {
+        "line": 3539,
+        "api": "/api/staging/sessions/${encodeURIComponent(window.saveStaging.sessionId)}/files",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api(`/api/staging/sessions/${encodeURIComponent(window.saveStaging.sessionId)}/files`, {"
+      },
+      {
+        "line": 3960,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const unlockRes = await api('/api/pdf/unlock', {"
+      },
+      {
+        "line": 4347,
+        "api": "/api/files/bulk-save",
+        "method": "POST",
+        "snippet": "const res = await api('/api/files/bulk-save', { method: 'POST', body: JSON.stringify(bulkPayload) });"
+      },
+      {
+        "line": 4378,
+        "api": "/api/save-document",
+        "method": "POST",
+        "snippet": "const r = await api('/api/save-document', { method: 'POST', body: JSON.stringify(payload) });"
+      },
+      {
+        "line": 4400,
+        "api": "/api/desktop/return_to_browser",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/desktop/return_to_browser', {"
+      },
+      {
+        "line": 4426,
+        "api": "/api/google/status",
+        "method": "GET (assumed)",
+        "snippet": "const status = await api('/api/google/status');"
+      },
+      {
+        "line": 4472,
+        "api": "/api/settings",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/settings', {"
+      },
+      {
+        "line": 4487,
+        "api": "/api/google/credentials",
+        "method": "POST",
+        "snippet": "await api('/api/google/credentials', { method: 'POST', body: JSON.stringify({ file_base64: await fileToBase64(file) }) }"
+      },
+      {
+        "line": 4498,
+        "api": "/api/google/connect",
+        "method": "POST",
+        "snippet": "const r = await api('/api/google/connect', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 4517,
+        "api": "/api/google/create-client-portals",
+        "method": "POST",
+        "snippet": "const r = await api('/api/google/create-client-portals', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 4535,
+        "api": "/api/jobs",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/jobs');"
+      },
+      {
+        "line": 4539,
+        "api": "/api/activity-log",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/activity-log');"
+      },
+      {
+        "line": 4774,
+        "api": "/api/jobs/revert",
+        "method": "POST",
+        "snippet": "const res = await api('/api/jobs/revert', { method: 'POST', body: JSON.stringify({ job_id: btn.dataset.id }) });"
+      },
+      {
+        "line": 4796,
+        "api": "/api/admin/users",
+        "method": "GET (assumed)",
+        "snippet": "const data = await api('/api/admin/users');"
+      },
+      {
+        "line": 4917,
+        "api": "/api/admin/requests/approve",
+        "method": "POST",
+        "snippet": "await api('/api/admin/requests/approve', { method: 'POST', body: JSON.stringify({ request_id: btn.dataset.id }) });"
+      },
+      {
+        "line": 4927,
+        "api": "/api/admin/requests/reject",
+        "method": "POST",
+        "snippet": "await api('/api/admin/requests/reject', { method: 'POST', body: JSON.stringify({ request_id: btn.dataset.id }) });"
+      },
+      {
+        "line": 4937,
+        "api": "/api/admin/devices/revoke",
+        "method": "POST",
+        "snippet": "await api('/api/admin/devices/revoke', { method: 'POST', body: JSON.stringify({ device_id: btn.dataset.id }) });"
+      },
+      {
+        "line": 4946,
+        "api": "/api/admin/devices/status",
+        "method": "POST",
+        "snippet": "await api('/api/admin/devices/status', { method: 'POST', body: JSON.stringify({ device_id: btn.dataset.id, status: btn.d"
+      },
+      {
+        "line": 4955,
+        "api": "/api/admin/users/status",
+        "method": "POST",
+        "snippet": "await api('/api/admin/users/status', { method: 'POST', body: JSON.stringify({ user_id: btn.dataset.user, status: btn.dat"
+      },
+      {
+        "line": 4985,
+        "api": "/api/admin/users/password",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/admin/users/password', {"
+      },
+      {
+        "line": 5226,
+        "api": "/api/folders/reconcile",
+        "method": "POST",
+        "snippet": "const res = await api('/api/folders/reconcile', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 5355,
+        "api": "/api/dashboard/stats",
+        "method": "GET (assumed)",
+        "snippet": "const data = await api('/api/dashboard/stats');"
+      },
+      {
+        "line": 5395,
+        "api": "/api/dashboard/storage",
+        "method": "GET (assumed)",
+        "snippet": "const data = await api('/api/dashboard/storage');"
+      },
+      {
+        "line": 5430,
+        "api": "/api/dashboard/cloud",
+        "method": "GET (assumed)",
+        "snippet": "const driveInfo = await api('/api/dashboard/cloud');"
+      },
+      {
+        "line": 5511,
+        "api": "/api/dashboard/activity",
+        "method": "GET (assumed)",
+        "snippet": "const data = await api('/api/dashboard/activity');"
+      },
+      {
+        "line": 5563,
+        "api": "/api/settings",
+        "method": "GET (assumed)",
+        "snippet": "settings = await api('/api/settings');"
+      },
+      {
+        "line": 5633,
+        "api": "/api/backup/open-folder",
+        "method": "POST",
+        "snippet": "await api('/api/backup/open-folder', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 5646,
+        "api": "/api/backup/create",
+        "method": "POST",
+        "snippet": "const res = await api('/api/backup/create', { method: 'POST', body: JSON.stringify({ type: 'manual' }) });"
+      },
+      {
+        "line": 5678,
+        "api": "/api/backup/upload-restore",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/backup/upload-restore', {"
+      },
+      {
+        "line": 5698,
+        "api": "/api/backup/settings",
+        "method": "GET (assumed)",
+        "snippet": "const updated = await api('/api/backup/settings', {"
+      },
+      {
+        "line": 5721,
+        "api": "/api/backups",
+        "method": "GET (assumed)",
+        "snippet": "const list = await api('/api/backups');"
+      },
+      {
+        "line": 5761,
+        "api": "/api/backup/download/${encodeURIComponent(b.filename)}",
+        "method": "GET (assumed)",
+        "snippet": "<a href=\"/api/backup/download/${encodeURIComponent(b.filename)}\" download class=\"btn ib tip\" data-t=\"Download\" aria-labe"
+      },
+      {
+        "line": 5776,
+        "api": "/api/backup/restore",
+        "method": "POST",
+        "snippet": "await api('/api/backup/restore', { method: 'POST', body: JSON.stringify({ filename: fn }) });"
+      },
+      {
+        "line": 5791,
+        "api": "/api/backup/delete",
+        "method": "POST",
+        "snippet": "await api('/api/backup/delete', { method: 'POST', body: JSON.stringify({ filename: fn }) });"
+      },
+      {
+        "line": 5880,
+        "api": "/api/auth/extension-code",
+        "method": "POST",
+        "snippet": "const res = await api('/api/auth/extension-code', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 5913,
+        "api": "/api/desktop/navigate",
+        "method": "GET (assumed)",
+        "snippet": "const navRes = await api('/api/desktop/navigate', { timeout: 1000 });"
+      }
+    ],
+    "automation.js": [
+      {
+        "line": 54,
+        "api": "/api/automation/status",
+        "method": "GET (assumed)",
+        "snippet": "const url = force ? '/api/automation/status?force=1' : '/api/automation/status';"
+      },
+      {
+        "line": 100,
+        "api": "/api/automation/tally/launch",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/tally/launch', {"
+      },
+      {
+        "line": 332,
+        "api": "/api/automation/companies",
+        "method": "GET (assumed)",
+        "snippet": "const url = force ? '/api/automation/companies?force=1' : '/api/automation/companies';"
+      },
+      {
+        "line": 533,
+        "api": "/api/automation/select-company",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/automation/select-company', {"
+      },
+      {
+        "line": 646,
+        "api": "/api/automation/upload-statement",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/upload-statement', {"
+      },
+      {
+        "line": 932,
+        "api": "/api/automation/accept-suggestions",
+        "method": "GET (assumed)",
+        "snippet": "const endpoint = isChecked ? '/api/automation/accept-suggestions' : '/api/automation/reject-suggestions';"
+      },
+      {
+        "line": 932,
+        "api": "/api/automation/reject-suggestions",
+        "method": "GET (assumed)",
+        "snippet": "const endpoint = isChecked ? '/api/automation/accept-suggestions' : '/api/automation/reject-suggestions';"
+      },
+      {
+        "line": 957,
+        "api": "/api/automation/accept-suggestions",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/accept-suggestions', {"
+      },
+      {
+        "line": 985,
+        "api": "/api/automation/suggest-ledgers",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/suggest-ledgers', {"
+      },
+      {
+        "line": 1017,
+        "api": "/api/automation/accept-suggestions",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/accept-suggestions', {"
+      },
+      {
+        "line": 1053,
+        "api": "/api/automation/sessions/${currentSessionId}/validate",
+        "method": "GET (assumed)",
+        "snippet": "const val = await api(`/api/automation/sessions/${currentSessionId}/validate`);"
+      },
+      {
+        "line": 1154,
+        "api": "/api/automation/bulk-assign",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/bulk-assign', {"
+      },
+      {
+        "line": 1181,
+        "api": "/api/automation/sessions/${currentSessionId}/validate",
+        "method": "GET (assumed)",
+        "snippet": "const valRes = await api(`/api/automation/sessions/${currentSessionId}/validate`);"
+      },
+      {
+        "line": 1387,
+        "api": "/api/automation/post-vouchers",
+        "method": "GET (assumed)",
+        "snippet": "const postRes = await api('/api/automation/post-vouchers', {"
+      },
+      {
+        "line": 1795,
+        "api": "/api/automation/ask-tally",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/automation/ask-tally', {"
+      }
+    ],
+    "enhancements.js": [
+      {
+        "line": 319,
+        "api": "/api/category-templates",
+        "method": "GET (assumed)",
+        "snippet": "allTemplates = await api('/api/category-templates');"
+      },
+      {
+        "line": 442,
+        "api": "/api/category-templates",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/category-templates', {"
+      },
+      {
+        "line": 473,
+        "api": "/api/category-templates",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/category-templates', {"
+      },
+      {
+        "line": 558,
+        "api": "/api/category-templates",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/category-templates', {"
+      },
+      {
+        "line": 581,
+        "api": "/api/category-templates",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/category-templates', {"
+      },
+      {
+        "line": 607,
+        "api": "/api/rules",
+        "method": "GET (assumed)",
+        "snippet": "rules = await api('/api/rules', {"
+      },
+      {
+        "line": 638,
+        "api": "/api/create-folders",
+        "method": "POST",
+        "snippet": "const response = await api('/api/create-folders', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 660,
+        "api": "/api/folders/reconcile",
+        "method": "POST",
+        "snippet": "const r = await api('/api/folders/reconcile', { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 801,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/clients', {"
+      },
+      {
+        "line": 814,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 908,
+        "api": "/api/pdf/detect",
+        "method": "GET (assumed)",
+        "snippet": "const detect = await api('/api/pdf/detect', {"
+      },
+      {
+        "line": 942,
+        "api": "/api/pdf/lock",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/pdf/lock', {"
+      },
+      {
+        "line": 1057,
+        "api": "/api/pdf/detect",
+        "method": "GET (assumed)",
+        "snippet": "const detect = await api('/api/pdf/detect', {"
+      },
+      {
+        "line": 1120,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/pdf/unlock', {"
+      },
+      {
+        "line": 1157,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "await api('/api/pdf/unlock', {"
+      },
+      {
+        "line": 1228,
+        "api": "/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords",
+        "method": "GET (assumed)",
+        "snippet": "const creds = await api(`/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords`);"
+      },
+      {
+        "line": 1270,
+        "api": "/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords/update",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords/update`, {"
+      },
+      {
+        "line": 1288,
+        "api": "/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords/update",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords/update`, {"
+      },
+      {
+        "line": 1305,
+        "api": "/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords/delete",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords/delete`, {"
+      },
+      {
+        "line": 1333,
+        "api": "/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/clients/${encodeURIComponent(client.file_no)}/pdf-passwords`, {"
+      },
+      {
+        "line": 1491,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/override",
+        "method": "GET (assumed)",
+        "snippet": "api(`/api/client-folders/${encodeURIComponent(fileNo)}/override`)"
+      },
+      {
+        "line": 1679,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/folders/rename",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-folders/${encodeURIComponent(fileNo)}/folders/rename`, {"
+      },
+      {
+        "line": 1700,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/folders/move",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-folders/${encodeURIComponent(fileNo)}/folders/move`, {"
+      },
+      {
+        "line": 1720,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/folders/delete",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-folders/${encodeURIComponent(fileNo)}/folders/delete`, {"
+      },
+      {
+        "line": 1762,
+        "api": "/api/client-files/rename",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-files/rename`, {"
+      },
+      {
+        "line": 1783,
+        "api": "/api/client-files/move",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-files/move`, {"
+      },
+      {
+        "line": 1806,
+        "api": "/api/client-files/copy",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-files/copy`, {"
+      },
+      {
+        "line": 1826,
+        "api": "/api/client-files/delete",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-files/delete`, {"
+      },
+      {
+        "line": 1915,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/folders",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-folders/${encodeURIComponent(fileNo)}/folders`, {"
+      },
+      {
+        "line": 1988,
+        "api": "/api/pdf/detect",
+        "method": "GET (assumed)",
+        "snippet": "const detect = await api('/api/pdf/detect', {"
+      },
+      {
+        "line": 1994,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const unlockRes = await api('/api/pdf/unlock', {"
+      },
+      {
+        "line": 2009,
+        "api": "/api/client-files/upload",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-files/upload`, {"
+      },
+      {
+        "line": 2070,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/open-in-explorer",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api(`/api/client-folders/${encodeURIComponent(fileNo)}/open-in-explorer`, {"
+      },
+      {
+        "line": 2086,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/reconcile",
+        "method": "POST",
+        "snippet": "const r = await api(`/api/client-folders/${encodeURIComponent(fileNo)}/reconcile`, { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 2107,
+        "api": "/api/client-folders/${encodeURIComponent(fileNo)}/create",
+        "method": "POST",
+        "snippet": "const r = await api(`/api/client-folders/${encodeURIComponent(fileNo)}/create`, { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 2129,
+        "api": "/api/client-folders/${encodeURIComponent(client.file_no)}/override",
+        "method": "GET (assumed)",
+        "snippet": "let overrideData = await api(`/api/client-folders/${encodeURIComponent(client.file_no)}/override`);"
+      },
+      {
+        "line": 2355,
+        "api": "/api/client-folders/${encodeURIComponent(client.file_no)}/override/reset",
+        "method": "POST",
+        "snippet": "await api(`/api/client-folders/${encodeURIComponent(client.file_no)}/override/reset`, { method: 'POST', body: '{}' });"
+      },
+      {
+        "line": 2371,
+        "api": "/api/client-folders/${encodeURIComponent(client.file_no)}/override",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/client-folders/${encodeURIComponent(client.file_no)}/override`, {"
+      },
+      {
+        "line": 2432,
+        "api": "/api/security-alerts",
+        "method": "GET (assumed)",
+        "snippet": "const alerts = await api('/api/security-alerts');"
+      },
+      {
+        "line": 2463,
+        "api": "/api/security-alerts/dismiss",
+        "method": "POST",
+        "snippet": "await api('/api/security-alerts/dismiss', { method: 'POST', body: JSON.stringify({ id: Number(btn.dataset.aid) }) });"
+      },
+      {
+        "line": 2601,
+        "api": "/api/clients/bulk-delete",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/clients/bulk-delete', {"
+      },
+      {
+        "line": 2612,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 2733,
+        "api": "/api/clients/bulk-manage-access",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/clients/bulk-manage-access', {"
+      },
+      {
+        "line": 2744,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "clients = await api('/api/clients');"
+      },
+      {
+        "line": 2876,
+        "api": "/api/client-portals/blocks",
+        "method": "GET (assumed)",
+        "snippet": "const blocks = await api('/api/client-portals/blocks');"
+      },
+      {
+        "line": 2883,
+        "api": "/api/client-portals/block",
+        "method": "POST",
+        "snippet": "const blockButton = overlay.querySelector('#block-portal'); if (blockButton) blockButton.onclick=async()=>{try{blockButt"
+      },
+      {
+        "line": 2884,
+        "api": "/api/client-portals/unblock",
+        "method": "POST",
+        "snippet": "const unblockButton = overlay.querySelector('#unblock-portal'); if (unblockButton) unblockButton.onclick=async()=>{try{u"
+      },
+      {
+        "line": 3064,
+        "api": "/api/pdf-studio/sessions",
+        "method": "GET (assumed)",
+        "snippet": "const sessRes = await api('/api/pdf-studio/sessions', {"
+      }
+    ],
+    "pdf-studio.js": [
+      {
+        "line": 1118,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(doc.sessionId)}/execute",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(doc.sessionId)}/execute`, {"
+      },
+      {
+        "line": 1181,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/undo",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/undo`, {"
+      },
+      {
+        "line": 1214,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/reset",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/reset`, {"
+      },
+      {
+        "line": 1253,
+        "api": "/api/ai/native-save-dialog",
+        "method": "GET (assumed)",
+        "snippet": "const res = await apiFn(\"/api/ai/native-save-dialog\", {"
+      },
+      {
+        "line": 1277,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/download",
+        "method": "GET (assumed)",
+        "snippet": "a.href = `/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/download`;"
+      },
+      {
+        "line": 1321,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/apply-to-staging",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/apply-to-staging`, {"
+      },
+      {
+        "line": 1662,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {"
+      },
+      {
+        "line": 1728,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {"
+      },
+      {
+        "line": 1782,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {"
+      },
+      {
+        "line": 1830,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await apiFn(`/api/pdf-studio/sessions/${encodeURIComponent(d.sessionId)}/execute`, {"
+      },
+      {
+        "line": 1922,
+        "api": "/api/pdf-studio/sessions",
+        "method": "GET (assumed)",
+        "snippet": "const res = await apiFn(\"/api/pdf-studio/sessions\", {"
+      }
+    ],
+    "save-staging.js": [
+      {
+        "line": 21,
+        "api": "/api/staging/sessions",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/staging/sessions', {"
+      },
+      {
+        "line": 57,
+        "api": "/api/staging/sessions/${encodeURIComponent(this.sessionId)}/files",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api(`/api/staging/sessions/${encodeURIComponent(this.sessionId)}/files`, {"
+      },
+      {
+        "line": 76,
+        "api": "/api/staging/sessions/${encodeURIComponent(this.sessionId)}/remove-file",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api(`/api/staging/sessions/${encodeURIComponent(this.sessionId)}/remove-file`, {"
+      },
+      {
+        "line": 93,
+        "api": "/api/staging/sessions/${encodeURIComponent(this.sessionId)}/clear",
+        "method": "GET (assumed)",
+        "snippet": "await api(`/api/staging/sessions/${encodeURIComponent(this.sessionId)}/clear`, {"
+      },
+      {
+        "line": 112,
+        "api": "/api/pdf-studio/sessions",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api('/api/pdf-studio/sessions', {"
+      },
+      {
+        "line": 143,
+        "api": "/api/pdf-studio/sessions/${encodeURIComponent(pdfSessionId)}/apply-to-staging",
+        "method": "GET (assumed)",
+        "snippet": "const res = await api(`/api/pdf-studio/sessions/${encodeURIComponent(pdfSessionId)}/apply-to-staging`, {"
+      }
+    ],
+    "vs-ai.js": [
+      {
+        "line": 588,
+        "api": "/api/ai/health",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/health');"
+      },
+      {
+        "line": 1547,
+        "api": "/api/ai/chat/stream",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/chat/stream', {"
+      },
+      {
+        "line": 1941,
+        "api": "/api/ai/export-pdf",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/export-pdf', {"
+      },
+      {
+        "line": 1964,
+        "api": "/api/ai/export-docx",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/export-docx', {"
+      },
+      {
+        "line": 1988,
+        "api": "/api/ai/export-xlsx",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/export-xlsx', {"
+      },
+      {
+        "line": 2010,
+        "api": "/api/ai/export-gdoc",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/export-gdoc', {"
+      },
+      {
+        "line": 2034,
+        "api": "/api/ai/export-gsheet",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/export-gsheet', {"
+      },
+      {
+        "line": 2084,
+        "api": "/api/ai/artifacts/${data.artifact_id}/preview",
+        "method": "GET (assumed)",
+        "snippet": "const pResp = await fetch(`/api/ai/artifacts/${data.artifact_id}/preview`);"
+      },
+      {
+        "line": 2106,
+        "api": "/api/ai/artifacts/${data.artifact_id}/preview",
+        "method": "GET (assumed)",
+        "snippet": "const pResp = await fetch(`/api/ai/artifacts/${data.artifact_id}/preview`);"
+      },
+      {
+        "line": 2508,
+        "api": "/api/ai/artifacts/${encodeURIComponent(curArtId)}/preview",
+        "method": "GET (assumed)",
+        "snippet": "const pdfStreamUrl = (curArtId ? `/api/ai/artifacts/${encodeURIComponent(curArtId)}/preview` : null) ||"
+      },
+      {
+        "line": 2509,
+        "api": "/api/ai/exports/${encodeURIComponent(currentData.filename)}",
+        "method": "GET (assumed)",
+        "snippet": "(currentData.filename ? `/api/ai/exports/${encodeURIComponent(currentData.filename)}` : '');"
+      },
+      {
+        "line": 2546,
+        "api": "/api/ai/revise-document-area",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/revise-document-area', {"
+      },
+      {
+        "line": 2691,
+        "api": "/api/ai/exports/${encodeURIComponent(docxData.filename)}",
+        "method": "GET (assumed)",
+        "snippet": "const downloadUrl = docxData.download_url || `/api/ai/exports/${encodeURIComponent(docxData.filename)}`;"
+      },
+      {
+        "line": 2791,
+        "api": "/api/ai/exports/${encodeURIComponent(xlsxData.filename)}",
+        "method": "GET (assumed)",
+        "snippet": "const downloadUrl = xlsxData.download_url || `/api/ai/exports/${encodeURIComponent(xlsxData.filename)}`;"
+      },
+      {
+        "line": 2995,
+        "api": "/api/ai/artifacts/${fileData.artifact_id}/download",
+        "method": "GET (assumed)",
+        "snippet": "const fetchUrl = fileData.download_url || (fileData.artifact_id ? `/api/ai/artifacts/${fileData.artifact_id}/download` :"
+      },
+      {
+        "line": 2995,
+        "api": "/api/ai/exports/${encodeURIComponent(filename)}",
+        "method": "GET (assumed)",
+        "snippet": "const fetchUrl = fileData.download_url || (fileData.artifact_id ? `/api/ai/artifacts/${fileData.artifact_id}/download` :"
+      },
+      {
+        "line": 2999,
+        "api": "/api/ai/exports/${encodeURIComponent(filename)}",
+        "method": "GET (assumed)",
+        "snippet": "const altUrl = `/api/ai/exports/${encodeURIComponent(filename)}`;"
+      },
+      {
+        "line": 3199,
+        "api": "/api/ai/native-save-dialog",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/native-save-dialog', {"
+      },
+      {
+        "line": 3236,
+        "api": "/api/ai/artifacts/${encodeURIComponent(artifactId)}/download",
+        "method": "GET (assumed)",
+        "snippet": ": (artifactId ? `/api/ai/artifacts/${encodeURIComponent(artifactId)}/download` : `/api/ai/exports/${encodeURIComponent(f"
+      },
+      {
+        "line": 3289,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "cachedClientsList = await (typeof api === 'function' ? api('/api/clients') : fetch('/api/clients').then(r => r.json()));"
+      },
+      {
+        "line": 3289,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "cachedClientsList = await (typeof api === 'function' ? api('/api/clients') : fetch('/api/clients').then(r => r.json()));"
+      },
+      {
+        "line": 3346,
+        "api": "/api/ai/save-to-client",
+        "method": "GET (assumed)",
+        "snippet": "const saveResp = await fetch('/api/ai/save-to-client', {"
+      },
+      {
+        "line": 3617,
+        "api": "/api/ai/enhance-selection",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/enhance-selection', {"
+      },
+      {
+        "line": 3702,
+        "api": "/api/ai/conversations",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/conversations');"
+      },
+      {
+        "line": 3979,
+        "api": "/api/ai/conversations/${convId}",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch(`/api/ai/conversations/${convId}`);"
+      },
+      {
+        "line": 4039,
+        "api": "/api/ai/conversations/${cid}/rename",
+        "method": "GET (assumed)",
+        "snippet": "fetch(`/api/ai/conversations/${cid}/rename`, {"
+      },
+      {
+        "line": 4055,
+        "api": "/api/ai/conversations/${cid}",
+        "method": "GET (assumed)",
+        "snippet": "fetch(`/api/ai/conversations/${cid}`, {"
+      },
+      {
+        "line": 4117,
+        "api": "/api/ai/conversations/${c.id}",
+        "method": "DELETE",
+        "snippet": "await fetch(`/api/ai/conversations/${c.id}`, { method: 'DELETE' });"
+      },
+      {
+        "line": 4283,
+        "api": "/api/ai/doc/rename",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/doc/rename', {"
+      },
+      {
+        "line": 4336,
+        "api": "/api/ai/sources",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/sources');"
+      },
+      {
+        "line": 4424,
+        "api": "/api/ai/settings",
+        "method": "GET (assumed)",
+        "snippet": "const resp = await fetch('/api/ai/settings', {"
+      }
+    ],
+    "background.js": [
+      {
+        "line": 84,
+        "api": "/api/client-files/",
+        "method": "GET (assumed)",
+        "snippet": "if (u.port === '8767' || u.pathname.startsWith('/api/client-files/')) return true;"
+      },
+      {
+        "line": 101,
+        "api": "/api/client-files/",
+        "method": "GET (assumed)",
+        "snippet": "if (u.pathname.startsWith('/api/client-files/')) return true;"
+      },
+      {
+        "line": 630,
+        "api": "/api/save-document",
+        "method": "GET (assumed)",
+        "snippet": "const saveResponse = await callServerApi('/api/save-document', {"
+      },
+      {
+        "line": 1231,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const clients = await callServerApi('/api/clients');"
+      }
+    ],
+    "content.js": [
+      {
+        "line": 620,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "if (endpoint === '/api/clients' && Array.isArray(cachedClientsList) && cachedClientsList.length > 0) {"
+      },
+      {
+        "line": 621,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "sendBackgroundMsg({ type: 'VS_API_CALL', url: '/api/clients', method: 'GET' }).then(res => {"
+      },
+      {
+        "line": 646,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "if (endpoint === '/api/clients' && Array.isArray(res.data)) {"
+      },
+      {
+        "line": 664,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "if (endpoint === '/api/clients' && Array.isArray(data)) {"
+      },
+      {
+        "line": 1439,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const clients = await apiCall('/api/clients');"
+      },
+      {
+        "line": 1541,
+        "api": "/api/save-document",
+        "method": "GET (assumed)",
+        "snippet": "await apiCall('/api/save-document', {"
+      },
+      {
+        "line": 1983,
+        "api": "/api/pdf/detect",
+        "method": "POST",
+        "snippet": "const detect = await apiCall('/api/pdf/detect', { method: 'POST', body: { client_file_no: clientFno, file_base64: b64 } "
+      },
+      {
+        "line": 1988,
+        "api": "/api/pdf/unlock",
+        "method": "POST",
+        "snippet": "const unlockRes = await apiCall('/api/pdf/unlock', { method: 'POST', body: { client_file_no: clientFno, file_base64: b64"
+      },
+      {
+        "line": 2010,
+        "api": "/api/clients/${encodeURIComponent(fno)}/pdf-passwords",
+        "method": "GET (assumed)",
+        "snippet": "const creds = await apiCall(`/api/clients/${encodeURIComponent(fno)}/pdf-passwords`);"
+      },
+      {
+        "line": 2094,
+        "api": "/api/pdf/lock",
+        "method": "GET (assumed)",
+        "snippet": "const lockRes = await apiCall('/api/pdf/lock', {"
+      },
+      {
+        "line": 2127,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const unlockRes = await apiCall('/api/pdf/unlock', {"
+      },
+      {
+        "line": 2151,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const unlockRes = await apiCall('/api/pdf/unlock', {"
+      },
+      {
+        "line": 2196,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const clients = await apiCall('/api/clients').catch(() => []);"
+      },
+      {
+        "line": 2429,
+        "api": "/api/save-document",
+        "method": "GET (assumed)",
+        "snippet": "await apiCall('/api/save-document', {"
+      }
+    ],
+    "popup.js": [
+      {
+        "line": 121,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const clients = await apiCall('/api/clients');"
+      },
+      {
+        "line": 427,
+        "api": "/api/clients/${encodeURIComponent(fno)}/pdf-passwords",
+        "method": "GET (assumed)",
+        "snippet": "const creds = await apiCall(`/api/clients/${encodeURIComponent(fno)}/pdf-passwords`);"
+      },
+      {
+        "line": 451,
+        "api": "/api/pdf/detect",
+        "method": "GET (assumed)",
+        "snippet": "const detectRes = await apiCall('/api/pdf/detect', {"
+      },
+      {
+        "line": 559,
+        "api": "/api/save-document",
+        "method": "GET (assumed)",
+        "snippet": "const response = await apiCall('/api/save-document', {"
+      },
+      {
+        "line": 695,
+        "api": "/api/pdf/lock",
+        "method": "GET (assumed)",
+        "snippet": "const res = await apiCall('/api/pdf/lock', {"
+      },
+      {
+        "line": 741,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const res = await apiCall('/api/pdf/unlock', {"
+      },
+      {
+        "line": 780,
+        "api": "/api/pdf/unlock",
+        "method": "GET (assumed)",
+        "snippet": "const res = await apiCall('/api/pdf/unlock', {"
+      }
+    ],
+    "sidepanel.js": [
+      {
+        "line": 118,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const clients = await apiCall('/api/clients');"
+      },
+      {
+        "line": 144,
+        "api": "/api/clients",
+        "method": "GET (assumed)",
+        "snippet": "const clients = await apiCall('/api/clients');"
+      },
+      {
+        "line": 628,
+        "api": "/api/file-router/route",
+        "method": "GET (assumed)",
+        "snippet": "const res = await apiCall('/api/file-router/route', {"
+      }
+    ]
+  },
+  "py_modules": {
+    "audit_extractor.py": {
+      "lines": 262,
+      "size": 9260,
+      "classes": [],
+      "functions_count": 4,
+      "functions_sample": [
+        "analyze_server_routes",
+        "analyze_frontend_calls",
+        "analyze_python_modules",
+        "main"
+      ],
+      "imports": [
+        "ast",
+        "json",
+        "os",
+        "re"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "collections": [
+          "defaultdict"
+        ]
+      },
+      "desktop_markers": [
+        "pywebview",
+        "SW_HIDE",
+        "winreg",
+        "webview",
+        "ctypes",
+        "WinForms",
+        "AppUserModelID",
+        "SetProcessDpiAwareness",
+        "System.Windows.Forms",
+        "win32"
+      ]
+    },
+    "audit_system.py": {
+      "lines": 34,
+      "size": 1214,
+      "classes": [],
+      "functions_count": 1,
+      "functions_sample": [
+        "inspect_table_payloads"
+      ],
+      "imports": [
+        "os",
+        "sqlite3"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "automation_db.py": {
+      "lines": 188,
+      "size": 7978,
+      "classes": [],
+      "functions_count": 1,
+      "functions_sample": [
+        "init_automation_tables"
+      ],
+      "imports": [
+        "logging",
+        "sqlite3"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "automation_engine.py": {
+      "lines": 1478,
+      "size": 76162,
+      "classes": [
+        "AutomationEngine"
+      ],
+      "functions_count": 5,
+      "functions_sample": [
+        "now_iso",
+        "is_valid_tally_edu_date",
+        "remap_to_tally_edu_date",
+        "compute_txn_fingerprint",
+        "normalize_pattern"
+      ],
+      "imports": [
+        "hashlib",
+        "json",
+        "logging",
+        "math",
+        "os",
+        "re",
+        "sqlite3",
+        "threading",
+        "uuid",
+        "vs_ai_engine"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "decimal": [
+          "Decimal"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple"
+        ],
+        "statement_parser": [
+          "BankStatementParser"
+        ],
+        "tally_mcp_client": [
+          "TallyMCPClient"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "benchmark_startup.py": {
+      "lines": 77,
+      "size": 2996,
+      "classes": [],
+      "functions_count": 2,
+      "functions_sample": [
+        "get_process_memory",
+        "run_benchmark"
+      ],
+      "imports": [
+        "ctypes",
+        "json",
+        "os",
+        "server",
+        "sys",
+        "time",
+        "urllib.request"
+      ],
+      "from_imports": {
+        "ctypes": [
+          "wintypes"
+        ],
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": [
+        "ctypes"
+      ]
+    },
+    "build_setup.py": {
+      "lines": 106,
+      "size": 3735,
+      "classes": [],
+      "functions_count": 2,
+      "functions_sample": [
+        "step",
+        "main"
+      ],
+      "imports": [
+        "os",
+        "shutil",
+        "subprocess",
+        "sys",
+        "time",
+        "zipfile"
+      ],
+      "from_imports": {},
+      "desktop_markers": []
+    },
+    "compiler.py": {
+      "lines": 553,
+      "size": 19842,
+      "classes": [],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [],
+      "from_imports": {},
+      "desktop_markers": [
+        "pywebview",
+        "webview",
+        "win32",
+        "ctypes"
+      ]
+    },
+    "deterministic_generators.py": {
+      "lines": 855,
+      "size": 41675,
+      "classes": [
+        "ExcelDocIRGenerator",
+        "WordDocIRGenerator",
+        "PowerPointDocIRGenerator",
+        "PDFDocIRGenerator"
+      ],
+      "functions_count": 1,
+      "functions_sample": [
+        "_safe_slug"
+      ],
+      "imports": [
+        "docx",
+        "openpyxl",
+        "os",
+        "pptx",
+        "re",
+        "time"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "datetime": [
+          "datetime"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple, Union"
+        ],
+        "docir_models": [
+          "DocIR, SemanticTable, SemanticRow, SemanticColumn, SemanticRowType, NumberFormatType, TargetFormat"
+        ],
+        "style_profile_engine": [
+          "StyleProfile, StyleProfileEngine"
+        ],
+        "openpyxl.styles": [
+          "Font, PatternFill, Alignment, Border, Side"
+        ],
+        "openpyxl.utils": [
+          "get_column_letter"
+        ],
+        "openpyxl.formatting.rule": [
+          "CellIsRule"
+        ],
+        "docx.shared": [
+          "Inches, Pt, RGBColor"
+        ],
+        "docx.enum.text": [
+          "WD_ALIGN_PARAGRAPH"
+        ],
+        "docx.enum.table": [
+          "WD_TABLE_ALIGNMENT"
+        ],
+        "docx.enum.section": [
+          "WD_ORIENT"
+        ],
+        "docx.oxml": [
+          "parse_xml"
+        ],
+        "docx.oxml.ns": [
+          "nsdecls"
+        ],
+        "vs_ai_doc_generator": [
+          "_append_docx_xml_field",
+          "evaluate_table_formulas_for_display",
+          "init_pdf_fonts"
+        ],
+        "pptx.util": [
+          "Inches, Pt"
+        ],
+        "pptx.dml.color": [
+          "RGBColor"
+        ],
+        "pptx.enum.text": [
+          "PP_ALIGN"
+        ],
+        "reportlab.lib.pagesizes": [
+          "A4, landscape"
+        ],
+        "reportlab.lib": [
+          "colors"
+        ],
+        "reportlab.platypus": [
+          "SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable"
+        ],
+        "reportlab.lib.styles": [
+          "getSampleStyleSheet, ParagraphStyle"
+        ],
+        "reportlab.pdfgen": [
+          "canvas"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "doc_recovery.py": {
+      "lines": 121,
+      "size": 5539,
+      "classes": [
+        "BoundedRecoveryEngine"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "logging"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple"
+        ],
+        "docir_models": [
+          "DocIR, TargetFormat, SemanticRowType"
+        ],
+        "style_profile_engine": [
+          "StyleProfile"
+        ],
+        "doc_validator": [
+          "DocumentValidator, ValidationResult, ValidationState"
+        ],
+        "deterministic_generators": [
+          "ExcelDocIRGenerator, WordDocIRGenerator, PowerPointDocIRGenerator, PDFDocIRGenerator"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "doc_validator.py": {
+      "lines": 464,
+      "size": 22156,
+      "classes": [
+        "ValidationState",
+        "ValidationResult",
+        "DocumentValidator"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "docx",
+        "fitz",
+        "formulas",
+        "openpyxl",
+        "openpyxl.utils",
+        "os",
+        "pptx",
+        "pymupdf",
+        "re"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple, Union"
+        ],
+        "pydantic": [
+          "BaseModel, Field"
+        ],
+        "docir_models": [
+          "DocIR, TargetFormat, SemanticRowType"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "docir_builder.py": {
+      "lines": 572,
+      "size": 29984,
+      "classes": [
+        "ModeDetector",
+        "DocIRBuilder"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "re",
+        "uuid"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple, Union"
+        ],
+        "docir_models": [
+          "DocIR, GenerationMode, TargetFormat, DocumentType, SemanticSection, SemanticTable, SemanticRow, SemanticColumn, SemanticCell, SemanticRowType, NumberFormatType, ControlAssertion, SlideContent"
+        ],
+        "style_profile_engine": [
+          "StyleProfileEngine, StyleProfile"
+        ],
+        "vs_ai_doc_generator": [
+          "parse_markdown_tables, clean_number_value"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "docir_models.py": {
+      "lines": 173,
+      "size": 6969,
+      "classes": [
+        "GenerationMode",
+        "TargetFormat",
+        "DocumentType",
+        "SemanticRowType",
+        "NumberFormatType",
+        "SemanticCell",
+        "SemanticRow",
+        "SemanticColumn",
+        "ControlAssertion",
+        "SemanticTable",
+        "SemanticSection",
+        "SlideContent",
+        "DocIR"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "uuid"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "enum": [
+          "Enum"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Union"
+        ],
+        "pydantic": [
+          "BaseModel, Field"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "installer_app.py": {
+      "lines": 461,
+      "size": 16725,
+      "classes": [
+        "InstallState",
+        "InstallerRequestHandler",
+        "InstallerBridge"
+      ],
+      "functions_count": 7,
+      "functions_sample": [
+        "get_default_install_dir",
+        "get_free_space_str",
+        "create_windows_shortcut",
+        "register_uninstall",
+        "run_install_worker",
+        "start_server",
+        "main"
+      ],
+      "imports": [
+        "ctypes",
+        "json",
+        "os",
+        "shutil",
+        "subprocess",
+        "sys",
+        "threading",
+        "time",
+        "traceback",
+        "urllib.parse",
+        "webbrowser",
+        "webview",
+        "winreg",
+        "zipfile"
+      ],
+      "from_imports": {
+        "http.server": [
+          "ThreadingHTTPServer, SimpleHTTPRequestHandler"
+        ]
+      },
+      "desktop_markers": [
+        "ctypes",
+        "winreg",
+        "webview",
+        "win32"
+      ]
+    },
+    "main_app.py": {
+      "lines": 1431,
+      "size": 61574,
+      "classes": [
+        "_POINT",
+        "_RECT",
+        "_WINDOWPLACEMENT",
+        "_MONITORINFO",
+        "DesktopBridge"
+      ],
+      "functions_count": 15,
+      "functions_sample": [
+        "_get_primary_work_area",
+        "validate_window_bounds",
+        "load_window_state",
+        "_get_monitor_work_area_for_hwnd",
+        "maximize_window_to_work_area",
+        "capture_and_save_window_state",
+        "resolve_ai_artifact_source",
+        "get_backend_state",
+        "attach_ui",
+        "detach_ui"
+      ],
+      "imports": [
+        "ctypes",
+        "importlib.util",
+        "json",
+        "logging",
+        "multiprocessing",
+        "os",
+        "re",
+        "server",
+        "shutil",
+        "site",
+        "socket",
+        "sqlite3",
+        "subprocess",
+        "sys",
+        "threading",
+        "time",
+        "traceback",
+        "urllib.request",
+        "uuid",
+        "webview"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "ctypes": [
+          "wintypes"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": [
+        "pywebview",
+        "webview",
+        "ctypes",
+        "AppUserModelID",
+        "win32"
+      ]
+    },
+    "pdf_studio_engine.py": {
+      "lines": 1723,
+      "size": 77030,
+      "classes": [
+        "PDFStudioSession",
+        "ToolResult",
+        "PDFToolRegistry",
+        "PDFStudioEngine"
+      ],
+      "functions_count": 6,
+      "functions_sample": [
+        "iso_now",
+        "hex_to_rgb_float",
+        "parse_page_ranges",
+        "get_session_lock",
+        "safe_atomic_replace",
+        "safe_copy_file"
+      ],
+      "imports": [
+        "base64",
+        "fitz",
+        "gc",
+        "io",
+        "json",
+        "os",
+        "pymupdf",
+        "re",
+        "shutil",
+        "site",
+        "sys",
+        "threading",
+        "time",
+        "uuid",
+        "zipfile"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Callable, Dict, List, Optional, Tuple, Union"
+        ],
+        "PIL": [
+          "Image"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "run_live_fresh_qa.py": {
+      "lines": 117,
+      "size": 4751,
+      "classes": [],
+      "functions_count": 1,
+      "functions_sample": [
+        "run_live_flow"
+      ],
+      "imports": [
+        "sys",
+        "uuid",
+        "vs_ai_engine"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "server.py": {
+      "lines": 11492,
+      "size": 602149,
+      "classes": [
+        "SafeStream",
+        "_LazyAIEngineProxy",
+        "AIJobQueue",
+        "Handler"
+      ],
+      "functions_count": 152,
+      "functions_sample": [
+        "_bg_generate_chat_title",
+        "get_client_portal_lock",
+        "get_effective_google_redirect_uri",
+        "ensure_oauth_callback_bridge",
+        "resolve_lan_ip_worker",
+        "start_async_lan_discovery",
+        "is_ui_attached_and_valid",
+        "get_desktop_state",
+        "get_active_staging_session_id",
+        "is_private_client"
+      ],
+      "imports": [
+        "base64",
+        "concurrent.futures",
+        "csv",
+        "ctypes",
+        "fitz",
+        "hashlib",
+        "hmac",
+        "io",
+        "ipaddress",
+        "json",
+        "logging",
+        "mimetypes",
+        "os",
+        "pypdf",
+        "qrcode",
+        "re",
+        "secrets",
+        "shutil",
+        "socket",
+        "sqlite3",
+        "subprocess",
+        "sys",
+        "textwrap",
+        "threading",
+        "time",
+        "tkinter",
+        "urllib.request",
+        "uuid",
+        "vs_ai_doc_generator",
+        "vs_ai_engine",
+        "vs_ai_rename",
+        "winreg",
+        "zipfile"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "http.cookies": [
+          "SimpleCookie"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "http": [
+          "HTTPStatus"
+        ],
+        "http.server": [
+          "BaseHTTPRequestHandler, ThreadingHTTPServer"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "urllib.parse": [
+          "parse_qs, urlparse, unquote"
+        ],
+        "xml.etree": [
+          "ElementTree"
+        ],
+        "reportlab.lib.pagesizes": [
+          "A4"
+        ],
+        "reportlab.lib.units": [
+          "mm"
+        ],
+        "reportlab.lib": [
+          "colors"
+        ],
+        "reportlab.pdfbase": [
+          "pdfmetrics"
+        ],
+        "reportlab.pdfbase.ttfonts": [
+          "TTFont"
+        ],
+        "reportlab.pdfgen": [
+          "canvas"
+        ],
+        "PIL": [
+          "Image, ImageDraw"
+        ],
+        "cryptography.hazmat.primitives.ciphers.aead": [
+          "AESGCM"
+        ],
+        "staging_manager": [
+          "StagingSessionManager"
+        ],
+        "pdf_studio_engine": [
+          "PDFStudioEngine"
+        ],
+        "automation_db": [
+          "init_automation_tables"
+        ],
+        "automation_engine": [
+          "AutomationEngine"
+        ],
+        "google_auth_oauthlib.flow": [
+          "Flow"
+        ],
+        "googleapiclient.http": [
+          "MediaIoBaseUpload"
+        ],
+        "google.oauth2.credentials": [
+          "Credentials"
+        ],
+        "google.auth.transport.requests": [
+          "Request"
+        ],
+        "googleapiclient.discovery": [
+          "build"
+        ],
+        "google.auth.exceptions": [
+          "RefreshError"
+        ],
+        "ctypes": [
+          "wintypes"
+        ],
+        "template_engine": [
+          "TemplatePopulationEngine"
+        ],
+        "doc_validator": [
+          "DocumentValidator"
+        ],
+        "vs_ai_doc_generator": [
+          "create_and_register_artifact, DEFAULT_EXPORTS_DIR"
+        ],
+        "style_profile_engine": [
+          "StyleProfileEngine"
+        ],
+        "tkinter": [
+          "filedialog"
+        ]
+      },
+      "desktop_markers": [
+        "ctypes",
+        "winreg",
+        "webview",
+        "win32"
+      ]
+    },
+    "staging_manager.py": {
+      "lines": 436,
+      "size": 17369,
+      "classes": [
+        "StagingReplaceResult",
+        "StagingSessionManager"
+      ],
+      "functions_count": 1,
+      "functions_sample": [
+        "iso_now"
+      ],
+      "imports": [
+        "io",
+        "json",
+        "os",
+        "shutil",
+        "time",
+        "uuid"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "statement_parser.py": {
+      "lines": 748,
+      "size": 34691,
+      "classes": [
+        "BankStatementParser"
+      ],
+      "functions_count": 3,
+      "functions_sample": [
+        "parse_decimal_safe",
+        "normalize_date_string",
+        "extract_reference_number"
+      ],
+      "imports": [
+        "csv",
+        "fitz",
+        "io",
+        "json",
+        "logging",
+        "openpyxl",
+        "pypdf",
+        "re",
+        "xml.etree.ElementTree"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "decimal": [
+          "Decimal, InvalidOperation"
+        ],
+        "datetime": [
+          "datetime"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "style_profile_engine.py": {
+      "lines": 475,
+      "size": 18997,
+      "classes": [
+        "StyleProfile",
+        "StyleProfileEngine"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "docx",
+        "fitz",
+        "json",
+        "openpyxl",
+        "os",
+        "pptx",
+        "pymupdf",
+        "re",
+        "uuid"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "datetime": [
+          "datetime, timezone"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple, Union"
+        ],
+        "pydantic": [
+          "BaseModel, Field"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "tally_mcp_client.py": {
+      "lines": 677,
+      "size": 29410,
+      "classes": [
+        "TallyMCPClient"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "json",
+        "logging",
+        "os",
+        "re",
+        "socket",
+        "subprocess",
+        "sys",
+        "threading",
+        "time",
+        "urllib.request"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple"
+        ]
+      },
+      "desktop_markers": [
+        "win32"
+      ]
+    },
+    "template_engine.py": {
+      "lines": 246,
+      "size": 10391,
+      "classes": [
+        "TemplatePopulationEngine"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "docx",
+        "openpyxl",
+        "pptx",
+        "pypdf",
+        "re",
+        "shutil"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Any, Dict, List, Optional, Tuple, Union"
+        ],
+        "docxtpl": [
+          "DocxTemplate"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_ai_auto_rename.py": {
+      "lines": 251,
+      "size": 11306,
+      "classes": [
+        "TestAiAutoDocumentRename"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "fitz",
+        "os",
+        "shutil",
+        "tempfile",
+        "unittest",
+        "vs_ai_rename"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "vs_ai_rename": [
+          "DocumentContentExtractor, NamingTemplateEngine, normalize_month_token, normalize_client_name, sanitize_filename, check_client_mismatch, generate_unique_filename, AiAutoRenameCoordinator"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_all_workstreams.py": {
+      "lines": 315,
+      "size": 16996,
+      "classes": [],
+      "functions_count": 7,
+      "functions_sample": [
+        "test_workstream_1_keyboard",
+        "test_workstream_2_download",
+        "test_workstream_3_window_state",
+        "test_workstream_4_startup_intro",
+        "test_workstream_5_and_6_doc_engines_and_reasoning",
+        "test_workstream_7_chat_ui_removal",
+        "test_workstream_8_sequential_clarification"
+      ],
+      "imports": [
+        "docx",
+        "json",
+        "main_app",
+        "openpyxl",
+        "os",
+        "re",
+        "sqlite3",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "vs_ai_clarification",
+        "vs_ai_doc_generator",
+        "vs_ai_engine"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": [
+        "pywebview",
+        "webview"
+      ]
+    },
+    "test_automation_suite.py": {
+      "lines": 375,
+      "size": 17477,
+      "classes": [
+        "TestAutomationSuite"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "sqlite3",
+        "sys",
+        "tempfile",
+        "unittest"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "decimal": [
+          "Decimal"
+        ],
+        "statement_parser": [
+          "BankStatementParser, parse_decimal_safe, normalize_date_string"
+        ],
+        "tally_mcp_client": [
+          "TallyMCPClient"
+        ],
+        "automation_db": [
+          "init_automation_tables"
+        ],
+        "automation_engine": [
+          "AutomationEngine"
+        ],
+        "unittest.mock": [
+          "MagicMock"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_autostart_feature.py": {
+      "lines": 112,
+      "size": 4824,
+      "classes": [
+        "TestWindowsAutostart"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "json",
+        "os",
+        "server",
+        "sys",
+        "time",
+        "unittest",
+        "urllib.request",
+        "winreg"
+      ],
+      "from_imports": {},
+      "desktop_markers": [
+        "winreg"
+      ]
+    },
+    "test_clarification_2_1.py": {
+      "lines": 262,
+      "size": 14492,
+      "classes": [],
+      "functions_count": 1,
+      "functions_sample": [
+        "run_tests"
+      ],
+      "imports": [
+        "os",
+        "sqlite3",
+        "sys",
+        "tempfile"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "vs_ai_clarification": [
+          "FactExtractor, FactRepository, ContradictionDetector, ClarificationEngine, TaxFact"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_controlled_correction.py": {
+      "lines": 349,
+      "size": 18843,
+      "classes": [
+        "TestControlledCorrection"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "json",
+        "os",
+        "socket",
+        "sqlite3",
+        "sys",
+        "unittest",
+        "uuid"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "decimal": [
+          "Decimal"
+        ],
+        "unittest.mock": [
+          "MagicMock, patch"
+        ],
+        "automation_engine": [
+          "AutomationEngine, is_valid_tally_edu_date, remap_to_tally_edu_date, compute_txn_fingerprint, now_iso"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_critical_fixes.py": {
+      "lines": 72,
+      "size": 3567,
+      "classes": [
+        "TestCriticalFixes"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "os",
+        "server",
+        "sys",
+        "threading",
+        "time",
+        "unittest",
+        "urllib.request"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "main_app": [
+          "is_server_healthy"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_docir_engine_suite.py": {
+      "lines": 380,
+      "size": 19160,
+      "classes": [
+        "MasterDocIREngineTestSuite"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "docx",
+        "openpyxl",
+        "os",
+        "pptx",
+        "re",
+        "sys",
+        "tempfile",
+        "unittest",
+        "vs_ai_doc_generator"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "docir_models": [
+          "DocIR, GenerationMode, TargetFormat, DocumentType, SemanticSection, SemanticTable, SemanticRow, SemanticColumn, SemanticCell, SemanticRowType, NumberFormatType, ControlAssertion, SlideContent"
+        ],
+        "style_profile_engine": [
+          "StyleProfileEngine, StyleProfile"
+        ],
+        "doc_validator": [
+          "DocumentValidator, ValidationState"
+        ],
+        "deterministic_generators": [
+          "ExcelDocIRGenerator, WordDocIRGenerator, PowerPointDocIRGenerator, PDFDocIRGenerator"
+        ],
+        "template_engine": [
+          "TemplatePopulationEngine"
+        ],
+        "doc_recovery": [
+          "BoundedRecoveryEngine"
+        ],
+        "docir_builder": [
+          "DocIRBuilder, ModeDetector"
+        ],
+        "pptx.util": [
+          "Inches"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_live_desktop_acceptance.py": {
+      "lines": 279,
+      "size": 13411,
+      "classes": [
+        "RECT"
+      ],
+      "functions_count": 5,
+      "functions_sample": [
+        "wait_for_desktop_ready",
+        "wait_for_process_exit",
+        "get_win_rect",
+        "post_json",
+        "run_live_acceptance"
+      ],
+      "imports": [
+        "ctypes",
+        "json",
+        "os",
+        "subprocess",
+        "sys",
+        "time",
+        "urllib.request"
+      ],
+      "from_imports": {
+        "ctypes": [
+          "wintypes"
+        ],
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": [
+        "ctypes"
+      ]
+    },
+    "test_overhaul_benchmarks.py": {
+      "lines": 181,
+      "size": 12230,
+      "classes": [],
+      "functions_count": 1,
+      "functions_sample": [
+        "run_tests"
+      ],
+      "imports": [
+        "uuid"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "vs_ai_clarification": [
+          "ClarificationEngine"
+        ],
+        "vs_ai_engine": [
+          "AIModelOrchestrator"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_pdf_preview_first_pipeline.py": {
+      "lines": 354,
+      "size": 16127,
+      "classes": [
+        "TestPDFPreviewFirstPipeline"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "io",
+        "os",
+        "pdf_studio_engine",
+        "pymupdf",
+        "sys",
+        "unittest"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_phase3_reports_and_workflows.py": {
+      "lines": 456,
+      "size": 20722,
+      "classes": [],
+      "functions_count": 4,
+      "functions_sample": [
+        "verify_xlsx_file",
+        "verify_docx_file",
+        "verify_pdf_file",
+        "run_all_tests"
+      ],
+      "imports": [
+        "docx",
+        "json",
+        "openpyxl",
+        "os",
+        "shutil",
+        "sqlite3",
+        "sys",
+        "tempfile"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "pypdf": [
+          "PdfReader"
+        ],
+        "vs_ai_doc_generator": [
+          "DocumentPlanner, export_ai_document_docx, export_ai_opinion_pdf, export_ai_spreadsheet_xlsx, get_docx_preview_data, get_xlsx_preview_data"
+        ],
+        "vs_ai_clarification": [
+          "ClarificationEngine, FactRepository, IntentDetector"
+        ],
+        "main_app": [
+          "resolve_ai_artifact_source",
+          "validate_window_bounds"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_reconciliation_discrepancy.py": {
+      "lines": 250,
+      "size": 11919,
+      "classes": [
+        "TestReconciliationDiscrepancy"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "shutil",
+        "sqlite3",
+        "sys",
+        "tempfile",
+        "unittest"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "decimal": [
+          "Decimal"
+        ],
+        "unittest.mock": [
+          "MagicMock, patch"
+        ],
+        "automation_engine": [
+          "AutomationEngine, compute_txn_fingerprint, is_valid_tally_edu_date"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_six_enhancements.py": {
+      "lines": 343,
+      "size": 17339,
+      "classes": [
+        "TestSixEnhancements"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "json",
+        "main_app",
+        "os",
+        "server",
+        "sqlite3",
+        "sys",
+        "threading",
+        "unittest",
+        "urllib.request",
+        "uuid",
+        "vs_ai_clarification",
+        "vs_ai_doc_generator",
+        "vs_ai_engine"
+      ],
+      "from_imports": {
+        "http.server": [
+          "ThreadingHTTPServer"
+        ],
+        "pypdf": [
+          "PdfReader"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_studio_phases_1_to_3.py": {
+      "lines": 141,
+      "size": 5327,
+      "classes": [
+        "TestStudioPhases1To3"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "base64",
+        "os",
+        "pdf_studio_engine",
+        "pymupdf",
+        "sys",
+        "unittest"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_studio_phases_4_to_5.py": {
+      "lines": 109,
+      "size": 4054,
+      "classes": [
+        "TestStudioPhases4And5"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "base64",
+        "os",
+        "pdf_studio_engine",
+        "pymupdf",
+        "staging_manager",
+        "sys",
+        "unittest"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_studio_ui_verification.py": {
+      "lines": 273,
+      "size": 11174,
+      "classes": [
+        "TestComprehensiveStudioSubsystem"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "base64",
+        "io",
+        "os",
+        "pymupdf",
+        "re",
+        "sys",
+        "unittest",
+        "zipfile"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "pdf_studio_engine": [
+          "PDFStudioEngine"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_validation_heuristic_and_regression.py": {
+      "lines": 398,
+      "size": 16923,
+      "classes": [
+        "TestValidationHeuristicsAndGates"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "openpyxl",
+        "os",
+        "re",
+        "shutil",
+        "sys",
+        "time",
+        "unittest",
+        "vs_ai_doc_generator"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "docir_models": [
+          "DocIR, TargetFormat, GenerationMode, DocumentType, SemanticSection, SemanticTable, SemanticRow, SemanticColumn, SemanticCell, SemanticRowType, NumberFormatType, ControlAssertion"
+        ],
+        "doc_validator": [
+          "DocumentValidator, ValidationState"
+        ],
+        "doc_recovery": [
+          "BoundedRecoveryEngine"
+        ],
+        "style_profile_engine": [
+          "StyleProfileEngine, StyleProfile"
+        ],
+        "template_engine": [
+          "TemplatePopulationEngine"
+        ],
+        "deterministic_generators": [
+          "ExcelDocIRGenerator, WordDocIRGenerator, PDFDocIRGenerator, PowerPointDocIRGenerator"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "test_vs_ai_3_0.py": {
+      "lines": 260,
+      "size": 15537,
+      "classes": [],
+      "functions_count": 1,
+      "functions_sample": [
+        "run_tests"
+      ],
+      "imports": [
+        "os",
+        "sqlite3",
+        "sys",
+        "uuid"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "vs_ai_engine": [
+          "AIModelOrchestrator"
+        ],
+        "vs_ai_clarification": [
+          "ClarificationEngine, TaxFact"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "uninstall_app.py": {
+      "lines": 116,
+      "size": 3536,
+      "classes": [],
+      "functions_count": 4,
+      "functions_sample": [
+        "is_admin",
+        "remove_shortcuts",
+        "remove_registry",
+        "main"
+      ],
+      "imports": [
+        "ctypes",
+        "os",
+        "shutil",
+        "subprocess",
+        "sys",
+        "time",
+        "winreg"
+      ],
+      "from_imports": {},
+      "desktop_markers": [
+        "ctypes",
+        "winreg"
+      ]
+    },
+    "vs_ai_clarification.py": {
+      "lines": 1740,
+      "size": 109271,
+      "classes": [
+        "TaxFact",
+        "FactRepository",
+        "IntentDetector",
+        "FactExtractor",
+        "ContradictionDetector",
+        "ClarificationEngine"
+      ],
+      "functions_count": 0,
+      "functions_sample": [],
+      "imports": [
+        "json",
+        "logging",
+        "re",
+        "sqlite3",
+        "time",
+        "uuid"
+      ],
+      "from_imports": {
+        "typing": [
+          "Dict, Any, List, Optional, Tuple"
+        ],
+        "dataclasses": [
+          "dataclass, field"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "vs_ai_doc_generator.py": {
+      "lines": 2312,
+      "size": 131128,
+      "classes": [
+        "DocumentPlanner"
+      ],
+      "functions_count": 22,
+      "functions_sample": [
+        "init_pdf_fonts",
+        "ensure_export_dir",
+        "ensure_artifact_dir",
+        "create_and_register_artifact",
+        "get_docx_preview_data",
+        "get_xlsx_preview_data",
+        "extract_selectable_sections",
+        "get_pdf_preview_data",
+        "clean_document_title",
+        "parse_markdown_tables"
+      ],
+      "imports": [
+        "base64",
+        "docx",
+        "fitz",
+        "hashlib",
+        "json",
+        "openpyxl",
+        "os",
+        "pymupdf",
+        "re",
+        "shutil",
+        "sqlite3",
+        "time",
+        "uuid"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "datetime": [
+          "datetime"
+        ],
+        "typing": [
+          "Dict, List, Any, Optional, Tuple"
+        ],
+        "docx.shared": [
+          "Inches, Pt, RGBColor",
+          "Pt",
+          "Pt, RGBColor"
+        ],
+        "docx.enum.text": [
+          "WD_ALIGN_PARAGRAPH"
+        ],
+        "docx.enum.table": [
+          "WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL"
+        ],
+        "docx.oxml": [
+          "parse_xml",
+          "parse_xml, OxmlElement"
+        ],
+        "docx.oxml.ns": [
+          "nsdecls",
+          "nsdecls, qn"
+        ],
+        "docir_builder": [
+          "DocIRBuilder"
+        ],
+        "docir_models": [
+          "TargetFormat, GenerationMode"
+        ],
+        "doc_recovery": [
+          "BoundedRecoveryEngine"
+        ],
+        "style_profile_engine": [
+          "StyleProfileEngine"
+        ],
+        "reportlab.pdfbase": [
+          "pdfmetrics"
+        ],
+        "reportlab.pdfbase.ttfonts": [
+          "TTFont"
+        ],
+        "pypdf": [
+          "PdfReader"
+        ]
+      },
+      "desktop_markers": []
+    },
+    "vs_ai_engine.py": {
+      "lines": 2781,
+      "size": 147993,
+      "classes": [
+        "GeminiProvider",
+        "KnowledgeBaseEngine",
+        "DocumentExtractor",
+        "AutoDocRenamer",
+        "ExplicitMemoryManager",
+        "AIModelOrchestrator"
+      ],
+      "functions_count": 5,
+      "functions_sample": [
+        "detect_system_hardware",
+        "_convert_python_doc_code_to_markdown",
+        "clean_model_response",
+        "export_ai_opinion_pdf",
+        "get_ai_engine"
+      ],
+      "imports": [
+        "ast",
+        "base64",
+        "ctypes",
+        "docx",
+        "fitz",
+        "hashlib",
+        "io",
+        "json",
+        "logging",
+        "openpyxl",
+        "os",
+        "platform",
+        "pymupdf",
+        "re",
+        "shutil",
+        "sqlite3",
+        "sys",
+        "threading",
+        "time",
+        "urllib.error",
+        "urllib.request",
+        "uuid",
+        "vs_ai_doc_generator"
+      ],
+      "from_imports": {
+        "__future__": [
+          "annotations"
+        ],
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Dict, List, Any, Optional, Tuple"
+        ],
+        "vs_ai_clarification": [
+          "ClarificationEngine, TaxFact"
+        ],
+        "vs_ai_doc_generator": [
+          "export_ai_spreadsheet_xlsx, export_ai_document_docx, export_ai_opinion_pdf, create_and_register_artifact"
+        ],
+        "google.oauth2.credentials": [
+          "Credentials"
+        ],
+        "google.auth.transport.requests": [
+          "Request"
+        ]
+      },
+      "desktop_markers": [
+        "ctypes",
+        "win32"
+      ]
+    },
+    "vs_ai_rename.py": {
+      "lines": 730,
+      "size": 28156,
+      "classes": [
+        "DocumentContentExtractor",
+        "NamingTemplateEngine",
+        "AiAutoRenameCoordinator"
+      ],
+      "functions_count": 7,
+      "functions_sample": [
+        "normalize_month_token",
+        "normalize_client_name",
+        "sanitize_filename",
+        "extract_first_two_pages_text",
+        "render_page_thumbnail_base64",
+        "check_client_mismatch",
+        "generate_unique_filename"
+      ],
+      "imports": [
+        "base64",
+        "fitz",
+        "json",
+        "logging",
+        "os",
+        "re"
+      ],
+      "from_imports": {
+        "pathlib": [
+          "Path"
+        ],
+        "typing": [
+          "Dict, Any, Optional, Tuple, List"
+        ]
+      },
+      "desktop_markers": []
+    }
+  }
+}

@@ -278,6 +278,9 @@ const getDeviceName = () => localStorage.getItem('vs-device-name') || '';
 const setDeviceName = (name) => localStorage.setItem('vs-device-name', name);
 
 const api = (path, options = {}) => {
+  const resolvedUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+    ? window.TauriBridge.resolveApiUrl(path)
+    : path;
   const t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
   const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const timeoutMs = options.timeout || (path.startsWith('/api/ai') ? 120000 : (path.startsWith('/api/pdf-studio') ? 60000 : 30000));
@@ -289,7 +292,7 @@ const api = (path, options = {}) => {
     }, timeoutMs);
   }
 
-  return fetch(path, {
+  return fetch(resolvedUrl, {
     credentials: 'include',
     signal: options.signal || (controller ? controller.signal : undefined),
     ...options,
@@ -831,12 +834,16 @@ function playExitReverseAnimationAndClose() {
 
   const doClose = async () => {
     try {
+      if (window.TauriBridge && typeof window.TauriBridge.confirmClose === 'function') {
+        await window.TauriBridge.confirmClose();
+        return;
+      }
       if (window.pywebview && window.pywebview.api && window.pywebview.api.confirm_close) {
         await window.pywebview.api.confirm_close();
         return;
       }
     } catch (err) {
-      console.warn('Native pywebview close error:', err);
+      console.warn('Native desktop close error:', err);
     }
     try {
       await fetch('/api/desktop/close', { method: 'POST' });
@@ -967,7 +974,9 @@ function initDesktopWindowControls() {
   if (minBtn) {
     minBtn.onclick = (e) => {
       e.stopPropagation();
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.minimize_window) {
+      if (window.TauriBridge && typeof window.TauriBridge.minimizeWindow === 'function') {
+        window.TauriBridge.minimizeWindow();
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.minimize_window) {
         window.pywebview.api.minimize_window();
       }
     };
@@ -976,7 +985,13 @@ function initDesktopWindowControls() {
   if (maxBtn) {
     maxBtn.onclick = (e) => {
       e.stopPropagation();
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
+      if (window.TauriBridge && typeof window.TauriBridge.toggleMaximize === 'function') {
+        window.TauriBridge.toggleMaximize().then(res => {
+          if (res && typeof res.maximized === 'boolean') {
+            updateMaximizeIcon(res.maximized);
+          }
+        }).catch(() => {});
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
         window.pywebview.api.maximize_window().then(res => {
           if (res && typeof res.maximized === 'boolean') {
             updateMaximizeIcon(res.maximized);
@@ -996,7 +1011,13 @@ function initDesktopWindowControls() {
   if (dragArea) {
     dragArea.ondblclick = (e) => {
       if (e.target.closest('.no-drag') || e.target.closest('.titlebar-btn')) return;
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
+      if (window.TauriBridge && typeof window.TauriBridge.toggleMaximize === 'function') {
+        window.TauriBridge.toggleMaximize().then(res => {
+          if (res && typeof res.maximized === 'boolean') {
+            updateMaximizeIcon(res.maximized);
+          }
+        }).catch(() => {});
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
         window.pywebview.api.maximize_window().then(res => {
           if (res && typeof res.maximized === 'boolean') {
             updateMaximizeIcon(res.maximized);
@@ -1016,7 +1037,9 @@ function initDesktopWindowControls() {
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
           dragStarted = true;
           cleanupDragWatch();
-          if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+          if (window.TauriBridge && typeof window.TauriBridge.startDrag === 'function') {
+            window.TauriBridge.startDrag();
+          } else if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
             window.pywebview.api.start_drag();
           }
         }
@@ -1030,7 +1053,13 @@ function initDesktopWindowControls() {
     };
   }
 
-  if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
+  if (window.TauriBridge && typeof window.TauriBridge.isMaximized === 'function') {
+    window.TauriBridge.isMaximized().then(res => {
+      if (res && typeof res.maximized === 'boolean') {
+        updateMaximizeIcon(res.maximized);
+      }
+    }).catch(() => {});
+  } else if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
     window.pywebview.api.is_maximized().then(res => {
       if (res && typeof res.maximized === 'boolean') {
         updateMaximizeIcon(res.maximized);
@@ -2427,7 +2456,7 @@ function playCompletionChime() {
 }
 
 function requestNotificationPermission() {
-  if (typeof window.pywebview !== 'undefined' || window.location.search.includes('desktop_app=1') || window.location.port === '8767') {
+  if ((window.TauriBridge && window.TauriBridge.isTauri) || typeof window.pywebview !== 'undefined' || window.location.search.includes('desktop_app=1') || window.location.port === '8767') {
     return;
   }
   if ('Notification' in window && Notification.permission === 'default') {
@@ -2436,7 +2465,7 @@ function requestNotificationPermission() {
     } catch (_) {}
   }
 }
-if (typeof window.pywebview === 'undefined' && !window.location.search.includes('desktop_app=1')) {
+if (!(window.TauriBridge && window.TauriBridge.isTauri) && typeof window.pywebview === 'undefined' && !window.location.search.includes('desktop_app=1')) {
   document.addEventListener('click', requestNotificationPermission, { once: true });
 }
 

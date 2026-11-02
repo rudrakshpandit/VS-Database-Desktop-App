@@ -35,3 +35,8 @@ Thumbs.db
 
 database.db
 *.db
+
+# Tauri Build Outputs
+src-tauri/target/
+src-tauri/gen/
+
