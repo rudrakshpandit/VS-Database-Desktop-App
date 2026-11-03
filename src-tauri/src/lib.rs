@@ -74,6 +74,99 @@ pub fn send_desktop_shutdown() {
     }
 }
 
+/// Send UI detach signal so backend knows desktop window closed while keeping server alive for LAN clients (DEF-003)
+pub fn send_desktop_detach() {
+    let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
+    let Ok(addr) = addr_str.parse::<SocketAddr>() else {
+        return;
+    };
+
+    if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(1000)) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
+
+        let body = r#"{"instance_id": "tauri-main-ui"}"#;
+        let request = format!(
+            "POST /api/desktop/ui-detach HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            PYTHON_PORT,
+            body.len(),
+            body
+        );
+
+        let _ = stream.write_all(request.as_bytes());
+    }
+}
+
+/// Check lifecycle policy: whether backend can be terminated or must stay alive for LAN/companion
+pub fn can_shutdown_backend() -> bool {
+    let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
+    let Ok(addr) = addr_str.parse::<SocketAddr>() else {
+        return true;
+    };
+
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(600)) else {
+        return true;
+    };
+
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+
+    let request = format!(
+        "GET /api/desktop/lifecycle-policy HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        PYTHON_PORT
+    );
+
+    if stream.write_all(request.as_bytes()).is_err() {
+        return true;
+    }
+
+    let mut buf = [0u8; 1024];
+    if let Ok(n) = stream.read(&mut buf) {
+        let response = String::from_utf8_lossy(&buf[..n]);
+        if response.contains("\"can_terminate\": false") || response.contains("\"can_terminate\":false") {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Locate standalone packaged sidecar executable across release, binaries, and migration directories (DEF-002)
+fn locate_sidecar_binary() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("server_sidecar.exe"));
+            candidates.push(parent.join("server_sidecar-x86_64-pc-windows-gnu.exe"));
+            candidates.push(parent.join("binaries").join("server_sidecar-x86_64-pc-windows-gnu.exe"));
+            if let Some(grandparent) = parent.parent() {
+                candidates.push(grandparent.join("server_sidecar.exe"));
+                candidates.push(grandparent.join("dist").join("server_sidecar.exe"));
+            }
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("server_sidecar.exe"));
+        candidates.push(cwd.join("dist").join("server_sidecar.exe"));
+        candidates.push(cwd.join("binaries").join("server_sidecar-x86_64-pc-windows-gnu.exe"));
+        candidates.push(cwd.join("src-tauri").join("binaries").join("server_sidecar-x86_64-pc-windows-gnu.exe"));
+    }
+
+    candidates.push(PathBuf::from(r"D:\AntiGravity Automation\VS Database 2.0 - Tauri Migration\server_sidecar.exe"));
+    candidates.push(PathBuf::from(r"D:\AntiGravity Automation\VS Database 2.0 - Tauri Migration\dist\server_sidecar.exe"));
+    candidates.push(PathBuf::from(r"D:\AntiGravity Automation\VS Database 2.0 - Tauri Migration\src-tauri\binaries\server_sidecar-x86_64-pc-windows-gnu.exe"));
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
 /// Locate the server.py script file across common development and release paths
 fn locate_server_script() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -110,7 +203,7 @@ fn locate_server_script() -> Option<PathBuf> {
 }
 
 /// Determine the best available Python executable
-fn get_python_executable() -> String {
+fn get_python_executable() -> Option<String> {
     let candidates = [
         "pythonw",
         "python",
@@ -125,60 +218,85 @@ fn get_python_executable() -> String {
         cmd.creation_flags(CREATE_NO_WINDOW);
         if let Ok(output) = cmd.output() {
             if output.status.success() {
-                return candidate.to_string();
+                return Some(candidate.to_string());
             }
         }
     }
 
-    "pythonw".to_string()
+    None
 }
 
 /// Ensure Python background sidecar is running and wait for readiness
 fn ensure_python_sidecar() -> Result<(), String> {
     if is_python_server_healthy() {
-        eprintln!("[Supervisor] Python server already running on port {}", PYTHON_PORT);
+        eprintln!("[Supervisor] Backend server already running on port {}", PYTHON_PORT);
         return Ok(());
     }
 
-    let Some(server_script) = locate_server_script() else {
-        return Err("Could not locate server.py".to_string());
-    };
+    // 1. Try launching standalone packaged sidecar first (DEF-002: no system Python required)
+    if let Some(sidecar_bin) = locate_sidecar_binary() {
+        let sidecar_dir = sidecar_bin
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
 
-    let server_dir = server_script
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+        eprintln!("[Supervisor] Launching standalone sidecar: {:?} in {:?}", sidecar_bin, sidecar_dir);
+        let mut cmd = Command::new(&sidecar_bin);
+        cmd.current_dir(&sidecar_dir);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let python_exe = get_python_executable();
-    eprintln!(
-        "[Supervisor] Spawning Python sidecar: {} {} in {:?}",
-        python_exe,
-        server_script.display(),
-        server_dir
-    );
-
-    let mut cmd = Command::new(&python_exe);
-    cmd.arg(&server_script);
-    cmd.current_dir(&server_dir);
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    match cmd.spawn() {
-        Ok(_) => {
-            eprintln!("[Supervisor] Python process spawned, waiting for health check...");
+        if let Ok(_child) = cmd.spawn() {
+            eprintln!("[Supervisor] Standalone sidecar spawned, waiting for health check...");
             let start = Instant::now();
-            let timeout = Duration::from_secs(15);
+            let timeout = Duration::from_secs(20);
             while start.elapsed() < timeout {
                 if is_python_server_healthy() {
-                    eprintln!("[Supervisor] Python server is ready and healthy on port {}", PYTHON_PORT);
+                    eprintln!("[Supervisor] Standalone sidecar is healthy on port {}", PYTHON_PORT);
                     return Ok(());
                 }
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(250));
             }
-            Err("Timed out waiting for Python server health check on port 8767".to_string())
         }
-        Err(e) => Err(format!("Failed to spawn Python process: {}", e)),
     }
+
+    // 2. Fallback to developer script with system Python
+    if let Some(server_script) = locate_server_script() {
+        let server_dir = server_script
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        if let Some(python_exe) = get_python_executable() {
+            eprintln!(
+                "[Supervisor] Spawning Python development script: {} {} in {:?}",
+                python_exe,
+                server_script.display(),
+                server_dir
+            );
+
+            let mut cmd = Command::new(&python_exe);
+            cmd.arg(&server_script);
+            cmd.current_dir(&server_dir);
+            #[cfg(windows)]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+
+            if let Ok(_child) = cmd.spawn() {
+                eprintln!("[Supervisor] Python script spawned, waiting for health check...");
+                let start = Instant::now();
+                let timeout = Duration::from_secs(15);
+                while start.elapsed() < timeout {
+                    if is_python_server_healthy() {
+                        eprintln!("[Supervisor] Python server is ready and healthy on port {}", PYTHON_PORT);
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }
+        }
+    }
+
+    Err("Could not start Python backend via either standalone sidecar or system Python".to_string())
 }
 
 // Window control commands
@@ -241,11 +359,16 @@ pub fn run() {
         Ok(())
     });
 
-    // Window close event hook for graceful shutdown
+    // Window close event hook for lifecycle decoupling (DEF-003)
     builder = builder.on_window_event(|_window, event| {
         if let tauri::WindowEvent::CloseRequested { .. } = event {
-            eprintln!("[Lifecycle] Window close requested, triggering Python shutdown...");
-            send_desktop_shutdown();
+            if can_shutdown_backend() {
+                eprintln!("[Lifecycle] No active LAN clients or LAN mode. Shutting down backend...");
+                send_desktop_shutdown();
+            } else {
+                eprintln!("[Lifecycle] Active LAN clients or LAN mode enabled. Detaching UI while preserving server...");
+                send_desktop_detach();
+            }
         }
     });
 
@@ -255,8 +378,13 @@ pub fn run() {
 
     app.run(|_app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            eprintln!("[Lifecycle] App exit requested, ensuring Python backend shutdown...");
-            send_desktop_shutdown();
+            if can_shutdown_backend() {
+                eprintln!("[Lifecycle] App exit requested, ensuring backend shutdown...");
+                send_desktop_shutdown();
+            } else {
+                eprintln!("[Lifecycle] App exit with LAN mode, server retained.");
+                send_desktop_detach();
+            }
         }
     });
 }

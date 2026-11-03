@@ -183,6 +183,17 @@ def _bg_generate_chat_title(job_id: str, cid: str, prompt: str, asst_text: str):
 
 ai_job_queue = AIJobQueue(max_workers=3)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8767"))
+
+_HANDSHAKE_TOKEN = None
+for _i, _arg in enumerate(sys.argv):
+    if _arg == "--handshake-token" and _i + 1 < len(sys.argv):
+        _HANDSHAKE_TOKEN = sys.argv[_i + 1].strip()
+    elif _arg.startswith("--handshake-token="):
+        _HANDSHAKE_TOKEN = _arg.split("=", 1)[1].strip()
+
+if not _HANDSHAKE_TOKEN:
+    _HANDSHAKE_TOKEN = os.environ.get("VS_HANDSHAKE_TOKEN") or secrets.token_hex(24)
+
 PORTAL_LOCK = threading.RLock()
 _CLIENT_LOCKS = {}
 _CLIENT_LOCKS_GUARD = threading.Lock()
@@ -6882,7 +6893,29 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin", "")
         if not origin:
             return None
-        if origin.startswith("chrome-extension://") or origin == "https://app.practive.in" or origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:") or origin.startswith("http://192.168.") or origin.startswith("http://10."):
+        # 1. Tauri desktop & custom schemes
+        if origin in ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"):
+            return origin
+        # 2. Localhost on exact bound port only (prevents arbitrary localhost:3000 CORS access)
+        if origin in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+            return origin
+        # 3. Dedicated official production web app
+        if origin == "https://app.practive.in":
+            return origin
+        # 4. Chrome Extension - Pin to authorized extension ID if specified, or reject rogue IDs
+        allowed_ext = os.environ.get("VS_EXTENSION_ID", "").strip()
+        if origin.startswith("chrome-extension://"):
+            ext_id = origin.replace("chrome-extension://", "").strip("/").split("/")[0]
+            if allowed_ext:
+                if ext_id == allowed_ext:
+                    return origin
+                return None
+            # Reject arbitrary rogue extension IDs (such as unapproved dummy extensions)
+            if ext_id == "abcdefghijklmnopqrstuvwxyz123456" or not (len(ext_id) == 32 and ext_id.isalpha()):
+                return None
+            return origin
+        # 5. LAN private subnet
+        if self.is_local_client() and (origin.startswith("http://192.168.") or origin.startswith("http://10.") or origin.startswith("http://172.")):
             return origin
         return None
 
@@ -6890,7 +6923,7 @@ class Handler(BaseHTTPRequestHandler):
         if origin := self.cors_origin():
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Credentials", "true")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id, X-VS-Handshake-Token")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Vary", "Origin")
 
@@ -6922,30 +6955,38 @@ class Handler(BaseHTTPRequestHandler):
             return auth[7:].strip()
         return ""
 
+    def _get_host_context_record(self) -> dict | None:
+        with db() as con:
+            host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
+            if host_user:
+                dev = con.execute("SELECT * FROM devices WHERE user_id=? AND status='approved' LIMIT 1", (host_user["user_id"],)).fetchone()
+                dev_id = dev["device_id"] if dev else "dev-main-host-001"
+                dev_name = dev["device_name"] if dev else "Main Server PC"
+                if not dev:
+                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, '127.0.0.1', 'approved', ?, ?, ?, ?)",
+                                (dev_id, host_user["user_id"], dev_name, now(), now(), now(), now()))
+                return {
+                    "user_id": host_user["user_id"],
+                    "role": "host",
+                    "device_id": dev_id,
+                    "device_name": dev_name,
+                    "user_status": "active",
+                    "device_status": "approved",
+                    "session_type": "web"
+                }
+        return None
+
     def get_auth_context(self) -> dict | None:
         token = self.get_auth_token()
         if token:
             return validate_session(token, self.client_address[0])
-        # If accessing directly from localhost (server PC) and host user exists, auto-grant host session
+        # For localhost / loopback callers: require secret handshake token from supervisor
         if ipaddress.ip_address(self.client_address[0]).is_loopback:
-            with db() as con:
-                host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
-                if host_user:
-                    dev = con.execute("SELECT * FROM devices WHERE user_id=? AND status='approved' LIMIT 1", (host_user["user_id"],)).fetchone()
-                    dev_id = dev["device_id"] if dev else "dev-main-host-001"
-                    dev_name = dev["device_name"] if dev else "Main Server PC"
-                    if not dev:
-                        con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, '127.0.0.1', 'approved', ?, ?, ?, ?)",
-                                    (dev_id, host_user["user_id"], dev_name, now(), now(), now(), now()))
-                    return {
-                        "user_id": host_user["user_id"],
-                        "role": "host",
-                        "device_id": dev_id,
-                        "device_name": dev_name,
-                        "user_status": "active",
-                        "device_status": "approved",
-                        "session_type": "web"
-                    }
+            handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+            if _HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN:
+                return self._get_host_context_record()
+            # Unauthenticated loopback requests are rejected from host administrative privileges
+            return None
         return None
 
     def send_auth_cookie(self, token: str, max_age: int = 31536000):
@@ -6967,6 +7008,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/health",
             "/api/desktop/health",
             "/api/desktop/state",
+            "/api/desktop/lifecycle-policy",
             "/api/desktop/heartbeat",
             "/api/desktop/ui-attach",
             "/api/desktop/ui-detach",
@@ -7563,6 +7605,26 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/desktop/state":
             return self.send_json(get_desktop_state())
+
+        if path == "/api/desktop/lifecycle-policy":
+            with db() as con:
+                t = now()
+                # Count active non-loopback sessions (LAN workstations)
+                active_lan_sessions = con.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE status = 'active' AND ip_address != '127.0.0.1' AND session_type != 'extension'"
+                ).fetchone()[0]
+                # Check if LAN server mode is explicitly enabled
+                lan_setting = con.execute(
+                    "SELECT value FROM settings WHERE key = 'lan_server_mode' LIMIT 1"
+                ).fetchone()
+                lan_enabled = bool(lan_setting and lan_setting[0] in ("true", "1", "enabled"))
+            can_terminate = not lan_enabled and active_lan_sessions == 0
+            return self.send_json({
+                "ok": True,
+                "lan_server_mode": lan_enabled,
+                "active_lan_sessions": active_lan_sessions,
+                "can_terminate": can_terminate
+            })
 
         if path == "/api/desktop/navigate":
             global _PENDING_DESKTOP_ROUTE
