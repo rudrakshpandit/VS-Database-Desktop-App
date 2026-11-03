@@ -40,3 +40,7 @@ database.db
 src-tauri/target/
 src-tauri/gen/
 
+# Backups & test artifacts
+backups/
+*.bak
+
