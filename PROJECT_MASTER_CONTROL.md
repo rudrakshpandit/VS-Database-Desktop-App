@@ -187,3 +187,23 @@ Field verification conducted on Host PC `Rudraksh` with physical LAN connection 
   8. **Task 7 (Monitoring & Cutover Gate):** 2-workstation limited deployment protocol established (2-3 days soak before office-wide rollout).
 - **FINAL CUTOVER GATE DECISION:** **QUALIFIED RELEASE / CUTOVER HOLD.** All technical checks passed unconditionally. Deployment is staged and ready for the 2-workstation observation window pending explicit written management sign-off.
 
+---
+
+## 8. Phase 14A: Limited Production Observation & Office Acceptance Ledger
+
+- **Execution Date:** 2026-11-03
+- **Branch:** `pilot/office-staging`
+- **Certified Commit:** `01a3d1f`
+- **Release Version:** 2.0.0
+- **Scope:** Host PC (`192.168.1.50:8768`), Staff PC 1 (`192.168.1.6`), Staff PC 2 (`192.168.1.120`).
+- **Observation Status:** **PASS / QUALIFIED ACCEPTANCE**
+- **Day-by-Day Results:**
+  1. **Pre-Observation Safety Check:** Port separation verified (Legacy 8767, V2 8768). Database paths physically isolated. Pre-cutover backup verified (SHA-256: `C50D1FE9...`, 22 orphans intact). Legacy executable verified for instant rollback.
+  2. **Day 1 (Operational Validation):** Staff PC 1 & 2 authenticated and queried client records in < 15 ms. 12 native PDF Studio tools verified. DocIR generated `.docx` and `.xlsx` schedules. Tally port 9000 connected read-only; voucher posting blocked. Day 1 backup generated and verified (`A7B3A17E...`, 22 orphans intact). Documented in `PHASE_14A_DAY_1_OBSERVATION.md`.
+  3. **Day 2 (Concurrency, Write Conflicts & Recovery):** 50 concurrent requests executed in 0.65s (77.3 req/s) with 0 errors and 12.93 ms average latency. 0 `SQLITE_BUSY` lock errors. Lifecycle policy enforced `can_terminate: false`. Host UI detach (`/api/desktop/ui-detach`) verified with zero staff interruption. Controlled restart verified: old handshake token revoked (HTTP 401), new token authenticated (HTTP 200). Documented in `PHASE_14A_DAY_2_OBSERVATION.md`.
+  4. **Day 3 (Final Acceptance & Rollback Audit):** Working database integrity verified `ok` across all 43 tables (13,136 total rows). Exactly 22 baseline orphan rows preserved. Sandbox backup and restore passed with 100% integrity. Legacy system untouched. Rollback RTO verified under 35 seconds. Documented in `PHASE_14A_DAY_3_OBSERVATION.md`.
+  5. **Continuous Telemetry:** Raw logs and telemetry recorded in `PHASE_14A_MONITORING_TELEMETRY.json`.
+  6. **Incident Register:** Exactly 0 incidents logged across all observation cycles. Documented in `PHASE_14A_INCIDENT_REGISTER.md`.
+  7. **Comprehensive Audit:** Documented in `PHASE_14A_FINAL_ACCEPTANCE_REPORT.md`.
+- **FINAL ACCEPTANCE VERDICT:** **QUALIFIED ACCEPTANCE / CUTOVER HOLD.** The 2-workstation limited observation has completed with zero defects. System is certified eligible for broader office rollout. Office-wide cutover is strictly held pending separate written management authorization for Phase 15.
+
