@@ -2232,6 +2232,7 @@ EXECUTIVE TITLE:"""
         Executes requested practice copilot action (Trial Balance, Balance Sheet, PDF merge, client note, etc.),
         creates real persisted artifacts via vs_ai_doc_generator, and suggests ONE next action.
         """
+        client_name = client_context.get("name") if client_context else None
         display_entity = client_name if client_name and client_name != "Client Advisory" else "[Client Entity Name]"
         client_file_no = client_context.get("file_no") if client_context else None
 

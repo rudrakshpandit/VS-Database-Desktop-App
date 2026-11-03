@@ -49,6 +49,25 @@ pub fn is_python_server_healthy() -> bool {
     false
 }
 
+use std::sync::OnceLock;
+
+static HANDSHAKE_TOKEN: OnceLock<String> = OnceLock::new();
+
+pub fn get_handshake_token() -> &'static str {
+    HANDSHAKE_TOKEN.get_or_init(|| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        format!("vs-handshake-{}-{}", std::process::id(), now_ms)
+    })
+}
+
+#[tauri::command]
+fn get_desktop_handshake_token() -> String {
+    get_handshake_token().to_string()
+}
+
 /// Send graceful shutdown signal to the local Python backend
 pub fn send_desktop_shutdown() {
     let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
@@ -62,8 +81,9 @@ pub fn send_desktop_shutdown() {
 
         let body = r#"{"force": true}"#;
         let request = format!(
-            "POST /api/desktop/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "POST /api/desktop/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-VS-Handshake-Token: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             PYTHON_PORT,
+            get_handshake_token(),
             body.len(),
             body
         );
@@ -87,8 +107,9 @@ pub fn send_desktop_detach() {
 
         let body = r#"{"instance_id": "tauri-main-ui"}"#;
         let request = format!(
-            "POST /api/desktop/ui-detach HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "POST /api/desktop/ui-detach HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-VS-Handshake-Token: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             PYTHON_PORT,
+            get_handshake_token(),
             body.len(),
             body
         );
@@ -112,8 +133,9 @@ pub fn can_shutdown_backend() -> bool {
     let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
 
     let request = format!(
-        "GET /api/desktop/lifecycle-policy HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-        PYTHON_PORT
+        "GET /api/desktop/lifecycle-policy HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-VS-Handshake-Token: {}\r\nConnection: close\r\n\r\n",
+        PYTHON_PORT,
+        get_handshake_token()
     );
 
     if stream.write_all(request.as_bytes()).is_err() {
@@ -242,6 +264,7 @@ fn ensure_python_sidecar() -> Result<(), String> {
 
         eprintln!("[Supervisor] Launching standalone sidecar: {:?} in {:?}", sidecar_bin, sidecar_dir);
         let mut cmd = Command::new(&sidecar_bin);
+        cmd.arg(format!("--handshake-token={}", get_handshake_token()));
         cmd.current_dir(&sidecar_dir);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
@@ -277,6 +300,7 @@ fn ensure_python_sidecar() -> Result<(), String> {
 
             let mut cmd = Command::new(&python_exe);
             cmd.arg(&server_script);
+            cmd.arg(format!("--handshake-token={}", get_handshake_token()));
             cmd.current_dir(&server_dir);
             #[cfg(windows)]
             cmd.creation_flags(CREATE_NO_WINDOW);
@@ -341,12 +365,13 @@ pub fn run() {
     builder = builder.plugin(tauri_plugin_opener::init());
     builder = builder.plugin(tauri_plugin_dialog::init());
 
-    // Window controls and health commands
+    // Window controls, health commands, and handshake token
     builder = builder.invoke_handler(tauri::generate_handler![
         minimize_window,
         maximize_window,
         close_window,
-        get_python_health
+        get_python_health,
+        get_desktop_handshake_token
     ]);
 
     // Setup lifecycle: supervisor spawn & health check

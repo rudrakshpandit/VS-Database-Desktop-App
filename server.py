@@ -60,7 +60,25 @@ else:
     APP_ROOT = Path(__file__).resolve().parent
     STATIC_ROOT = APP_ROOT / "static"
 
-DATA_ROOT = APP_ROOT / "data"
+# Resolve DATA_ROOT: check CLI override, env var, or walk up parent directories
+custom_data_dir = None
+for arg in sys.argv[1:]:
+    if arg.startswith("--data-dir="):
+        custom_data_dir = Path(arg.split("=", 1)[1]).resolve()
+if not custom_data_dir and os.environ.get("VS_DATA_DIR"):
+    custom_data_dir = Path(os.environ["VS_DATA_DIR"]).resolve()
+
+if custom_data_dir:
+    DATA_ROOT = custom_data_dir
+else:
+    resolved_root = APP_ROOT
+    for p in [APP_ROOT, APP_ROOT.parent, APP_ROOT.parent.parent, APP_ROOT.parent.parent.parent]:
+        if p.name.lower() in ("dist", "binaries", "target", "debug", "release", "src-tauri"):
+            continue
+        if (p / "data" / "vs_database_desktop.db").exists():
+            resolved_root = p
+            break
+    DATA_ROOT = resolved_root / "data"
 DATA_ROOT.mkdir(exist_ok=True)
 REVOKED_ARCHIVE_DIR = DATA_ROOT / "revoked_archive"
 REVOKED_ARCHIVE_DIR.mkdir(exist_ok=True)
@@ -7008,15 +7026,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/health",
             "/api/desktop/health",
             "/api/desktop/state",
-            "/api/desktop/lifecycle-policy",
             "/api/desktop/heartbeat",
-            "/api/desktop/ui-attach",
-            "/api/desktop/ui-detach",
-            "/api/desktop/shutdown",
-            "/api/desktop/navigate",
-            "/api/desktop/bring_to_front",
-            "/api/desktop/return_to_browser",
-            "/api/desktop/pending_browser_return",
             "/api/staging/incoming",
             "/api/staging/incoming/clear",
             "/api/auth/status",

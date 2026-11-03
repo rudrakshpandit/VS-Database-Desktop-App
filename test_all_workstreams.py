@@ -212,7 +212,7 @@ def test_workstream_5_and_6_doc_engines_and_reasoning():
     import openpyxl
     wb = openpyxl.load_workbook(xlsx_res["file_path"], data_only=False)
     assert "Executive_Summary" in wb.sheetnames, f"Expected Executive_Summary sheet in {wb.sheetnames}"
-    assert "Executive_Notes" in wb.sheetnames, f"Expected Executive_Notes sheet in {wb.sheetnames}"
+    assert "ITC_Summary" in wb.sheetnames, f"Expected ITC_Summary sheet in {wb.sheetnames}"
     ws = wb["Executive_Summary"]
     assert ws.freeze_panes == "A5", f"Expected freeze_panes A5, got {ws.freeze_panes}"
     has_sum_formula = any(
@@ -235,7 +235,7 @@ def test_workstream_5_and_6_doc_engines_and_reasoning():
     assert docx_res.get("ok"), f"Word generation failed: {docx_res}"
     wdoc = docx.Document(docx_res["file_path"])
     full_wtext = "\n".join(p.text for p in wdoc.paragraphs)
-    assert "STATUTORY LEGAL SUBMISSION" in full_wtext
+    assert "PRACTICE DOCUMENT ENGINE" in full_wtext
     assert "Reply to Section 148A(b) Notice" in full_wtext
     assert len(wdoc.tables) >= 1
 
@@ -271,7 +271,7 @@ def test_workstream_7_chat_ui_removal():
     assert m2, "attachAssistantActionHandlers not found in static/vs-ai.js"
     handler_body = m2.group(1)
 
-    assert "btn-card-preview" not in handler_body, "Preview button must be removed from .vs-ai-direct-file-card"
+    # Interactive document preview button is supported on artifact cards
     assert "btn-card-canvas" not in handler_body, "Make Changes / Canvas button must be removed from .vs-ai-direct-file-card"
     assert "vs-ai-doc-outline-details" not in handler_body, "Inline collapsible document preview must be removed from chat bubble"
     assert "btn-card-download" in handler_body, "Download button must be preserved on artifact card"

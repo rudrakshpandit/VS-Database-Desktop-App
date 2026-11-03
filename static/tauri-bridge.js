@@ -373,7 +373,20 @@
     });
   }
 
-  // 7. Transparent fetch monkey-patching for cross-origin Tauri requests
+  // 7. Transparent fetch monkey-patching for cross-origin Tauri requests & Handshake Token injection
+  let cachedHandshakeToken = null;
+  async function initHandshakeToken() {
+    const inv = getTauriInvoke();
+    if (inv) {
+      try {
+        cachedHandshakeToken = await inv('get_desktop_handshake_token');
+      } catch (_) {}
+    }
+  }
+  if (isTauri()) {
+    initHandshakeToken();
+  }
+
   if (typeof window !== 'undefined' && window.fetch) {
     const originalFetch = window.fetch;
     window.fetch = function (resource, init) {
@@ -393,6 +406,22 @@
           } catch (_) {}
         }
       }
+
+      if (cachedHandshakeToken) {
+        init = init || {};
+        if (init.headers instanceof Headers) {
+          if (!init.headers.has('X-VS-Handshake-Token')) {
+            init.headers.set('X-VS-Handshake-Token', cachedHandshakeToken);
+          }
+        } else if (Array.isArray(init.headers)) {
+          init.headers.push(['X-VS-Handshake-Token', cachedHandshakeToken]);
+        } else {
+          init.headers = Object.assign({}, init.headers, {
+            'X-VS-Handshake-Token': cachedHandshakeToken
+          });
+        }
+      }
+
       return originalFetch.call(this, finalResource, init);
     };
   }

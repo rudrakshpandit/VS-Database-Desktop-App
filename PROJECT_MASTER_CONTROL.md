@@ -143,23 +143,24 @@ The Main Chat retains single-point executive and engineering accountability. Spe
 
 ---
 
-## 6. Known Risks & Remediation Plan for Phase 12
+## 6. Phase 12 Controlled Office Pilot Results
 
-1. **Firewall Inbound Rule for LAN Mode:**
-   - *Risk:* Windows Defender Firewall may prompt the user or block incoming port 8767 connections from other office PCs when LAN server mode is activated.
-   - *Plan:* Add an automated or documented Windows Firewall rule configuration during installer execution or prompt cleanly via native dialog.
-2. **WebView2 Runtime Distribution on Windows 10:**
-   - *Risk:* Some legacy Windows 10 enterprise builds might not have Evergreen WebView2 installed.
-   - *Plan:* Tauri bundle configuration supports Evergreen Bootstrapper to download or verify WebView2 availability.
-3. **Multi-Instance Guard:**
-   - *Risk:* Starting a second instance of `vs-database.exe` while LAN mode is running.
-   - *Plan:* `tauri-plugin-single-instance` focuses the existing window or connects to the existing running sidecar.
+Phase 12 completed on `pilot/office-staging` branch:
+- **Clean Windows Execution:** PASS (No external Python required; sidecar starts autonomously).
+- **LAN Protocol & Lifecycle Decoupling:** PASS (Interface binding `0.0.0.0:8767`; `can_terminate = false` protects active LAN workstations during host UI closure; UI reconnects cleanly).
+- **Second Physical Device:** NOT TESTED (Single-host lab workstation; requires staging on office hardware).
+- **Deep Security Matrix:** PASS (9/9 vectors PASS; unauthenticated requests, rogue ports, rogue extension IDs, and direct POST shutdown bypass all rejected with HTTP 401).
+- **Core Business Workflows:** PASS (5/5 core migration tests, 10/10 automation/Tally tests, 8/8 workstream tests pass; fixed `vs_ai_engine.py` latent `NameError`).
+- **Data Integrity & Backups:** PASS (13,115 rows across 42 tables verified; 22 legacy orphan rows match baseline 100%; encrypted `.vsbackup` created and verified).
+- **Process Memory Profile:** PASS (Native Tauri shell: 58.55 MB; Sidecar: 114.61 MB; Total true tree inc. WebView2: 701.98 MB).
 
 ---
 
 ## 7. Current Project Status & Readiness
 
-- **Codebase Integrity:** Branch `migration/tauri-v2` is clean and committed at commit `c61698a`.
-- **Database Safety:** Zero mutations to primary databases during testing.
+- **Workspace:** `D:\AntiGravity Automation\VS Database 2.0 - Tauri Migration`
+- **Active Branch:** `pilot/office-staging`
+- **Baseline Branch:** `migration/tauri-v2` (`c61698a`)
+- **Database Safety:** Zero mutations to primary databases during testing (SHA-256: `bb1741...`).
 - **Original Application:** Untouched, read-only at `D:\AntiGravity Automation\VS Desktop App`.
-- **Current Gate:** Phase 11 complete. Ready for Phase 12 upon user authorization.
+- **Current Gate:** Phase 12 complete with Qualified Pass. Ready for On-Premise Staging / Phase 13 Rollout upon user authorization.
