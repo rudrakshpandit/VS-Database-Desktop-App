@@ -18,22 +18,80 @@
     if (typeof window === 'undefined') return false;
     if (typeof window.__TAURI_INTERNALS__ !== 'undefined') return true;
     if (typeof window.__TAURI__ !== 'undefined') return true;
-    const proto = window.location.protocol;
-    const host = window.location.hostname;
+    const loc = window.location || {};
+    const proto = loc.protocol || '';
+    const host = loc.hostname || '';
     return proto === 'tauri:' || host === 'tauri.localhost' || proto === 'asset:';
   }
 
-  // 2. Base URL & Route Resolution
+  // 2. Base URL & Route Resolution (ADR-015 Host-Client Architecture)
+  const DEFAULT_HOST_URL = 'http://127.0.0.1:8768';
+
+  function getHostUrl() {
+    if (typeof window === 'undefined') return DEFAULT_HOST_URL;
+    try {
+      if (window.location && window.location.search) {
+        const params = new URLSearchParams(window.location.search);
+        const hostParam = params.get('host') || params.get('host_url');
+        if (hostParam) return sanitizeHostUrl(hostParam);
+      }
+      const stored = localStorage.getItem('vs-host-url') || localStorage.getItem('vs_host_url');
+      if (stored) return sanitizeHostUrl(stored);
+    } catch (e) {
+      console.warn('[TauriBridge] Failed to read stored host URL:', e);
+    }
+    return null;
+  }
+
+  function sanitizeHostUrl(url) {
+    if (!url || typeof url !== 'string') return DEFAULT_HOST_URL;
+    let clean = url.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'http://' + clean;
+    }
+    while (clean.endsWith('/')) {
+      clean = clean.slice(0, -1);
+    }
+    return clean;
+  }
+
+  function setHostUrl(url) {
+    if (typeof window === 'undefined') return DEFAULT_HOST_URL;
+    const sanitized = sanitizeHostUrl(url);
+    try {
+      localStorage.setItem('vs-host-url', sanitized);
+      window.dispatchEvent(new CustomEvent('vshosturlchanged', { detail: { hostUrl: sanitized } }));
+    } catch (e) {
+      console.warn('[TauriBridge] Failed to store host URL:', e);
+    }
+    return sanitized;
+  }
+
+  function resetHostUrl() {
+    if (typeof window === 'undefined') return DEFAULT_HOST_URL;
+    try {
+      localStorage.removeItem('vs-host-url');
+      localStorage.removeItem('vs_host_url');
+      window.dispatchEvent(new CustomEvent('vshosturlchanged', { detail: { hostUrl: DEFAULT_HOST_URL } }));
+    } catch (e) {
+      console.warn('[TauriBridge] Failed to reset host URL:', e);
+    }
+    return DEFAULT_HOST_URL;
+  }
+
   function getBaseUrl() {
-    if (typeof window === 'undefined') return 'http://127.0.0.1:8767';
+    if (typeof window === 'undefined') return DEFAULT_HOST_URL;
+    const configuredHost = getHostUrl();
+    if (configuredHost) return configuredHost;
+
     const loc = window.location;
     const proto = loc.protocol;
     const host = loc.hostname;
     // When served from Tauri custom scheme or file protocol
-    if (proto === 'tauri:' || host === 'tauri.localhost' || proto === 'asset:' || proto === 'file:' || (isTauri() && loc.port !== '8767')) {
-      return 'http://127.0.0.1:8767';
+    if (proto === 'tauri:' || host === 'tauri.localhost' || proto === 'asset:' || proto === 'file:' || (isTauri() && loc.port !== '8768' && loc.port !== '8767')) {
+      return DEFAULT_HOST_URL;
     }
-    return loc.origin;
+    return loc.origin || DEFAULT_HOST_URL;
   }
 
   function resolveApiUrl(path) {
@@ -432,6 +490,9 @@
     isTauriApp: isTauri,
     version: '2.0.0',
     getBaseUrl: getBaseUrl,
+    getHostUrl: getHostUrl,
+    setHostUrl: setHostUrl,
+    resetHostUrl: resetHostUrl,
     resolveApiUrl: resolveApiUrl,
     getInvoke: getTauriInvoke,
     getWindow: getTauriWindow,

@@ -21,7 +21,7 @@ h1{font-size:clamp(28px,5vw,44px);margin:0 0 8px;letter-spacing:-.02em}
 .lead{margin:0 0 32px;color:var(--dim);max-width:54ch;line-height:1.6}
 .dg{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
 .dc{position:relative;border-radius:26px;padding:22px 22px 26px;display:flex;flex-direction:column;gap:18px;min-height:210px}
-.dc:has(.dd.open){z-index:20}
+.dc:has(.dd.open){z-index:20;-webkit-backdrop-filter:none;backdrop-filter:none}
 .dc h3{margin:0;font-size:15px;font-weight:600}
 .dc small{color:var(--dim);font-size:12.5px;margin-top:-12px}
 
@@ -34,7 +34,7 @@ h1{font-size:clamp(28px,5vw,44px);margin:0 0 8px;letter-spacing:-.02em}
 .trg .val.ph{color:var(--dim);font-weight:400}
 .chev{flex:none;width:18px;height:18px;fill:none;stroke:var(--dim);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;transition:transform .45s cubic-bezier(.34,1.56,.5,1),stroke .3s}
 .dd.open .chev{transform:rotate(180deg);stroke:var(--a1)}
-.pn{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:30;padding:8px;border-radius:20px;background:rgba(255,255,255,.96);-webkit-backdrop-filter:blur(24px) saturate(170%);backdrop-filter:blur(24px) saturate(170%);border:1px solid var(--edge);box-shadow:0 18px 44px var(--shadow),inset 0 1px 0 #fff;opacity:0;visibility:hidden;transform:translateY(-10px) scale(.97);transform-origin:top;transition:opacity .25s,transform .45s cubic-bezier(.34,1.45,.5,1),visibility 0s .45s}
+.pn{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:30;padding:8px;border-radius:20px;background:linear-gradient(135deg,rgba(255,255,255,.42),rgba(255,255,255,0) 42%,rgba(255,255,255,.16)),linear-gradient(180deg,rgba(130,150,255,.14),rgba(255,160,225,.10)),rgba(255,255,255,var(--po,.2));-webkit-backdrop-filter:blur(22px) saturate(200%) brightness(1.06);backdrop-filter:blur(22px) saturate(200%) brightness(1.06);border:1px solid rgba(255,255,255,.75);box-shadow:0 20px 46px rgba(60,40,130,.3),0 0 0 .5px rgba(90,70,170,.18),inset 0 1px 1px rgba(255,255,255,.95),inset 1px 0 1px rgba(255,255,255,.55),inset 0 -1px 1px rgba(255,255,255,.45);opacity:0;visibility:hidden;transform:translateY(-10px) scale(.97);transform-origin:top;transition:opacity .25s,transform .45s cubic-bezier(.34,1.45,.5,1),visibility 0s .45s}
 .dd.open .pn{opacity:1;visibility:visible;transform:none;transition:opacity .25s,transform .45s cubic-bezier(.34,1.45,.5,1)}
 .dd.menu .pn{left:auto;min-width:210px}
 
@@ -47,7 +47,7 @@ h1{font-size:clamp(28px,5vw,44px);margin:0 0 8px;letter-spacing:-.02em}
 .lw.fd .list{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--ft),#000 calc(100% - var(--fb)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--ft),#000 calc(100% - var(--fb)),transparent 100%)}
 /* B: iOS liquid-glass scrollbar: thin track + clear glass capsule knob */
 .lw.gs .list{max-height:200px;padding-right:24px}
-.sbar{--tw:6px;--tc:rgba(35,28,80,.7);--kw:17px;position:absolute;right:2px;top:6px;bottom:6px;width:20px;cursor:pointer;opacity:.9;transition:opacity .3s}
+.sbar{--tw:var(--lw,6px);--tc:rgba(35,28,80,.7);--kw:17px;position:absolute;right:2px;top:6px;bottom:6px;width:20px;cursor:pointer;opacity:.9;transition:opacity .3s}
 .sbar::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:var(--tw);margin-left:calc(var(--tw)/-2);border-radius:99px;background:var(--tc);transition:opacity .3s}
 .lw:hover .sbar,.lw.scrolling .sbar,.sbar:hover,.sbar.drag{opacity:1}
 .sbar i{position:absolute;left:50%;top:0;width:var(--kw);margin-left:calc(var(--kw)/-2);min-height:34px;border-radius:99px;cursor:grab;
@@ -60,6 +60,12 @@ transition:width .28s cubic-bezier(.34,1.56,.5,1),margin .28s cubic-bezier(.34,1
 .sbar:not(.drag) i{transition:width .28s cubic-bezier(.34,1.56,.5,1),margin .28s cubic-bezier(.34,1.56,.5,1),box-shadow .25s,transform .12s ease-out}
 .sbar:hover i,.sbar.drag i{width:calc(var(--kw) + 5px);margin-left:calc((var(--kw) + 5px)/-2)}
 .sbar.drag i{cursor:grabbing;box-shadow:0 5px 14px rgba(40,30,100,.3),0 0 0 .5px rgba(70,60,140,.34),inset 0 1px 1px rgba(255,255,255,.95),inset 1.5px 0 2px rgba(255,255,255,.6),inset -1.5px 0 2px rgba(110,100,190,.2)}
+.ctrl{position:sticky;top:calc(12px + env(safe-area-inset-top,0px));z-index:60;display:flex;align-items:center;gap:14px;flex-wrap:wrap;width:fit-content;max-width:100%;margin:0 0 6px;padding:12px 22px;border-radius:99px;font-size:13px;font-weight:600}
+.ctrl input{width:220px;max-width:50vw;accent-color:var(--a2)}
+.ctrl output{min-width:42px;font-variant-numeric:tabular-nums;color:var(--a1);font-weight:700}
+.sepv{width:1px;height:22px;background:rgba(110,90,190,.25)}
+.rs{border:1px solid var(--edge);background:var(--row);border-radius:99px;padding:6px 14px;font:inherit;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1),background .2s}
+.rs:hover{transform:translateY(-1px);background:#fff}.rs:active{transform:scale(.95)}
 .sec{font-size:20px;margin:40px 0 4px;letter-spacing:-.01em}.sub{margin:0 0 18px;color:var(--dim);font-size:13.5px;line-height:1.5}
 .it{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:13px;font-size:14px;color:var(--dim);cursor:pointer;border:1px solid transparent;transition:background .25s,color .25s,border-color .25s,transform .3s cubic-bezier(.34,1.56,.5,1)}
 .it:hover,.it.hl{background:rgba(255,255,255,.85);color:var(--text);transform:translateX(3px)}
@@ -102,10 +108,8 @@ transition:width .28s cubic-bezier(.34,1.56,.5,1),margin .28s cubic-bezier(.34,1
 <div class="blob b1"></div><div class="blob b2"></div>
 <main>
 <h1>Glass Dropdowns</h1>
-<p class="lead">Twelve templates in the Glass UI light theme. The top six have no scrollbar at all. The bottom six use an iOS-style liquid-glass scrollbar you can drag, wheel or click.</p>
-<h2 class="sec">No scrollbar</h2><p class="sub">Long lists still scroll with the wheel, touch or arrow keys. A soft fade at the edge shows when more items are hidden.</p>
-<div class="dg" id="gA"></div>
-<h2 class="sec">Liquid glass scrollbar</h2><p class="sub">Inspired by the iOS liquid-glass controls: a thin track with a clear, see-through glass capsule knob. The knob grows slightly under the cursor and can be dragged. Each template uses a different track style.</p>
+<p class="lead">Six dropdown templates with the iOS-style liquid-glass scrollbar. The dropdown panel is real frosted glass: it blurs whatever is behind it. Use the sliders to change how much white tint the panel has (low = clear glass, 100% = solid white) and how thick the scrollbar line is, then open any dropdown to judge it.</p>
+<div class="ctrl glass"><label for="po">Panel opacity</label><input type="range" id="po" min="5" max="100" value="20" aria-label="Dropdown panel opacity"><output id="pov" for="po">20%</output><span class="sepv" aria-hidden="true"></span><label for="lw">Line thickness</label><input type="range" id="lw" min="1" max="14" step="0.5" value="6" aria-label="Scrollbar line thickness"><output id="lwv" for="lw">6 px</output><button type="button" id="por" class="rs">Reset</button></div>
 <div class="dg" id="gB"></div>
 </main>
 <div class="toast glass" id="toast"></div>
@@ -120,7 +124,7 @@ function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;
 
 var THUMB=41; /* fixed knob length (matches the Searchable list); travel speed adapts to list length */
 var TY=['Basic select','Icon + description','Status with dots','Multi-select chips','Searchable','Action menu'];
-['gA','gB'].forEach(function(g,k){var h='';TY.forEach(function(t,i){var id=(k?'e':'d')+(i+1);h+='<div class="dc glass"><h3>'+t+'</h3><small>'+(k?'Liquid glass scrollbar':'No scrollbar, soft edge fade')+'</small><div class="dd'+(i===5?' menu':'')+'" id="'+id+'"></div></div>'});document.getElementById(g).innerHTML=h});
+['gB'].forEach(function(g){var k=1,h='';TY.forEach(function(t,i){var id=(k?'e':'d')+(i+1);h+='<div class="dc glass"><h3>'+t+'</h3><small>'+(k?'Liquid glass scrollbar':'No scrollbar, soft edge fade')+'</small><div class="dd'+(i===5?' menu':'')+'" id="'+id+'"></div></div>'});document.getElementById(g).innerHTML=h});
 function L(a){return a.map(function(v){return{v:v}})}
 var TINT=['124,104,214','31,207,147','255,93,134','91,124,255','255,176,32','154,92,255'];
 var CTRY=['Australia','Brazil','Canada','Denmark','Egypt','France','Germany','India','Italy','Japan','Kenya','Mexico','Nepal','Norway','Singapore','Spain','Sweden','United Kingdom','United States','Vietnam'];
@@ -132,7 +136,7 @@ function cfg(sb){var A=function(a,b){return sb?b:a},C={};
  C[5]={kind:'single',ph:'Search a country',search:1,items:L(A(CTRY.slice(0,13),CTRY))};
  C[6]={kind:'menu',items:A([{v:'Edit',i:'edit'},{v:'Duplicate',i:'copy'},{v:'Share',i:'share'},{sep:1},{v:'Delete',i:'trash',danger:1}],[{v:'Edit',i:'edit'},{v:'Duplicate',i:'copy'},{v:'Share',i:'share'},{v:'Move to',i:'move'},{v:'Favourite',i:'star'},{v:'Archive',i:'archive'},{v:'Export',i:'export'},{sep:1},{v:'Delete',i:'trash',danger:1}])};
  for(var i=1;i<=6;i++){C[i].sb=sb;C[i].k=i;C[i].tint=TINT[i-1]}return C}
-var CFG={},CA=cfg(false),CB=cfg(true);for(var n=1;n<=6;n++){CFG['d'+n]=CA[n];CFG['e'+n]=CB[n]}
+var CFG={},CB=cfg(true);for(var n=1;n<=6;n++){CFG['e'+n]=CB[n]}
 
 function build(id,c){
  var root=document.getElementById(id),sel=c.kind==='multi'?(c.sel||[]).slice():(c.sel!=null?c.sel:-1),q='',hl=-1,trg,pn,list,sIn;
@@ -202,6 +206,12 @@ function build(id,c){
  paintVal();paintList();
 }
 Object.keys(CFG).forEach(function(k){build(k,CFG[k])});
+(function(){var r=document.getElementById('po'),o=document.getElementById('pov'),b=document.getElementById('por');
+ function set(v){document.documentElement.style.setProperty('--po',(v/100).toFixed(2));o.textContent=v+'%';r.value=v}
+ r.addEventListener('input',function(){set(+r.value)});var w=document.getElementById('lw'),wo=document.getElementById('lwv');
+ function setW(v){document.documentElement.style.setProperty('--lw',v+'px');wo.textContent=(+v)+' px';w.value=v}
+ w.addEventListener('input',function(){setW(+w.value)});
+ b.addEventListener('click',function(){set(20);setW(6)});set(20);setW(6)})();
 document.addEventListener('click',function(e){document.querySelectorAll('.dd.open').forEach(function(d){if(!d.contains(e.target)){d.classList.remove('open');var t=d.querySelector('.trg,.kb');if(t)t.setAttribute('aria-expanded','false')}})});
 </script>
 </body>

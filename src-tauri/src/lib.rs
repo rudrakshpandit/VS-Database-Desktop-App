@@ -13,8 +13,46 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const PYTHON_PORT: u16 = 8767;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+
+static CLIENT_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_client_mode_active() -> bool {
+    CLIENT_MODE.load(Ordering::Relaxed)
+}
+
+pub fn detect_client_mode() {
+    let mut is_client = std::env::args().any(|a| a == "--client-mode" || a == "-c" || a == "--client");
+    if !is_client {
+        if let Ok(v) = std::env::var("VS_CLIENT_MODE") {
+            if v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") {
+                is_client = true;
+            }
+        }
+    }
+    if !is_client {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                if parent.join("client_mode.flag").exists() || parent.join("client_config.json").exists() {
+                    is_client = true;
+                }
+            }
+        }
+    }
+    if is_client {
+        eprintln!("[Mode] Client Mode detected. Local backend sidecar and local DB disabled.");
+        CLIENT_MODE.store(true, Ordering::Relaxed);
+    } else {
+        eprintln!("[Mode] Host Mode active. Local backend sidecar and authoritative DB enabled.");
+    }
+}
+
 /// Check if the local Python server is healthy and responding on port 8767
 pub fn is_python_server_healthy() -> bool {
+    if is_client_mode_active() {
+        return false;
+    }
     let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
     let Ok(addr) = addr_str.parse::<SocketAddr>() else {
         return false;
@@ -49,8 +87,6 @@ pub fn is_python_server_healthy() -> bool {
     false
 }
 
-use std::sync::OnceLock;
-
 static HANDSHAKE_TOKEN: OnceLock<String> = OnceLock::new();
 
 pub fn get_handshake_token() -> &'static str {
@@ -70,6 +106,10 @@ fn get_desktop_handshake_token() -> String {
 
 /// Send graceful shutdown signal to the local Python backend
 pub fn send_desktop_shutdown() {
+    if is_client_mode_active() {
+        eprintln!("[Lifecycle] Client Mode active: skipping shutdown call.");
+        return;
+    }
     let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
     let Ok(addr) = addr_str.parse::<SocketAddr>() else {
         return;
@@ -96,6 +136,10 @@ pub fn send_desktop_shutdown() {
 
 /// Send UI detach signal so backend knows desktop window closed while keeping server alive for LAN clients (DEF-003)
 pub fn send_desktop_detach() {
+    if is_client_mode_active() {
+        eprintln!("[Lifecycle] Client Mode active: skipping detach call.");
+        return;
+    }
     let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
     let Ok(addr) = addr_str.parse::<SocketAddr>() else {
         return;
@@ -120,6 +164,9 @@ pub fn send_desktop_detach() {
 
 /// Check lifecycle policy: whether backend can be terminated or must stay alive for LAN/companion
 pub fn can_shutdown_backend() -> bool {
+    if is_client_mode_active() {
+        return false;
+    }
     let addr_str = format!("127.0.0.1:{}", PYTHON_PORT);
     let Ok(addr) = addr_str.parse::<SocketAddr>() else {
         return true;
@@ -250,6 +297,11 @@ fn get_python_executable() -> Option<String> {
 
 /// Ensure Python background sidecar is running and wait for readiness
 fn ensure_python_sidecar() -> Result<(), String> {
+    if is_client_mode_active() {
+        eprintln!("[Supervisor] Client Mode active: skipping local backend sidecar spawn.");
+        return Ok(());
+    }
+
     if is_python_server_healthy() {
         eprintln!("[Supervisor] Backend server already running on port {}", PYTHON_PORT);
         return Ok(());
@@ -348,8 +400,30 @@ fn get_python_health() -> bool {
     is_python_server_healthy()
 }
 
+#[tauri::command]
+fn get_app_mode() -> String {
+    if is_client_mode_active() {
+        "client".to_string()
+    } else {
+        "host".to_string()
+    }
+}
+
+#[tauri::command]
+fn is_client_mode() -> bool {
+    is_client_mode_active()
+}
+
+#[tauri::command]
+fn set_client_mode(enabled: bool) -> Result<bool, String> {
+    CLIENT_MODE.store(enabled, Ordering::Relaxed);
+    eprintln!("[Mode] App mode switched dynamically to: {}", if enabled { "client" } else { "host" });
+    Ok(enabled)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    detect_client_mode();
     let mut builder = tauri::Builder::default();
 
     // Single-instance plugin
@@ -365,13 +439,16 @@ pub fn run() {
     builder = builder.plugin(tauri_plugin_opener::init());
     builder = builder.plugin(tauri_plugin_dialog::init());
 
-    // Window controls, health commands, and handshake token
+    // Window controls, health commands, client mode, and handshake token
     builder = builder.invoke_handler(tauri::generate_handler![
         minimize_window,
         maximize_window,
         close_window,
         get_python_health,
-        get_desktop_handshake_token
+        get_desktop_handshake_token,
+        get_app_mode,
+        is_client_mode,
+        set_client_mode
     ]);
 
     // Setup lifecycle: supervisor spawn & health check

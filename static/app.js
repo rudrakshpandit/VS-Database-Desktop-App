@@ -277,7 +277,406 @@ const getDeviceId = () => {
 const getDeviceName = () => localStorage.getItem('vs-device-name') || '';
 const setDeviceName = (name) => localStorage.setItem('vs-device-name', name);
 
+// ADR-015: Centralized Host-Client Architecture with Offline Read-Only Mode
+const VSOfflineManager = {
+  STATE_ONLINE: 'ONLINE',
+  STATE_OFFLINE: 'OFFLINE',
+  STATE_RECONNECTING: 'RECONNECTING',
+  STATE_REVOKED: 'REVOKED',
+
+  currentState: 'ONLINE',
+  consecutiveFailures: 0,
+  heartbeatInterval: null,
+  cachedClientsKey: 'vs_cached_clients_ro',
+  lastOnlineTimestamp: Date.now(),
+  initialized: false,
+
+  init() {
+    if (this.initialized) return;
+    this.initialized = true;
+    this.injectStyles();
+    this.startHeartbeat();
+    console.log('[OfflineManager] Initialized. Monitoring Host reachability...');
+  },
+
+  getState() {
+    return this.currentState;
+  },
+
+  isOffline() {
+    return this.currentState === this.STATE_OFFLINE;
+  },
+
+  isRevoked() {
+    return this.currentState === this.STATE_REVOKED;
+  },
+
+  startHeartbeat() {
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    this.heartbeatInterval = setInterval(() => this.checkHeartbeat(), 2000);
+  },
+
+  async checkHeartbeat() {
+    if (this.currentState === this.STATE_REVOKED) return;
+
+    const healthUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+      ? window.TauriBridge.resolveApiUrl('/api/desktop/health')
+      : '/api/desktop/health';
+
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timeoutId = null;
+    if (controller) {
+      timeoutId = setTimeout(() => controller.abort(), 1800);
+    }
+
+    try {
+      const resp = await fetch(healthUrl, {
+        method: 'GET',
+        signal: controller ? controller.signal : undefined,
+        headers: { 'X-VS-Device-Id': getDeviceId() }
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+
+      if (resp.ok) {
+        if (this.consecutiveFailures > 0 || this.currentState === this.STATE_OFFLINE) {
+          console.log('[OfflineManager] Host response detected! Initiating session revalidation...');
+          await this.handleReconnection();
+        } else {
+          this.consecutiveFailures = 0;
+          this.lastOnlineTimestamp = Date.now();
+        }
+      } else {
+        this.handleFailure();
+      }
+    } catch (e) {
+      if (timeoutId) clearTimeout(timeoutId);
+      this.handleFailure();
+    }
+  },
+
+  handleFailure() {
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures >= 2 && this.currentState !== this.STATE_OFFLINE) {
+      this.transitionToOffline();
+    }
+  },
+
+  transitionToOffline() {
+    this.currentState = this.STATE_OFFLINE;
+    console.warn('[OfflineManager] Host server disconnected! Transitioned to OFFLINE READ-ONLY MODE.');
+    this.showOfflineBanner();
+    this.lockdownMutations();
+    window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_OFFLINE } }));
+  },
+
+  async handleReconnection() {
+    this.currentState = this.STATE_RECONNECTING;
+    this.showReconnectingBanner();
+
+    try {
+      const validateUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+        ? window.TauriBridge.resolveApiUrl('/api/auth/validate-session')
+        : '/api/auth/validate-session';
+
+      const resp = await fetch(validateUrl, {
+        method: 'GET',
+        headers: { 'X-VS-Device-Id': getDeviceId() },
+        credentials: 'include'
+      });
+
+      if (resp.status === 403) {
+        const body = await resp.json().catch(() => ({}));
+        if (body.error && body.error.toLowerCase().includes('revoked')) {
+          this.transitionToRevoked();
+          return;
+        }
+      }
+
+      this.consecutiveFailures = 0;
+      this.currentState = this.STATE_ONLINE;
+      this.lastOnlineTimestamp = Date.now();
+      console.log('[OfflineManager] Reconnected to Host! Restored ONLINE mode.');
+      this.hideBanners();
+      this.unlockMutations();
+      window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_ONLINE } }));
+
+      // Refresh records from authoritative host
+      if (typeof clientsPage === 'function' && current === 'clients') {
+        api('/api/clients').then(cl => {
+          if (Array.isArray(cl)) {
+            clients = cl;
+            if (typeof renderClients === 'function') renderClients();
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[OfflineManager] Reconnection validation failed, remaining offline:', e);
+      this.transitionToOffline();
+    }
+  },
+
+  transitionToRevoked() {
+    this.currentState = this.STATE_REVOKED;
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    sessionStorage.removeItem(this.cachedClientsKey);
+    localStorage.removeItem(this.cachedClientsKey);
+    console.error('[OfflineManager] DEVICE REVOKED by host administrator.');
+    this.showRevokedOverlay();
+    window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_REVOKED } }));
+  },
+
+  cacheClients(clientList) {
+    if (!Array.isArray(clientList)) return;
+    try {
+      const payload = {
+        timestamp: new Date().toISOString(),
+        clients: clientList
+      };
+      sessionStorage.setItem(this.cachedClientsKey, JSON.stringify(payload));
+    } catch (e) {
+      console.warn('[OfflineManager] Failed to cache clients:', e);
+    }
+  },
+
+  getCachedClients() {
+    try {
+      const raw = sessionStorage.getItem(this.cachedClientsKey);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  },
+
+  lockdownMutations() {
+    document.body.classList.add('vs-offline-mode');
+    const mutationSelectors = [
+      '#btn-new-client',
+      '#btn-toggle-add-client',
+      '.btn-add-client',
+      '.btn-save',
+      '#btn-trigger-import',
+      '.btn-danger',
+      'button[type="submit"]',
+      '#btn-upload-doc',
+      '.btn-delete',
+      '#btn-edit-client',
+      '.btn-mutate'
+    ];
+    mutationSelectors.forEach(sel => {
+      document.querySelectorAll(sel).forEach(el => {
+        el.setAttribute('data-offline-disabled', 'true');
+        el.disabled = true;
+        el.style.opacity = '0.4';
+        el.style.cursor = 'not-allowed';
+      });
+    });
+  },
+
+  unlockMutations() {
+    document.body.classList.remove('vs-offline-mode');
+    document.querySelectorAll('[data-offline-disabled="true"]').forEach(el => {
+      el.removeAttribute('data-offline-disabled');
+      el.disabled = false;
+      el.style.opacity = '';
+      el.style.cursor = '';
+    });
+  },
+
+  showOfflineBanner() {
+    let banner = document.getElementById('vs-offline-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'vs-offline-banner';
+      banner.className = 'vs-network-banner vs-banner-offline';
+      document.body.prepend(banner);
+    }
+    const cachedData = this.getCachedClients();
+    const cachedTime = cachedData ? new Date(cachedData.timestamp).toLocaleTimeString() : 'N/A';
+    banner.innerHTML = `
+      <div class="vs-banner-content">
+        <span class="vs-banner-icon">&#9888;</span>
+        <span class="vs-banner-title">CENTRAL SERVER DISCONNECTED — OFFLINE READ-ONLY MODE</span>
+        <span class="vs-banner-desc">Record modifications and uploads are disabled. Showing cached records (${cachedTime}).</span>
+        <span class="vs-banner-stale-tag">POTENTIALLY STALE</span>
+      </div>
+    `;
+    banner.style.display = 'block';
+  },
+
+  showReconnectingBanner() {
+    let banner = document.getElementById('vs-offline-banner');
+    if (banner) {
+      banner.className = 'vs-network-banner vs-banner-reconnecting';
+      banner.innerHTML = `
+        <div class="vs-banner-content">
+          <span class="vs-banner-icon">&#8635;</span>
+          <span class="vs-banner-title">RECONNECTING TO CENTRAL HOST...</span>
+          <span class="vs-banner-desc">Validating workstation authorization and fetching fresh records.</span>
+        </div>
+      `;
+    }
+  },
+
+  hideBanners() {
+    const banner = document.getElementById('vs-offline-banner');
+    if (banner) banner.style.display = 'none';
+  },
+
+  showRevokedOverlay() {
+    this.hideBanners();
+    let overlay = document.getElementById('vs-revoked-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'vs-revoked-overlay';
+      overlay.className = 'vs-modal-backdrop vs-revoked-backdrop';
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div class="vs-revoked-card">
+        <div class="vs-revoked-icon">&#128274;</div>
+        <h2>WORKSTATION ACCESS REVOKED</h2>
+        <p>This client device has been revoked by the Host Administrator (ADR-015 Central Authority).</p>
+        <p class="vs-revoked-sub">Local cached data has been purged for security. Please request a new pairing PIN from the administrator to re-pair this workstation.</p>
+        <div class="vs-revoked-actions">
+          <button class="btn btn-primary" onclick="location.reload()">Retry Connection</button>
+        </div>
+      </div>
+    `;
+    overlay.style.display = 'flex';
+  },
+
+  injectStyles() {
+    if (document.getElementById('vs-offline-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'vs-offline-styles';
+    style.textContent = `
+      .vs-network-banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 99999;
+        padding: 8px 16px;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        backdrop-filter: blur(8px);
+        transition: all 0.3s ease;
+      }
+      .vs-banner-offline {
+        background: rgba(220, 38, 38, 0.95);
+        color: #ffffff;
+        border-bottom: 2px solid #b91c1c;
+      }
+      .vs-banner-reconnecting {
+        background: rgba(217, 119, 6, 0.95);
+        color: #ffffff;
+        border-bottom: 2px solid #b45309;
+      }
+      .vs-banner-content {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .vs-banner-title {
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+      .vs-banner-stale-tag {
+        background: #000;
+        color: #fbbf24;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        border: 1px solid #fbbf24;
+      }
+      .vs-offline-badge {
+        display: inline-block;
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+        border: 1px solid #ef4444;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+      }
+      .vs-revoked-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.88);
+        z-index: 100000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(12px);
+      }
+      .vs-revoked-card {
+        background: #18181b;
+        border: 1px solid #ef4444;
+        border-radius: 12px;
+        padding: 32px;
+        max-width: 480px;
+        text-align: center;
+        color: #f4f4f5;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      }
+      .vs-revoked-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+      }
+      .vs-revoked-card h2 {
+        color: #ef4444;
+        margin-bottom: 12px;
+        font-size: 20px;
+      }
+      .vs-revoked-sub {
+        font-size: 13px;
+        color: #a1a1aa;
+        margin-top: 8px;
+        margin-bottom: 24px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+};
+
+window.VSOfflineManager = VSOfflineManager;
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => VSOfflineManager.init());
+  } else {
+    VSOfflineManager.init();
+  }
+}
+
 const api = (path, options = {}) => {
+  const method = (options.method || 'GET').toUpperCase();
+
+  // ADR-015: Offline Read-Only Mode enforcement
+  if (VSOfflineManager.isOffline()) {
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+      return Promise.reject(new Error('Offline Read-Only Mode: Central server is unreachable. Record modifications, deletions, and uploads are prohibited.'));
+    }
+    // For GET /api/clients when offline, serve from cache
+    if (path === '/api/clients' || path.startsWith('/api/clients?')) {
+      const cached = VSOfflineManager.getCachedClients();
+      if (cached && cached.clients) {
+        console.log('[API Cache] Serving clients list from offline read-only cache');
+        const enriched = cached.clients.map(c => Object.assign({}, c, { _is_cached: true, _cached_at: cached.timestamp }));
+        return Promise.resolve(enriched);
+      }
+    }
+  }
+
   const resolvedUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
     ? window.TauriBridge.resolveApiUrl(path)
     : path;
@@ -307,6 +706,12 @@ const api = (path, options = {}) => {
     if (elapsed > 1000) console.warn(`[API] SLOW RESPONSE: ${path} took ${elapsed}ms`);
     const x = await r.json();
     if (!r.ok) throw Error(x.error || 'Request failed');
+
+    // Auto-cache clients on successful fetch
+    if (path === '/api/clients' && Array.isArray(x)) {
+      VSOfflineManager.cacheClients(x);
+    }
+
     return x;
   }).catch(err => {
     if (timeoutId) clearTimeout(timeoutId);
@@ -317,6 +722,7 @@ const api = (path, options = {}) => {
     throw err;
   });
 };
+window.api = api;
 
 async function fileToBase64(file) {
   if (!file) return '';
@@ -905,7 +1311,7 @@ function initExitModal() {
   const confirmBtn = document.getElementById('vs-exit-btn-confirm');
   const cancelBtn = document.getElementById('vs-exit-btn-cancel');
 
-  if (!modal || modal.dataset.exitBound === '1') return;
+  if (!modal || !modal.dataset || modal.dataset.exitBound === '1') return;
   modal.dataset.exitBound = '1';
 
   if (cancelBtn) {
@@ -1932,8 +2338,9 @@ function clientsPage() {
 
     <!-- Registered Clients Glass Card -->
     <section class="glass card">
-      <div class="row" style="margin-bottom:14px;">
+      <div class="row" style="margin-bottom:14px;align-items:center;">
         <h2 id="clients-count-label" style="margin:0;">${clients.length} registered clients</h2>
+        ${(window.VSOfflineManager && (window.VSOfflineManager.isOffline() || clients.some(c => c._is_cached))) ? `<span class="vs-banner-stale-tag" style="margin-left:12px;">POTENTIALLY STALE (OFFLINE CACHE)</span>` : ''}
         <span class="sp"></span>
         <div id="clients-bulk-bar-container"></div>
       </div>

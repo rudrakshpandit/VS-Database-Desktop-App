@@ -200,7 +200,22 @@ def _bg_generate_chat_title(job_id: str, cid: str, prompt: str, asst_text: str):
             con.commit()
 
 ai_job_queue = AIJobQueue(max_workers=3)
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8767"))
+
+HOST_MODE = "--host-mode" in sys.argv or "--host" in sys.argv or os.environ.get("VS_HOST_MODE") in ("1", "true", "True")
+
+def _resolve_port():
+    for _i, _arg in enumerate(sys.argv):
+        if _arg in ("--port", "-p") and _i + 1 < len(sys.argv) and sys.argv[_i + 1].isdigit():
+            return int(sys.argv[_i + 1])
+        if _arg.startswith("--port=") and _arg.split("=", 1)[1].isdigit():
+            return int(_arg.split("=", 1)[1])
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        return int(sys.argv[1])
+    if "PORT" in os.environ and os.environ["PORT"].isdigit():
+        return int(os.environ["PORT"])
+    return 8768 if HOST_MODE else 8767
+
+PORT = _resolve_port()
 
 _HANDSHAKE_TOKEN = None
 for _i, _arg in enumerate(sys.argv):
@@ -652,6 +667,13 @@ def initialise():
             code TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
             device_id TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS device_pairing_pins (
+            pin TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             used INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
@@ -1284,6 +1306,28 @@ def validate_session(raw_token: str, client_ip: str) -> dict | None:
         con.execute("UPDATE sessions SET last_seen_at=?, ip_address=? WHERE session_id=?", (t, client_ip, row["session_id"]))
         con.execute("UPDATE devices SET last_seen_at=?, ip_address=? WHERE device_id=?", (t, client_ip, row["device_id"]))
         return dict(row)
+
+
+def check_session_token_state(raw_token: str) -> str:
+    """Returns 'valid', 'revoked', 'disabled', or 'not_found'."""
+    if not raw_token:
+        return "not_found"
+    token_h = hash_token(raw_token)
+    with db() as con:
+        row = con.execute("""
+            SELECT s.status as session_status, d.status as device_status, u.status as user_status
+            FROM sessions s
+            JOIN users u ON s.user_id = u.user_id
+            JOIN devices d ON s.device_id = d.device_id
+            WHERE s.token_hash = ?
+        """, (token_h,)).fetchone()
+        if not row:
+            return "not_found"
+        if row["session_status"] == "revoked" or row["device_status"] == "revoked" or row["user_status"] == "revoked":
+            return "revoked"
+        if row["device_status"] != "approved" or row["user_status"] != "active":
+            return "disabled"
+        return "valid"
 
 
 def revoke_session(raw_token: str):
@@ -2337,9 +2381,12 @@ def get_desktop_health() -> dict:
     return {
         "ok": True,
         "service": "VS Database Desktop",
-        "version": "1.0.1",
+        "version": "2.0.0",
         "port": PORT,
-        "status": "ready"
+        "status": "ready",
+        "mode": "host" if HOST_MODE else "standard",
+        "host_mode": HOST_MODE,
+        "central_authority": HOST_MODE
     }
 
 
@@ -7027,6 +7074,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/desktop/health",
             "/api/desktop/state",
             "/api/desktop/heartbeat",
+            "/api/host/status",
+            "/api/host/pairing/claim-pin",
+            "/api/auth/validate-session",
             "/api/staging/incoming",
             "/api/staging/incoming/clear",
             "/api/auth/status",
@@ -7041,18 +7091,35 @@ class Handler(BaseHTTPRequestHandler):
         }
         if path in public_endpoints:
             return True
+
+        token = self.get_auth_token()
+        if token:
+            token_state = check_session_token_state(token)
+            if token_state == "revoked":
+                self.reject(403, "Device or session has been revoked by host administrator.")
+                return False
+            elif token_state == "disabled":
+                self.reject(403, "Device or user account is currently disabled.")
+                return False
+
         ctx = self.get_auth_context()
         if not ctx:
             self.reject(401, "Authentication required. Please log in.")
             return False
-        if path.startswith("/api/admin/"):
+
+        if path.startswith("/api/admin/") or path.startswith("/api/host/devices") or path == "/api/host/pairing/generate-pin":
             if ctx.get("role") != "host":
                 self.reject(403, "Access restricted to Host administrator.")
                 return False
-        if self.command in ("POST", "PUT", "DELETE") and (path == "/api/ai/settings" or path.startswith("/api/ai/sources/")):
-            if ctx.get("role") != "host":
-                self.reject(403, "Access restricted: Host administrator privileges required to modify AI configuration or statutory sources.")
+
+        if self.command in ("POST", "PUT", "DELETE"):
+            if ctx.get("role") == "readonly" or ctx.get("device_status") != "approved":
+                self.reject(403, "Mutation forbidden: Read-only mode enforced on this device.")
                 return False
+            if (path == "/api/ai/settings" or path.startswith("/api/ai/sources/")):
+                if ctx.get("role") != "host":
+                    self.reject(403, "Access restricted: Host administrator privileges required to modify AI configuration or statutory sources.")
+                    return False
         return True
 
     def send_json(self, data, status=200):
@@ -7613,6 +7680,45 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/desktop/health":
             return self.send_json(get_desktop_health())
 
+        if path == "/api/host/status":
+            with db() as con:
+                active_s = con.execute("SELECT COUNT(*) FROM sessions WHERE status = 'active'").fetchone()[0]
+                dev_count = con.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+            return self.send_json({
+                "ok": True,
+                "host_mode": HOST_MODE,
+                "port": PORT,
+                "central_authority": True,
+                "active_sessions": active_s,
+                "registered_devices": dev_count,
+                "server_time": now()
+            })
+
+        if path == "/api/host/devices":
+            ctx = self.get_auth_context()
+            if not ctx or ctx.get("role") != "host":
+                return self.reject(403, "Access restricted to Host administrator.")
+            with db() as con:
+                rows = con.execute("SELECT device_id, user_id, device_name, ip_address, status, created_at, approved_at, last_seen_at FROM devices ORDER BY created_at DESC").fetchall()
+            return self.send_json({"ok": True, "devices": [dict(r) for r in rows]})
+
+        if path == "/api/auth/validate-session":
+            token = self.get_auth_token()
+            if not token:
+                return self.send_json({"ok": False, "valid": False, "error": "No session token provided."}, 401)
+            ctx = validate_session(token, self.client_address[0])
+            if not ctx:
+                return self.send_json({"ok": False, "valid": False, "error": "Session is invalid or device has been revoked."}, 403)
+            return self.send_json({
+                "ok": True,
+                "valid": True,
+                "user_id": ctx["user_id"],
+                "role": ctx["role"],
+                "device_id": ctx["device_id"],
+                "device_name": ctx["device_name"],
+                "device_status": ctx.get("device_status", "approved")
+            })
+
         if path == "/api/desktop/state":
             return self.send_json(get_desktop_state())
 
@@ -7969,6 +8075,85 @@ class Handler(BaseHTTPRequestHandler):
                     "status": "approved"
                 })
 
+            if path == "/api/host/pairing/generate-pin":
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to generate pairing PIN.")
+                pin = f"{secrets.randbelow(900000) + 100000}"
+                t = now()
+                expires_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 300, timezone.utc).isoformat(timespec="seconds")
+                user_id = ctx.get("user_id", "admin")
+                with db() as con:
+                    con.execute(
+                        "INSERT INTO device_pairing_pins (pin, user_id, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                        (pin, user_id, expires_at, t)
+                    )
+                return self.send_json({
+                    "ok": True,
+                    "pin": pin,
+                    "expires_in_seconds": 300,
+                    "expires_at": expires_at,
+                    "created_at": t
+                })
+
+            if path == "/api/host/pairing/claim-pin":
+                pin = str(payload.get("pin", "")).strip()
+                device_id = str(payload.get("device_id", "")).strip()
+                device_name = str(payload.get("device_name", "")).strip() or f"Workstation-{device_id[-6:]}"
+                if not pin or not device_id:
+                    raise ValueError("PIN and device_id are required.")
+                t = now()
+                client_ip = self.client_address[0]
+                with db() as con:
+                    pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=?", (pin,)).fetchone()
+                    if not pin_row:
+                        return self.send_json({"ok": False, "error": "Invalid pairing PIN."}, 400)
+                    if pin_row["used"] != 0:
+                        return self.send_json({"ok": False, "error": "Pairing PIN has already been used."}, 400)
+                    if pin_row["expires_at"] < t:
+                        return self.send_json({"ok": False, "error": "Pairing PIN has expired."}, 400)
+                    
+                    user_id = pin_row["user_id"]
+                    # Mark PIN used
+                    con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
+                    
+                    # Approve device
+                    dev = con.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+                    if not dev:
+                        con.execute(
+                            "INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+                            (device_id, user_id, device_name, client_ip, t, t, t, t)
+                        )
+                    else:
+                        con.execute(
+                            "UPDATE devices SET status='approved', ip_address=?, last_seen_at=?, updated_at=?, approved_at=? WHERE device_id=?",
+                            (client_ip, t, t, t, device_id)
+                        )
+                    # Get user role
+                    u_row = con.execute("SELECT role FROM users WHERE user_id=?", (user_id,)).fetchone()
+                    user_role = u_row["role"] if u_row else "staff"
+
+                token = create_session(user_id, device_id, client_ip, session_type="workstation")
+                return self.send_json({
+                    "ok": True,
+                    "session_token": token,
+                    "user_id": user_id,
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "status": "approved",
+                    "role": user_role
+                })
+
+            if path in ("/api/host/devices/revoke", "/api/admin/devices/revoke"):
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to revoke devices.")
+                device_id = str(payload.get("device_id", "")).strip()
+                if not device_id:
+                    raise ValueError("Device ID is required.")
+                revoke_device(device_id)
+                return self.send_json({"ok": True, "device_id": device_id, "status": "revoked"})
+
             if path == "/api/admin/requests/approve":
                 req_id = str(payload.get("request_id", "")).strip()
                 t = now()
@@ -7991,13 +8176,6 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("UPDATE access_requests SET status='rejected', updated_at=? WHERE request_id=?", (t, req_id))
                     con.execute("UPDATE devices SET status='rejected', updated_at=? WHERE device_id=?", (t, req["device_id"]))
                 return self.send_json({"ok": True, "request_id": req_id, "status": "rejected"})
-
-            if path == "/api/admin/devices/revoke":
-                device_id = str(payload.get("device_id", "")).strip()
-                if not device_id:
-                    raise ValueError("Device ID is required.")
-                revoke_device(device_id)
-                return self.send_json({"ok": True, "device_id": device_id, "status": "revoked"})
 
             if path == "/api/admin/devices/status":
                 device_id = str(payload.get("device_id", "")).strip()
