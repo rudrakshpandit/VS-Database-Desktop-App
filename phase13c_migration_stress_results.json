@@ -1,0 +1,46 @@
+{
+  "sandbox_setup": {
+    "baseline_hash": "235e0d0a9be42d14bb820ac544bd140144a095089276669a8cf26a77777bcc75",
+    "verdict": "PASS"
+  },
+  "schema_parity": {},
+  "test_duplicate_pk_rejection": {
+    "verdict": "PASS",
+    "error": "UNIQUE constraint failed: clients.file_no"
+  },
+  "test_conflict_detection": {
+    "verdict": "PASS",
+    "conflicting_name": "Trail"
+  },
+  "test_foreign_key_guard": {
+    "verdict": "PASS",
+    "error": "FOREIGN KEY constraint failed"
+  },
+  "test_invalid_record_handling": {
+    "verdict": "PASS"
+  },
+  "test_interrupted_transaction_atomicity": {
+    "verdict": "PASS",
+    "count_preserved": 5
+  },
+  "test_large_batch_migration": {
+    "batch_size": 60,
+    "migrated_count": 60,
+    "verdict": "PASS"
+  },
+  "test_idempotency_repeat_run": {
+    "second_run_inserted": 0,
+    "verdict": "PASS"
+  },
+  "test_orphan_preservation": {
+    "orphan_count": 22,
+    "verdict": "PASS"
+  },
+  "test_sandbox_rollback_exactness": {
+    "restored_hash": "235e0d0a9be42d14bb820ac544bd140144a095089276669a8cf26a77777bcc75",
+    "matches_baseline": true,
+    "residual_records": 0,
+    "integrity": "ok",
+    "verdict": "PASS"
+  }
+}

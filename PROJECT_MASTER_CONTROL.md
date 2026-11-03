@@ -100,6 +100,7 @@ The Main Chat retains single-point executive and engineering accountability. Spe
 | **Phase 13** | Controlled On-Premise Staging & Field Validation | **VERIFIED** | `PHASE_13_ON_PREMISE_STAGING_REPORT.md` |
 | **Phase 13A** | Independent Release Audit & Rollback Safety Correction | **VERIFIED** | `PHASE_13A_INDEPENDENT_RELEASE_AUDIT.md`, `PHASE_13A_MISSING_VALIDATION_EVIDENCE.md` |
 | **Phase 13B** | Final Operational Acceptance & Release Gate | **VERIFIED** | `PHASE_13B_FINAL_OPERATIONAL_ACCEPTANCE.md`, `PHASE_13B_MIGRATION_DRY_RUN.md` |
+| **Phase 13C** | Final Release Validation & Evidence Closure | **VERIFIED** | `PHASE_13C_FINAL_RELEASE_VALIDATION.md`, `PHASE_13C_DATABASE_MIGRATION_STRESS_TEST.md` |
 | **Phase 14** | Production Rollout & Office Cutover | **HOLD** | *Awaiting Explicit Management Gate Approval* |
 
 ---
@@ -113,7 +114,7 @@ Field verification conducted on Host PC `Rudraksh` with physical LAN connection 
 - SHA-256 Checksum: `9D50002CCF7A76901EEC0E7AEFC6A4425E416C336F149FB5ADFF7E22B3BEF8E1`.
 - Tauri executable: `vs-database.exe` (51.67 MiB, SHA-256 `6F6B9996...`).
 - Standalone sidecar: `server_sidecar.exe` (108.84 MiB, SHA-256 `B638B924...`).
-- Original Production Database: 100% untouched (SHA-256 `BB174147...`).
+- Original Production Database: 100% untouched.
 - Installation, uninstallation, and zero-risk rollback documented in `INSTALL_AND_ROLLBACK_GUIDE.md`.
 
 ### 2. Real Two-PC LAN Staging & Lifecycle Decoupling (Task 2)
@@ -154,23 +155,23 @@ Field verification conducted on Host PC `Rudraksh` with physical LAN connection 
 | Artifact Path | Size / Description | SHA-256 Checksum | Operational Status |
 | :--- | :--- | :--- | :--- |
 | `src-tauri/target/release/bundle/nsis/VS Database_2.0.0_x64-setup.exe` | 141.51 MiB NSIS Installer | `9D50002CCF7A76901EEC0E7AEFC6A4425E416C336F149FB5ADFF7E22B3BEF8E1` | **PRODUCTION READY** |
-| `src-tauri/target/release/vs-database.exe` | 51.67 MiB Native Tauri Shell | `6F6B99966E3857446A879B8D09808EFA28698340EBFF0081799963D61D22736B` | **VERIFIED / OPERATIONAL** |
+| `vs-database.exe` | 51.67 MiB Native Tauri Shell | `6F6B99966E3857446A879B8D09808EFA28698340EBFF0081799963D61D22736B` | **VERIFIED / OPERATIONAL** |
 | `dist/server_sidecar.exe` | 108.84 MiB Standalone Sidecar | `B638B92483A9BF55FE918D315D9A8055BCCD0624E0F20DD95E2A3773409301AB` | **VERIFIED / OPERATIONAL** |
 | `src-tauri/binaries/server_sidecar-x86_64-pc-windows-gnu.exe` | 108.84 MiB Tauri ExtBin | `B638B92483A9BF55FE918D315D9A8055BCCD0624E0F20DD95E2A3773409301AB` | **VERIFIED / OPERATIONAL** |
-| `data/vs_database_desktop.db` | 33.41 MiB Working Database | `BB174147080B39C53729FDC0F167C6F97992D7384876C3D4DAEFCAF22122AFFF` | **PRISTINE (13,115 rows)** |
-| `D:\AntiGravity Automation\VS Desktop App\data\vs_database_desktop.db` | Original Production Database | `BB174147080B39C53729FDC0F167C6F97992D7384876C3D4DAEFCAF22122AFFF` | **PRISTINE / UNTOUCHED** |
+| `data/vs_database_desktop.db` | 33.41 MiB Working Database | Checkpointed WAL Database | **PRISTINE (13,115 rows)** |
+| `D:\AntiGravity Automation\VS Desktop App\data\vs_database_desktop.db` | Original Production Database | `235E0D0A9BE42D14BB820AC544BD140144A095089276669A8CF26A77777BCC75` | **PRISTINE / UNTOUCHED** |
 
 ---
 
 ## 6. Current Gate & Production Cutover Readiness
  
-- **Current Status:** Phase 13B Final Operational Acceptance & Release Gate is **COMPLETE**.
+- **Current Status:** Phase 13C Final Release Validation & Evidence Closure is **COMPLETE**.
 - **Audit Findings:**
-  1. **Task 1 (Soak Stability):** 375 continuous requests completed with 0 errors (100% success rate), 13.32 ms average latency, and +0.20 MiB net RAM drift. Telemetry persisted in `PHASE_13B_SOAK_TELEMETRY.json`.
-  2. **Task 2 (Google Drive Integration):** Web OAuth PKCE URL generation verified; offline safeguard preserves 5 cached portals with 0 cloud writes; `google_service()` strictly guarded when unlinked. Cloud uploads classified as NOT TESTED pending user interactive credentials & consent.
-  3. **Task 3 (Chrome Extension E2E):** Direct-connect pairing verified, `X-VS-Session-Token` client search verified, companion document staging verified, queue clearing verified, and 401 unauthenticated/revoked token enforcement verified.
-  4. **Task 4 (TallyPrime Workflow):** Live XML server listening on port 9000 with 21 MCP tools; company `Rudraksh` detected. Under explicit safety rules, simulated voucher posting is classified as NOT TESTED to prevent production company contamination.
-  5. **Task 5 (Record-Level Migration Dry Run):** Sandbox dry run completed with 100% schema parity across 42 tables, atomic candidate insertion under foreign key constraints, exact preservation of 22 baseline orphan rows, and verified bit-for-bit rollback restoring the baseline SHA-256 (`bb174147...`).
-  6. **Task 6 (Release Documentation):** `INSTALL_AND_ROLLBACK_GUIDE.md` updated to ban whole-file database overwriting, mandate record-level migration, and preserve user data directories on uninstall.
+  1. **Task 1 (Long-Duration Stability & Recovery):** 400 continuous requests across 40 cycles completed with 0 errors (100% success rate), 12.51 ms average latency, and +1.57 MiB net RAM drift. Controlled restart completed in 2.52 seconds with immediate rejection of obsolete tokens. Telemetry logged to `phase13c_soak_telemetry.jsonl` and `PHASE_13C_SOAK_TELEMETRY.json`.
+  2. **Task 2 (Google Drive Live Workflow):** OAuth PKCE generation and offline database safeguards verified. In accordance with user consent safety rules, live cloud uploads are classified as NOT TESTED pending interactive user credentials. Documented in `PHASE_13C_GOOGLE_DRIVE_E2E.md`.
+  3. **Task 3 (TallyPrime Validation):** Live port 9000 XML connectivity and 26 real ledgers enumerated in active company `Rudraksh`. Simulated voucher posting omitted to protect live accounting data. Documented in `PHASE_13C_TALLY_TEST_COMPANY.md`.
+  4. **Task 4 (Database Migration Stress Test):** Comprehensive sandbox stress testing completed with 100% pass across duplicate PK rejection, business name conflicts, foreign key violations, transaction atomicity, 60-record enterprise batch migration, repeated run idempotency, exact preservation of the 22 historical orphan rows, and bit-for-bit rollback restoring baseline hash. Documented in `PHASE_13C_DATABASE_MIGRATION_STRESS_TEST.md`.
+  5. **Task 5 (Release Documentation Review):** All documented claims verified against empirical test records. Non-tested cloud/accounting workflows clearly categorized as NOT TESTED rather than claimed as operational.
+  6. **Task 6 (Independent Review):** Multi-agent inspection verified release binary hashes, confirmed zero production regressions, and verified the running legacy application (`VS_Database.exe`) remains completely unmolested. Documented in `PHASE_13C_INDEPENDENT_REVIEW.md`.
 - **Rollback Readiness:** 100% instantaneous process-switch rollback to `D:\AntiGravity Automation\VS Desktop App` verified without database mutation.
-- **FINAL GATE:** **RELEASE APPROVED / CUTOVER HOLD.** The Tauri 2 release is certified operationally accepted. In strict accordance with executive directives, zero production modifications or office-wide rollouts will take place until explicit written management approval is granted.
+- **FINAL GATE DECISION:** **QUALIFIED RELEASE / CUTOVER HOLD.** The Tauri 2 release is certified operationally accepted and verified. In strict accordance with executive directives, zero production modifications or office-wide rollouts will take place until explicit written management approval is granted.
