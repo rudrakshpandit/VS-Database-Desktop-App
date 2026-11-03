@@ -60,6 +60,8 @@ flowchart TD
 3. **Office LAN & Companion Lifecycle Decoupling:** Closing the Tauri desktop window checks `/api/desktop/lifecycle-policy`. If LAN clients or the companion browser extension are active, the UI issues a detach signal, leaving the sidecar running as a network service (`DEF-003`).
 4. **ComCtl32 v6 Embedded Manifest:** The native executable embeds an application manifest declaring `Microsoft.Windows.Common-Controls` v6.0.0.0, resolving `TaskDialogIndirect` natively on Windows 10/11 (`DEF-001`).
 5. **Database Immutability Protocol:** The original production database remains strictly untouched. Tests run exclusively against ephemeral replicas via `db_replicator.py` (`DAT-001`).
+6. **Centralized Host–Client Architecture with Offline Read-Only Mode (ADR-015):** The Host PC (`192.168.1.50`) is the sole authoritative custodian of business data, auth, permissions, audit trails, and backups. Client workstations run native Tauri shells with zero local database servers. When disconnected, clients enter an immutable offline read-only state displaying cached records with stale-data warnings; no offline write queuing or write replays are permitted (`ADR-015`).
+
 
 ---
 
@@ -254,4 +256,27 @@ Field verification conducted on Host PC `Rudraksh` with physical LAN connection 
   4. **Day 1 Observation Report:** Authored `PHASE_14C_DAY_1_OBSERVATION.md`. Configured pilot endpoints for Staff PC 1 & 2 human operation.
   5. **Strict Anti-Simulation Protocol:** Day 2 and Day 3 reports are **NOT GENERATED**. In accordance with Phase 14C instructions, each observation day will occur only on its actual working day with genuine staff participation.
 - **GOVERNANCE STATUS:** **PHASE 14C OPEN — AWAITING STAFF OFFICE HOURS OBSERVATION ON DAY 1.**
+
+---
+
+## 11. Architectural Decision Record ADR-015 Ledger (Phase 15 Blueprint)
+
+- **Decision Title:** Centralized Host–Client Architecture with Offline Read-Only Mode
+- **Status:** **APPROVED BY PROJECT OWNER**
+- **Applies From:** Phase 15 onward
+- **Reference Document:** [`ADR_015_HOST_CLIENT_OFFLINE_ARCHITECTURE.md`](file:///D:/AntiGravity%20Automation/VS%20Database%202.0%20-%20Tauri%20Migration/ADR_015_HOST_CLIENT_OFFLINE_ARCHITECTURE.md)
+- **Architectural Directive:**
+  1. **Central Authority:** Host PC (`192.168.1.50`) is the sole custodian of business data, authentication, permissions, audit trails, and backups.
+  2. **Pure Client Shells:** Client workstations run native Tauri shells with zero local backend sidecars or local SQLite databases.
+  3. **Offline Read-Only State:** When disconnected from Host, client UI remains open, serving previously cached records marked as potentially stale.
+  4. **Strict No-Write-Queue Rule:** All creation, editing, deletion, and uploading are disabled while disconnected. Zero offline write queues or automatic replays permitted.
+  5. **Host-Side Enforcement:** Host API independently authorizes every write operation.
+- **Implementation Gap Analysis:**
+  - `GAP-001 (Client Base URL):` `static/tauri-bridge.js` hardcodes `127.0.0.1:8767`. Needs dynamic Host IP configuration.
+  - `GAP-002 (Client Launcher):` `src-tauri/src/lib.rs` spawns local sidecar. Needs pure client mode flag.
+  - `GAP-003 (Connectivity Monitor):` `static/app.js` lacks central online/offline state machine.
+  - `GAP-004 (Offline Read-Only UI):` `static/app.js` lacks global mutation lockout when offline.
+  - `GAP-005 (Local Read-Only Cache):` `static/app.js` lacks scoped, encrypted read-only cache with staleness tags.
+- **Phase 15 Implementation Gates:** 10 mandatory technical verification gates established in ADR-015.
+
 
