@@ -926,6 +926,8 @@ Respond ONLY with a valid JSON array in this exact structure:
     ) -> Dict[str, Any]:
         # 1. Pre-flight validation
         val_res = self.validate_session_for_posting(session_id, is_educational_mode=is_educational_mode)
+        if not val_res.get("ok"):
+            return val_res
         
         # If educational mode conflicts exist and user has not explicitly consented to remapping
         if is_educational_mode and not (remap_edu_dates and user_confirmed_remap):

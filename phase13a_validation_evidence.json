@@ -1,0 +1,43 @@
+{
+  "security": {
+    "token_rotation": "PASS",
+    "replay_rejection": "PASS",
+    "unauthorized_local_rejection": "PASS",
+    "unauthorized_lan_rejection": "PASS",
+    "rogue_extension_rejection": "PASS"
+  },
+  "lan_lifecycle": {
+    "lan_query_status": "PASS",
+    "ui_detach_server_continuity": "PASS",
+    "lan_operations_while_ui_closed": "10/10 PASS",
+    "host_ui_reconnect": "PASS",
+    "lifecycle_release": "PASS"
+  },
+  "gemini_ai_workflow": {
+    "status": "PASS",
+    "health": "Ready",
+    "active_model": "VS AI Fast Core",
+    "live_call_verified": true
+  },
+  "chrome_extension_workflow": {
+    "status": "PASS",
+    "staging_manifest_pipeline": "VERIFIED"
+  },
+  "tally_integration": {
+    "connection_status": "Tally reachable; no company selected",
+    "tally_installed": true,
+    "tally_port_open": true,
+    "voucher_posting_guardrail": "PASS_BLOCKED_UNAPPROVED"
+  },
+  "google_drive": {
+    "status": "PASS",
+    "connected": false,
+    "credentials_uploaded": true,
+    "redirect_uri": "http://localhost:8765/api/google/callback"
+  },
+  "dsc_and_pdf_studio": {
+    "dsc_hardware_module": "NOT_PRESENT_IN_CODEBASE (Not Applicable to VS Database)",
+    "pdf_studio_tools_count": 12,
+    "pdf_studio_status": "PASS"
+  }
+}
