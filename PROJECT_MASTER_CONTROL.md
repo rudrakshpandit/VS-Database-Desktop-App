@@ -237,3 +237,21 @@ Field verification conducted on Host PC `Rudraksh` with physical LAN connection 
     4. Keep legacy application available on port 8767.
     5. A genuine multi-day observation with actual human staff members on the 2 pilot workstations must be completed before management considers Phase 15.
 
+---
+
+## 10. Phase 14C: Genuine Office Observation & Operational Acceptance Ledger
+
+- **Execution Date:** 2026-11-03 (Day 1 of 3)
+- **Branch:** `pilot/office-staging`
+- **Certified Commit:** `010552d`
+- **Release Version:** 2.0.0
+- **Scope:** Host PC (`192.168.1.50:8768`), Pilot Staff PC 1 (`192.168.1.6`), Pilot Staff PC 2 (`192.168.1.120`).
+- **Phase Status:** **OPEN / DAY 1 ACTIVE & ARMED**
+- **Day 1 Progress & Deliverables:**
+  1. **Pre-Observation Safety Verification (PASS):** Executed via `phase14c_pre_observation_audit.py`. Confirmed legacy app running unmolested on port 8767 (PID 8860); V2 sidecar running on port 8768 (PID 4016); both database paths physically isolated; `PRAGMA integrity_check = ok` on both databases; exactly 22 baseline orphan records intact.
+  2. **Database Reconciliation Decision Framework:** Created `PHASE_14C_DATABASE_RECONCILIATION_DECISION.md`. Categorizes the 2,533 row variance (2,551 legacy post-branch records vs 18 V2 test records). Recommends Option C (Isolated Staging) during observation and Option A (Row-Level Delta Import) upon final cutover.
+  3. **Incident Register:** Initialized `PHASE_14C_INCIDENT_REGISTER.md`. Exactly 0 unresolved or critical incidents recorded.
+  4. **Day 1 Observation Report:** Authored `PHASE_14C_DAY_1_OBSERVATION.md`. Configured pilot endpoints for Staff PC 1 & 2 human operation.
+  5. **Strict Anti-Simulation Protocol:** Day 2 and Day 3 reports are **NOT GENERATED**. In accordance with Phase 14C instructions, each observation day will occur only on its actual working day with genuine staff participation.
+- **GOVERNANCE STATUS:** **PHASE 14C OPEN — AWAITING STAFF OFFICE HOURS OBSERVATION ON DAY 1.**
+
