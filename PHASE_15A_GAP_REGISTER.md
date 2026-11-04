@@ -118,16 +118,29 @@ In ADR-015 Section 7, five implementation gaps were identified as blocking produ
 
 ---
 
-## 3. Remaining Phase 15 Operational Gates (Forward Roadmap)
+### 2.9. GAP-009: Separate Host & Client Release Installers (Phase 15B)
+- **Defect:** Monolithic installer bundled Python sidecar unconditionally; no separate Client installer existed.
+- **Resolution (Phase 15B):**
+  - Designed multi-target configuration overlays: `tauri.host.conf.json` and `tauri.client.conf.json`.
+  - Built separate native Windows desktop installers: `VS Database Host Setup.exe` (141.53 MiB) and `VS Database Client Setup.exe` (33.68 MiB).
+  - Client bundle strictly excludes `server_sidecar.exe`, resulting in a 76.2% size reduction.
+  - Upgraded Rust supervisor in `src-tauri/src/lib.rs` to detect Client mode via parent folder naming and executable paths.
+  - Verified 12 operational gates in `test_phase15b_packaging.py` with 100% pass rate.
+- **Verification:** Verified in Phase 15B Independent Packaging Suite.
 
-All 5 core architectural code gaps from ADR-015 are fully resolved in Phase 15A. The remaining items for subsequent phases (Phase 15B / Phase 16) are purely operational:
+---
 
-1. **Option A Database Reconciliation:** Executing the SQL import script to bring the 2,533 post-branch legacy records into the Host V2 database before cutting over office staff.
-2. **Physical Multi-PC LAN Validation:** Executing the verified client build across the physical workstations (`192.168.1.6` and `192.168.1.120`) connected to the Host PC (`192.168.1.50`).
+## 3. Remaining Operational Gates (Forward Roadmap)
+
+All architectural, security, database, and release packaging gates are fully resolved. The remaining forward items for management decision:
+
+1. **Project-Owner Phase 15 Acceptance:** Formal approval of Phase 15B dual-installer release artifacts.
+2. **Phase 16 Option A Data Reconciliation:** Executing the SQL import script to incorporate the 2,533 post-branch legacy records into the Host V2 database before cutting over office staff.
+3. **Physical Multi-PC LAN Validation:** Deploying `VS Database Client Setup.exe` to physical workstations (`192.168.1.6` and `192.168.1.120`) pointing to Host (`192.168.1.50:8768`).
 
 ---
 
 ## 4. Final Gap Verdict
 
-**VERDICT: ALL ARCHITECTURAL GAPS RESOLVED [PASS]**  
-The Phase 15A implementation satisfies 100% of the architectural and code requirements defined in ADR-015.
+**VERDICT: ALL ARCHITECTURAL & PACKAGING GAPS RESOLVED [PASS]**  
+The Phase 15A/15B implementation satisfies 100% of the architectural, security, and packaging requirements defined in ADR-015 and Phase 15B.

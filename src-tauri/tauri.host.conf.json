@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VS Database Host",
+  "version": "2.0.0",
+  "identifier": "com.vsdatabase.host",
+  "app": {
+    "windows": [
+      {
+        "title": "VS Database Host",
+        "label": "main"
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "externalBin": [
+      "binaries/server_sidecar"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VS Database Client",
+  "version": "2.0.0",
+  "identifier": "com.vsdatabase.client",
+  "app": {
+    "windows": [
+      {
+        "title": "VS Database Client",
+        "label": "main"
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "externalBin": []
+  }
+}

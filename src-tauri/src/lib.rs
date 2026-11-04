@@ -11,7 +11,7 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const PYTHON_PORT: u16 = 8767;
+const PYTHON_PORT: u16 = 8768;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -33,7 +33,18 @@ pub fn detect_client_mode() {
     }
     if !is_client {
         if let Ok(exe) = std::env::current_exe() {
+            if let Some(stem) = exe.file_stem() {
+                let name = stem.to_string_lossy().to_lowercase();
+                if name.contains("client") {
+                    is_client = true;
+                }
+            }
             if let Some(parent) = exe.parent() {
+                if let Some(parent_name) = parent.file_name() {
+                    if parent_name.to_string_lossy().to_lowercase().contains("client") {
+                        is_client = true;
+                    }
+                }
                 if parent.join("client_mode.flag").exists() || parent.join("client_config.json").exists() {
                     is_client = true;
                 }
@@ -44,7 +55,7 @@ pub fn detect_client_mode() {
         eprintln!("[Mode] Client Mode detected. Local backend sidecar and local DB disabled.");
         CLIENT_MODE.store(true, Ordering::Relaxed);
     } else {
-        eprintln!("[Mode] Host Mode active. Local backend sidecar and authoritative DB enabled.");
+        eprintln!("[Mode] Host Mode active. Local backend sidecar and authoritative DB enabled on port {}.", PYTHON_PORT);
     }
 }
 
@@ -316,6 +327,8 @@ fn ensure_python_sidecar() -> Result<(), String> {
 
         eprintln!("[Supervisor] Launching standalone sidecar: {:?} in {:?}", sidecar_bin, sidecar_dir);
         let mut cmd = Command::new(&sidecar_bin);
+        cmd.arg("--host-mode");
+        cmd.arg(format!("--port={}", PYTHON_PORT));
         cmd.arg(format!("--handshake-token={}", get_handshake_token()));
         cmd.current_dir(&sidecar_dir);
         #[cfg(windows)]
@@ -352,6 +365,8 @@ fn ensure_python_sidecar() -> Result<(), String> {
 
             let mut cmd = Command::new(&python_exe);
             cmd.arg(&server_script);
+            cmd.arg("--host-mode");
+            cmd.arg(format!("--port={}", PYTHON_PORT));
             cmd.arg(format!("--handshake-token={}", get_handshake_token()));
             cmd.current_dir(&server_dir);
             #[cfg(windows)]
