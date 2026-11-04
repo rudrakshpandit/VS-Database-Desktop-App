@@ -1003,76 +1003,130 @@ function dismissSplash() {
   }
 }
 
-function showAuthModal(type = 'login') {
+function showAuthModal(type = 'register') {
   dismissSplash();
+  const isRegister = type !== 'login';
   authRoot.innerHTML = `
     <div class="auth-overlay">
       <div class="auth-box">
         <div style="text-align:center;margin-bottom:20px;">
           <img src="logo.png" alt="VS Database" style="height:50px;object-fit:contain;">
-          <h2 style="margin:10px 0 4px;font-size:20px;">${type === 'setup-host' ? 'Host Admin Setup' : 'Database Access'}</h2>
-          <p class="muted" style="font-size:12px;">${type === 'setup-host' ? 'Create the master Host administrator account for this server.' : 'Sign in to access VS Database on this device.'}</p>
+          <h2 style="margin:10px 0 4px;font-size:20px;">${isRegister ? 'Sign Up / Register' : 'Sign In to VS Database'}</h2>
+          <p class="muted" style="font-size:12px;">${isRegister ? 'Create your user account and register this device to get started.' : 'Enter your credentials to access VS Database.'}</p>
         </div>
-        ${type !== 'setup-host' ? `
-          <div class="auth-tabs">
-            <button id="tab-login" class="${type === 'login' ? 'active' : ''}">Sign In</button>
-            <button id="tab-request" class="${type === 'request' ? 'active' : ''}">Request Device Access</button>
-          </div>
-        ` : ''}
+        <div class="auth-tabs">
+          <button id="tab-register" class="${isRegister ? 'active' : ''}">Sign Up / Register</button>
+          <button id="tab-login" class="${!isRegister ? 'active' : ''}">Sign In</button>
+        </div>
         <div id="auth-form-body"></div>
       </div>
     </div>
   `;
 
-  if (type === 'setup-host') renderSetupHostForm();
-  else if (type === 'request') renderRequestAccessForm();
-  else renderLoginForm();
+  document.querySelector('#tab-register')?.addEventListener('click', () => showAuthModal('register'));
+  document.querySelector('#tab-login')?.addEventListener('click', () => showAuthModal('login'));
+
+  if (isRegister) {
+    renderRegisterForm();
+  } else {
+    renderLoginForm();
+  }
 }
 
-function renderSetupHostForm() {
+function renderRegisterForm() {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
   form.innerHTML = `
-    <div><label>Host Admin User ID *</label><input id="host-user" placeholder="e.g. admin or vimal" autofocus></div>
-    <div style="margin-top:12px;"><label>Admin Password * (min 6 chars)</label><input id="host-pass" type="password" placeholder="••••••••"></div>
-    <div style="margin-top:12px;"><label>Host PC / Device Name</label><input id="host-device" value="${getDeviceName() || 'Main Server PC'}"></div>
-    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-submit-host" style="width:100%;">Create Host Account & Sign In</button></div>
+    <div><label>Desired User ID / Username *</label><input id="reg-user" placeholder="e.g. Rudra_Dev" autofocus></div>
+    <div style="margin-top:12px;"><label>Password * (min 6 characters)</label><input id="reg-pass" type="password" placeholder="••••••••"></div>
+    <div style="margin-top:12px;"><label>Confirm Password *</label><input id="reg-pass-confirm" type="password" placeholder="••••••••"></div>
+    <div style="margin-top:12px;"><label>Device / Workstation Name</label><input id="reg-device" value="${getDeviceName() || 'Main Workstation'}"></div>
+    <div style="margin-top:12px;"><label style="display:flex;justify-content:space-between;"><span>Pairing PIN <span class="muted" style="font-weight:normal;">(optional for staff client)</span></span></label><input id="reg-pin" placeholder="Enter 6-digit PIN if provided by Host"></div>
+    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-submit-reg" style="width:100%;">Sign Up & Register Device</button></div>
+    <div style="text-align:center;margin-top:16px;font-size:12px;color:var(--text-muted);">
+      Already have an account? <a href="#" id="link-to-login" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign In here &rarr;</a>
+    </div>
     <div id="auth-result"></div>
   `;
-  document.querySelector('#btn-submit-host').onclick = async () => {
-    const user_id = document.querySelector('#host-user').value.trim();
-    const password = document.querySelector('#host-pass').value;
-    const device_name = document.querySelector('#host-device').value.trim() || 'Main Server PC';
+
+  document.querySelector('#link-to-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('login');
+  });
+
+  document.querySelector('#btn-submit-reg').onclick = async () => {
+    const user_id = document.querySelector('#reg-user').value.trim();
+    const password = document.querySelector('#reg-pass').value;
+    const confirm = document.querySelector('#reg-pass-confirm').value;
+    const device_name = document.querySelector('#reg-device').value.trim() || 'Main Workstation';
+    const pin = document.querySelector('#reg-pin')?.value.trim() || '';
     const result = document.querySelector('#auth-result');
-    if (!user_id || !password) { result.innerHTML = message('Please enter User ID and Password.', true); return; }
+
+    if (!user_id || !password) {
+      result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
+    if (password.length < 6) {
+      result.innerHTML = message('Password must be at least 6 characters.', true);
+      return;
+    }
+    if (confirm && password !== confirm) {
+      result.innerHTML = message('Passwords do not match.', true);
+      return;
+    }
+
     try {
       setDeviceName(device_name);
-      await api('/api/auth/setup-host', {
+      const res = await api('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ user_id, password, device_name, device_id: getDeviceId() })
+        body: JSON.stringify({ user_id, password, device_name, device_id: getDeviceId(), pin })
       });
-      authRoot.innerHTML = '';
-      await load();
-    } catch (e) { result.innerHTML = message(e.message, true); }
+
+      if (res.status === 'approved' || res.ok) {
+        result.innerHTML = message('Registration successful! Logging in...');
+        try {
+          await api('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
+          });
+        } catch (_) {}
+        authRoot.innerHTML = '';
+        await load();
+      } else {
+        renderWaitingApproval(user_id, password);
+      }
+    } catch (e) {
+      result.innerHTML = message(e.message, true);
+    }
   };
 }
 
 function renderLoginForm() {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
   form.innerHTML = `
     <div><label>User ID</label><input id="login-user" placeholder="Enter your User ID" autofocus></div>
     <div style="margin-top:12px;"><label>Password</label><input id="login-pass" type="password" placeholder="••••••••"></div>
     <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-do-login" style="width:100%;">Sign In</button></div>
+    <div style="text-align:center;margin-top:16px;font-size:12px;color:var(--text-muted);">
+      Don't have an account yet? <a href="#" id="link-to-register" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign Up / Register first &rarr;</a>
+    </div>
     <div id="auth-result"></div>
   `;
-  document.querySelector('#tab-login')?.classList.add('active');
-  document.querySelector('#tab-request')?.classList.remove('active');
-  document.querySelector('#tab-request')?.addEventListener('click', () => showAuthModal('request'));
+
+  document.querySelector('#link-to-register')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('register');
+  });
 
   document.querySelector('#btn-do-login').onclick = async () => {
     const user_id = document.querySelector('#login-user').value.trim();
     const password = document.querySelector('#login-pass').value;
     const result = document.querySelector('#auth-result');
-    if (!user_id || !password) { result.innerHTML = message('Please enter User ID and Password.', true); return; }
+    if (!user_id || !password) {
+      result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
     try {
       await api('/api/auth/login', {
         method: 'POST',
@@ -1080,54 +1134,27 @@ function renderLoginForm() {
       });
       authRoot.innerHTML = '';
       await load();
-    } catch (e) { result.innerHTML = message(e.message, true); }
-  };
-}
-
-function renderRequestAccessForm() {
-  const form = document.querySelector('#auth-form-body');
-  form.innerHTML = `
-    <div><label>Desired User ID *</label><input id="req-user" placeholder="e.g. Rahul" autofocus></div>
-    <div style="margin-top:12px;"><label>Choose Password * (min 6 chars)</label><input id="req-pass" type="password" placeholder="••••••••"></div>
-    <div style="margin-top:12px;"><label>Device Name (e.g. Accounts-PC, Audit-Laptop)</label><input id="req-device" value="${getDeviceName() || 'Office PC'}"></div>
-    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-submit-req" style="width:100%;">Submit Access Request to Host</button></div>
-    <div id="auth-result"></div>
-  `;
-  document.querySelector('#tab-request')?.classList.add('active');
-  document.querySelector('#tab-login')?.classList.remove('active');
-  document.querySelector('#tab-login')?.addEventListener('click', () => showAuthModal('login'));
-
-  document.querySelector('#btn-submit-req').onclick = async () => {
-    const user_id = document.querySelector('#req-user').value.trim();
-    const password = document.querySelector('#req-pass').value;
-    const device_name = document.querySelector('#req-device').value.trim() || 'Office PC';
-    const result = document.querySelector('#auth-result');
-    if (!user_id || !password) { result.innerHTML = message('Please enter User ID and Password.', true); return; }
-    try {
-      setDeviceName(device_name);
-      await api('/api/auth/request-access', {
-        method: 'POST',
-        body: JSON.stringify({ user_id, password, device_name, device_id: getDeviceId() })
-      });
-      renderWaitingApproval(user_id, password);
-    } catch (e) { result.innerHTML = message(e.message, true); }
+    } catch (e) {
+      result.innerHTML = message(e.message, true);
+    }
   };
 }
 
 function renderWaitingApproval(user_id, password) {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
   form.innerHTML = `
     <div style="text-align:center;padding:10px 0;">
       <div style="font-size:36px;margin-bottom:10px;">⏳</div>
-      <h3 style="margin:0 0 8px;">Access Request Submitted</h3>
+      <h3 style="margin:0 0 8px;">Registration Submitted</h3>
       <p class="muted" style="font-size:13px;line-height:1.5;">
         User: <b>${user_id}</b><br>
         Device: <b>${getDeviceName()}</b> (<code>${getDeviceId().substring(0, 12)}...</code>)<br><br>
         Waiting for the Host Administrator to approve your device on the main office PC...
       </p>
       <div class="actions" style="justify-content:center;margin-top:20px;">
-        <button class="secondary" id="btn-check-req">Check Status Now</button>
-        <button class="secondary" id="btn-cancel-req">Back to Login</button>
+        <button class="secondary" id="btn-check-req">Check Approval Status</button>
+        <button class="secondary" id="btn-cancel-req">Back to Sign In</button>
       </div>
       <div id="auth-result" style="margin-top:14px;"></div>
     </div>
@@ -1157,7 +1184,10 @@ function renderWaitingApproval(user_id, password) {
 
   document.querySelector('#btn-check-req').onclick = checkStatus;
   const timer = setInterval(() => {
-    if (!document.querySelector('#btn-check-req')) { clearInterval(timer); return; }
+    if (!document.querySelector('#btn-check-req')) {
+      clearInterval(timer);
+      return;
+    }
     checkStatus().catch(() => {});
   }, 4000);
 }
@@ -1647,12 +1677,8 @@ async function load() {
   initDailyStartupVideo();
   try {
     const authStatus = await api('/api/auth/status');
-    if (!authStatus.initialized) {
-      showAuthModal('setup-host');
-      return;
-    }
     if (!authStatus.authenticated) {
-      showAuthModal(authStatus.is_loopback ? 'login' : 'request');
+      showAuthModal('register');
       return;
     }
 

@@ -7111,6 +7111,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/staging/incoming/clear",
             "/api/auth/status",
             "/api/auth/setup-host",
+            "/api/auth/register",
             "/api/auth/request-access",
             "/api/auth/request-status",
             "/api/auth/login",
@@ -7970,37 +7971,70 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return self.wfile.write(raw)
 
-            if path == "/api/auth/request-access":
+            if path in ("/api/auth/register", "/api/auth/request-access"):
                 user_id = str(payload.get("user_id", "")).strip()
                 password = str(payload.get("password", "")).strip()
-                device_id = str(payload.get("device_id", "")).strip()
+                device_id = str(payload.get("device_id", "")).strip() or str(uuid.uuid4())
                 device_name = str(payload.get("device_name", "")).strip() or "Office PC"
-                if not user_id or not password or not device_id:
-                    raise ValueError("User ID, password, and device identifier are required.")
+                pin = str(payload.get("pin", "")).strip()
+                if not user_id or not password:
+                    raise ValueError("User ID and password are required.")
                 if len(password) < 6:
                     raise ValueError("Password must be at least 6 characters.")
                 client_ip = self.client_address[0]
+                is_loop = ipaddress.ip_address(client_ip).is_loopback
                 t = now()
                 req_id = str(uuid.uuid4())
+
+                pin_approved = False
+                if pin:
+                    with db() as con:
+                        pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=?", (pin,)).fetchone()
+                        if pin_row and pin_row["used"] == 0 and pin_row["expires_at"] >= t:
+                            con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
+                            pin_approved = True
+
+                is_auto_approved = is_loop or pin_approved or (not has_host_user())
+                role = "host" if (not has_host_user()) else "staff"
+                user_status = "active" if is_auto_approved else "pending"
+                device_status = "approved" if is_auto_approved else "pending"
+
                 with db() as con:
                     existing_user = con.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
                     if existing_user:
                         if not verify_password(password, existing_user["password_hash"], existing_user["salt"]):
                             raise ValueError("Incorrect password for existing User ID.")
                         enc_pwd = vault_encrypt(password)
-                        con.execute("UPDATE users SET encrypted_password=? WHERE user_id=?", (enc_pwd, user_id))
+                        if is_auto_approved:
+                            con.execute("UPDATE users SET encrypted_password=?, status='active' WHERE user_id=?", (enc_pwd, user_id))
+                        else:
+                            con.execute("UPDATE users SET encrypted_password=? WHERE user_id=?", (enc_pwd, user_id))
+                        role = existing_user["role"]
                     else:
                         pwd_hash, salt = hash_password(password)
                         enc_pwd = vault_encrypt(password)
-                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password) VALUES (?, ?, ?, 'staff', 'pending', ?, ?, ?)",
-                                    (user_id, pwd_hash, salt, t, t, enc_pwd))
+                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (user_id, pwd_hash, salt, role, user_status, t, t, enc_pwd))
 
-                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, NULL, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status='pending', updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
-                                (device_id, user_id, device_name, client_ip, t, t, t))
+                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status=excluded.status, updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
+                                (device_id, user_id, device_name, client_ip, device_status, t, t, t if is_auto_approved else None, t))
 
-                    con.execute("INSERT INTO access_requests (request_id, user_id, device_id, device_name, ip_address, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-                                (req_id, user_id, device_id, device_name, client_ip, t, t))
-                return self.send_json({"request_id": req_id, "status": "pending", "message": "Access request submitted. Waiting for Host approval."})
+                    if not is_auto_approved:
+                        con.execute("INSERT INTO access_requests (request_id, user_id, device_id, device_name, ip_address, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+                                    (req_id, user_id, device_id, device_name, client_ip, t, t))
+
+                if is_auto_approved:
+                    token = create_session(user_id, device_id, client_ip, session_type="web")
+                    raw = json.dumps({"ok": True, "status": "approved", "user_id": user_id, "role": role, "device_id": device_id, "device_name": device_name, "message": "Registered and signed in successfully."}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_auth_cookie(token)
+                    self.send_header("Content-Length", len(raw))
+                    self.send_cors_headers()
+                    self.end_headers()
+                    return self.wfile.write(raw)
+                else:
+                    return self.send_json({"ok": True, "request_id": req_id, "status": "pending", "message": "Registration submitted. Waiting for Host approval."})
 
             if path == "/api/auth/login":
                 user_id = str(payload.get("user_id", "")).strip()
