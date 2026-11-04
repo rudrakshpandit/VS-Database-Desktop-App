@@ -118,7 +118,7 @@ if sys.stdout is None or not hasattr(sys.stdout, "write"):
 if sys.stderr is None or not hasattr(sys.stderr, "write"):
     sys.stderr = SafeStream(DATA_ROOT / "stderr.log")
 
-DB_PATH = DATA_ROOT / "vs_database_desktop.db"
+DB_PATH = Path(os.environ["VS_DATABASE_PATH"]).resolve() if os.environ.get("VS_DATABASE_PATH") else (DATA_ROOT / "vs_database_desktop.db")
 
 class _LazyAIEngineProxy:
     def __init__(self, db_path):
@@ -6939,7 +6939,37 @@ def secure_resolve_ai_path(file_path_str: str, client_file_no: str = None, user_
                 if user_id.lower() not in assigned_users:
                     return False, None, f"Access denied: User {user_id} is not authorized for client {client_file_no}"
 
-    return True, str(p), None
+_PAIRING_FAILED_ATTEMPTS = {}  # ip -> [first_fail_time, count]
+_PAIRING_RATE_LOCK = threading.Lock()
+
+def check_pairing_rate_limit(client_ip):
+    now_ts = time.time()
+    with _PAIRING_RATE_LOCK:
+        entry = _PAIRING_FAILED_ATTEMPTS.get(client_ip)
+        if entry:
+            first_fail_time, count = entry
+            if now_ts - first_fail_time > 300:  # 5-minute rolling window
+                _PAIRING_FAILED_ATTEMPTS.pop(client_ip, None)
+            elif count >= 5:
+                return False, int(300 - (now_ts - first_fail_time))
+        return True, 0
+
+def record_pairing_failed_attempt(client_ip):
+    now_ts = time.time()
+    with _PAIRING_RATE_LOCK:
+        entry = _PAIRING_FAILED_ATTEMPTS.get(client_ip)
+        if entry:
+            first_fail_time, count = entry
+            if now_ts - first_fail_time > 300:
+                _PAIRING_FAILED_ATTEMPTS[client_ip] = [now_ts, 1]
+            else:
+                _PAIRING_FAILED_ATTEMPTS[client_ip] = [first_fail_time, count + 1]
+        else:
+            _PAIRING_FAILED_ATTEMPTS[client_ip] = [now_ts, 1]
+
+def clear_pairing_failed_attempts(client_ip):
+    with _PAIRING_RATE_LOCK:
+        _PAIRING_FAILED_ATTEMPTS.pop(client_ip, None)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -8097,22 +8127,29 @@ class Handler(BaseHTTPRequestHandler):
                 })
 
             if path == "/api/host/pairing/claim-pin":
+                client_ip = self.client_address[0]
+                allowed, wait_sec = check_pairing_rate_limit(client_ip)
+                if not allowed:
+                    return self.send_json({"ok": False, "error": f"Too many failed pairing attempts. Please wait {wait_sec} seconds before trying again."}, 429)
                 pin = str(payload.get("pin", "")).strip()
                 device_id = str(payload.get("device_id", "")).strip()
                 device_name = str(payload.get("device_name", "")).strip() or f"Workstation-{device_id[-6:]}"
                 if not pin or not device_id:
                     raise ValueError("PIN and device_id are required.")
                 t = now()
-                client_ip = self.client_address[0]
                 with db() as con:
                     pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=?", (pin,)).fetchone()
                     if not pin_row:
+                        record_pairing_failed_attempt(client_ip)
                         return self.send_json({"ok": False, "error": "Invalid pairing PIN."}, 400)
                     if pin_row["used"] != 0:
+                        record_pairing_failed_attempt(client_ip)
                         return self.send_json({"ok": False, "error": "Pairing PIN has already been used."}, 400)
                     if pin_row["expires_at"] < t:
+                        record_pairing_failed_attempt(client_ip)
                         return self.send_json({"ok": False, "error": "Pairing PIN has expired."}, 400)
                     
+                    clear_pairing_failed_attempts(client_ip)
                     user_id = pin_row["user_id"]
                     # Mark PIN used
                     con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
@@ -11691,6 +11728,7 @@ def start_server_background(port: int = None, host: str = "0.0.0.0"):
     
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True
+    ThreadingHTTPServer.request_queue_size = 128
     main_server = ThreadingHTTPServer((host, PORT), Handler)
     main_server.daemon_threads = True
     _SERVER_INSTANCE = main_server
@@ -11723,6 +11761,7 @@ if __name__ == "__main__":
         t.start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True
+    ThreadingHTTPServer.request_queue_size = 128
     main_server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     main_server.daemon_threads = True
     _SERVER_INSTANCE = main_server

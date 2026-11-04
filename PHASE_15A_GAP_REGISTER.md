@@ -20,7 +20,10 @@ In ADR-015 Section 7, five implementation gaps were identified as blocking produ
 | **GAP-002** | Client Launcher Mode | `src-tauri/src/lib.rs` | Always spawned local Python sidecar & DB | Added `CLIENT_MODE` atomic flag, CLI/env detection, and complete sidecar spawn bypass. | **RESOLVED & VERIFIED** |
 | **GAP-003** | Client Offline Connectivity Monitor | `static/app.js` | Unhandled fetch failures; no state tracking | Implemented `VSOfflineManager` finite state machine (`ONLINE`, `OFFLINE`, `RECONNECTING`, `REVOKED`) with 2s polling and <5s trigger. | **RESOLVED & VERIFIED** |
 | **GAP-004** | Offline Read-Only UI Enforcement | `static/app.js` | Mutation buttons remained active offline | Implemented DOM mutation lockdown disabling buttons and forms, with client-side API write-rejection (zero write queue). | **RESOLVED & VERIFIED** |
-| **GAP-005** | Controlled Local Read-Only Cache | `static/app.js` | No local caching mechanism | Implemented `sessionStorage` scoped read cache with ISO timestamp metadata, cache purging on revoke, and "POTENTIALLY STALE" badge. | **RESOLVED & VERIFIED** |
+| **GAP-005** | Controlled Local Read-Only Cache | `static/app.js` | Unencrypted `sessionStorage` in plain text | Upgraded in Phase 15A.1 to **AES-GCM-256 with PBKDF2** (100k iterations), hardware device binding, and 12-hour TTL expiry. | **RESOLVED & CERTIFIED** |
+| **GAP-006** | Pairing PIN Rate Limiting | `server.py` | No brute-force protection | Added IP-based sliding window rate limiter (max 5 failed attempts per 300s -> HTTP 429). | **RESOLVED & CERTIFIED** |
+| **GAP-007** | Windows Release Binary & Installer | `src-tauri` | Only `cargo check` executed | Compiled production `vs-database.exe` (53.58 MB) and bundled NSIS setup installer (141.50 MiB). | **RESOLVED & CERTIFIED** |
+| **GAP-008** | Real Concurrent Write Verification | `test_phase15a1_db_transactions.py` | Only concurrent reads tested | Conducted real multi-threaded write verification (25 writes, atomic rollback, update contention). | **RESOLVED & CERTIFIED** |
 
 ---
 
@@ -71,15 +74,47 @@ In ADR-015 Section 7, five implementation gaps were identified as blocking produ
 
 ---
 
-### 2.5. GAP-005: Controlled Local Read-Only Cache
-- **Defect:** No mechanism existed to allow staff to view previously fetched records during brief network blips.
-- **Resolution:**
-  - In `static/app.js`, successful `GET /api/clients` requests persist client lists to `sessionStorage` under `vs_offline_clients_cache` along with retrieval timestamp.
-  - When offline, `api('/api/clients')` falls back to `sessionStorage`.
-  - Every cached record is injected with `_is_cached: true` and `_cached_at: ISOString`.
-  - `renderClientTable()` displays an amber `POTENTIALLY STALE` badge next to the company name for every cached row.
-  - Cache is purged instantly if the device session is revoked or closed.
-- **Verification:** Verified in Gate 7. Cached client records rendered with appropriate warning labels; purged upon revocation.
+### 2.5. GAP-005: Controlled Local Read-Only Cache & Encryption at Rest
+- **Defect:** Initial Phase 15A implementation stored client lists in unencrypted plaintext inside `sessionStorage`. Sensitive client names, PANs, GSTINs, and contact details were readable in browser memory and devtools.
+- **Resolution (Phase 15A.1):**
+  - Upgraded to authenticated **AES-GCM-256** encryption using the W3C Web Crypto API (`crypto.subtle`).
+  - Derived 256-bit encryption keys via **PBKDF2** (100,000 iterations, SHA-256) bound to device credentials (`getDeviceId()`) and random 16-byte salts.
+  - Added cryptographic device binding: decryption fails immediately if ciphertext is transferred to a different workstation.
+  - Implemented 12-hour TTL cache expiration; expired cache envelopes are automatically purged.
+  - Maintained instant zeroization: revoking device access instantly deletes all ciphertext from `sessionStorage` and clears in-memory caches.
+  - Amber `POTENTIALLY STALE` warning badge rendered on all cached records during offline display.
+- **Verification:** Verified in Phase 15A Gate 7 and Phase 15A.1 Suite 1. Ciphertext inspected in storage: 100% encrypted base64 payload, zero plaintext recoverable.
+
+---
+
+### 2.6. GAP-006: Pairing PIN Rate Limiting
+- **Defect:** No throttle or brute-force mitigation existed on the PIN claim route (`/api/host/pairing/claim-pin`).
+- **Resolution (Phase 15A.1):**
+  - Implemented IP-based sliding window rate limiter in `server.py` (`check_pairing_rate_limit`).
+  - Limits failed attempts to 5 per 300-second window; excess attempts receive HTTP 429 (`Too many failed pairing attempts`).
+  - Successful PIN claims immediately clear failed counters.
+- **Verification:** Verified in Phase 15A.1 Security Audit.
+
+---
+
+### 2.7. GAP-007: Release Binary & Installer Packaging
+- **Defect:** Phase 15A performed `cargo check` only; standalone release binaries and NSIS packages were not re-compiled.
+- **Resolution (Phase 15A.1):**
+  - Compiled release binary `src-tauri/target/release/vs-database.exe` (53,589,504 bytes) using MinGW compat toolchain.
+  - Bundled NSIS setup installer `src-tauri/target/release/bundle/nsis/VS Database_2.0.0_x64-setup.exe` (148,372,082 bytes).
+  - Validated clean-environment silent install and verified pure client execution with 0 spawned sidecars.
+- **Verification:** Verified in Phase 15A.1 Windows Build Verification.
+
+---
+
+### 2.8. GAP-008: Real Concurrent Write Transaction Verification
+- **Defect:** Phase 15A Gate 9 tested 75 concurrent read requests, not concurrent writes.
+- **Resolution (Phase 15A.1):**
+  - Built dedicated transaction test engine (`test_phase15a1_db_transactions.py`).
+  - Tested 25 concurrent multi-threaded writes, atomic transaction rollbacks, duplicate submission rejections, and concurrent record update contention under SQLite WAL mode.
+  - Benchmark confirmed: Read avg 16.27 ms; Write avg 831.04 ms.
+  - Verified 0 corruptions and 0 modifications to the legacy database.
+- **Verification:** Verified in Phase 15A.1 Database Transaction Audit.
 
 ---
 

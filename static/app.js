@@ -418,31 +418,187 @@ const VSOfflineManager = {
   transitionToRevoked() {
     this.currentState = this.STATE_REVOKED;
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-    sessionStorage.removeItem(this.cachedClientsKey);
-    localStorage.removeItem(this.cachedClientsKey);
+    this.clearCache();
     console.error('[OfflineManager] DEVICE REVOKED by host administrator.');
     this.showRevokedOverlay();
     window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_REVOKED } }));
   },
 
-  cacheClients(clientList) {
-    if (!Array.isArray(clientList)) return;
+  clearCache() {
+    this._memoryCache = null;
     try {
-      const payload = {
-        timestamp: new Date().toISOString(),
-        clients: clientList
-      };
-      sessionStorage.setItem(this.cachedClientsKey, JSON.stringify(payload));
+      sessionStorage.removeItem(this.cachedClientsKey);
+      localStorage.removeItem(this.cachedClientsKey);
+    } catch (e) {}
+  },
+
+  _bufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return (typeof btoa === 'function') ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+  },
+
+  _base64ToBuffer(base64) {
+    const binary = (typeof atob === 'function') ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  },
+
+  async _deriveEncryptionKey(saltBytes) {
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto : globalThis.crypto;
+    if (!cryptoObj || !cryptoObj.subtle) return null;
+    const deviceId = getDeviceId() || 'dev-default-unbound';
+    const sessionToken = (typeof getSessionToken === 'function' ? getSessionToken() : '') || 'vs-ro-token-salt';
+    const secret = `${deviceId}:${sessionToken}`;
+    const enc = new TextEncoder();
+    const keyMaterial = await cryptoObj.subtle.importKey(
+      'raw',
+      enc.encode(secret),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+    return await cryptoObj.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: saltBytes,
+        iterations: 100000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  },
+
+  async encryptPayload(plaintextObj) {
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto : globalThis.crypto;
+    if (!cryptoObj || !cryptoObj.subtle) {
+      return { v: 0, raw: plaintextObj };
+    }
+    const salt = cryptoObj.getRandomValues(new Uint8Array(16));
+    const iv = cryptoObj.getRandomValues(new Uint8Array(12));
+    const key = await this._deriveEncryptionKey(salt);
+    const enc = new TextEncoder();
+    const encodedData = enc.encode(JSON.stringify(plaintextObj));
+    const ciphertextBuffer = await cryptoObj.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encodedData
+    );
+    return {
+      v: 1,
+      algo: 'AES-GCM-256',
+      kdf: 'PBKDF2-SHA256-100K',
+      salt: this._bufferToBase64(salt),
+      iv: this._bufferToBase64(iv),
+      ciphertext: this._bufferToBase64(ciphertextBuffer),
+      deviceId: getDeviceId(),
+      cachedAt: plaintextObj.timestamp,
+      expiresAt: plaintextObj.expiresAt
+    };
+  },
+
+  async decryptRecord(record) {
+    if (!record) return null;
+    if (record.v === 0 && record.raw) return record.raw;
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto : globalThis.crypto;
+    if (!cryptoObj || !cryptoObj.subtle) return null;
+
+    // Device binding check
+    if (record.deviceId && record.deviceId !== getDeviceId()) {
+      console.warn('[OfflineManager] Cache device binding mismatch. Refusing decryption.');
+      return null;
+    }
+
+    // Expiry check (12-hour TTL)
+    if (record.expiresAt && Date.now() > new Date(record.expiresAt).getTime()) {
+      console.warn('[OfflineManager] Cache expired. Purging.');
+      this.clearCache();
+      return null;
+    }
+
+    try {
+      const salt = new Uint8Array(this._base64ToBuffer(record.salt));
+      const iv = new Uint8Array(this._base64ToBuffer(record.iv));
+      const ciphertext = this._base64ToBuffer(record.ciphertext);
+      const key = await this._deriveEncryptionKey(salt);
+      const decryptedBuffer = await cryptoObj.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        ciphertext
+      );
+      const dec = new TextDecoder();
+      return JSON.parse(dec.decode(decryptedBuffer));
     } catch (e) {
-      console.warn('[OfflineManager] Failed to cache clients:', e);
+      console.warn('[OfflineManager] Decryption failed or tampered cache:', e);
+      return null;
     }
   },
 
+  cacheClients(clientList) {
+    if (!Array.isArray(clientList)) return;
+    const now = new Date();
+    const expires = new Date(now.getTime() + 12 * 60 * 60 * 1000); // 12-hour TTL
+    const payload = {
+      timestamp: now.toISOString(),
+      expiresAt: expires.toISOString(),
+      deviceId: getDeviceId(),
+      clients: clientList
+    };
+    this._memoryCache = payload;
+    this.encryptPayload(payload).then(encryptedRecord => {
+      try {
+        sessionStorage.setItem(this.cachedClientsKey, JSON.stringify(encryptedRecord));
+      } catch (e) {
+        console.warn('[OfflineManager] Failed to persist encrypted cache:', e);
+      }
+    }).catch(err => {
+      console.warn('[OfflineManager] Encryption error:', err);
+    });
+  },
+
   getCachedClients() {
+    if (this._memoryCache && (!this._memoryCache.expiresAt || Date.now() <= new Date(this._memoryCache.expiresAt).getTime())) {
+      return this._memoryCache;
+    }
     try {
       const raw = sessionStorage.getItem(this.cachedClientsKey);
       if (!raw) return null;
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (parsed.clients && parsed.timestamp) return parsed;
+      return null;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  async getCachedClientsAsync() {
+    if (this._memoryCache && (!this._memoryCache.expiresAt || Date.now() <= new Date(this._memoryCache.expiresAt).getTime())) {
+      return this._memoryCache;
+    }
+    try {
+      const raw = sessionStorage.getItem(this.cachedClientsKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed.v === 1 && parsed.ciphertext) {
+        const decrypted = await this.decryptRecord(parsed);
+        if (decrypted) {
+          this._memoryCache = decrypted;
+          return decrypted;
+        }
+      } else if (parsed.clients && parsed.timestamp) {
+        this._memoryCache = parsed;
+        return parsed;
+      }
+      return null;
     } catch (e) {
       return null;
     }
@@ -658,7 +814,7 @@ if (typeof document !== 'undefined') {
   }
 }
 
-const api = (path, options = {}) => {
+const api = async (path, options = {}) => {
   const method = (options.method || 'GET').toUpperCase();
 
   // ADR-015: Offline Read-Only Mode enforcement
@@ -668,9 +824,9 @@ const api = (path, options = {}) => {
     }
     // For GET /api/clients when offline, serve from cache
     if (path === '/api/clients' || path.startsWith('/api/clients?')) {
-      const cached = VSOfflineManager.getCachedClients();
+      const cached = await VSOfflineManager.getCachedClientsAsync();
       if (cached && cached.clients) {
-        console.log('[API Cache] Serving clients list from offline read-only cache');
+        console.log('[API Cache] Serving clients list from offline encrypted read-only cache');
         const enriched = cached.clients.map(c => Object.assign({}, c, { _is_cached: true, _cached_at: cached.timestamp }));
         return Promise.resolve(enriched);
       }
