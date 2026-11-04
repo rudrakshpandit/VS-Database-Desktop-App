@@ -467,7 +467,12 @@ pub fn run() {
     ]);
 
     // Setup lifecycle: supervisor spawn & health check
-    builder = builder.setup(|_app| {
+    builder = builder.setup(|app| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
         std::thread::spawn(|| {
             if let Err(e) = ensure_python_sidecar() {
                 eprintln!("[Supervisor Error] {}", e);

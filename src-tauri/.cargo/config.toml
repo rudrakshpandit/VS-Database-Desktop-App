@@ -1,2 +1,2 @@
 [build]
-rustflags = ["--cfg", "windows_slim_errors", "-L", "native=D:/AntiGravity Automation/VS Database 2.0 - Tauri Migration/src-tauri/compat-lib"]
+rustflags = ["--cfg", "windows_slim_errors"]
