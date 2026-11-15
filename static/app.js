@@ -1701,9 +1701,35 @@ window.addEventListener('pywebviewready', () => {
   }
 });
 
+async function waitForBackend(maxWaitMs = 15000, intervalMs = 350) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.getInvoke === 'function') {
+        const inv = window.TauriBridge.getInvoke();
+        if (inv) {
+          const healthy = await inv('get_python_health').catch(() => false);
+          if (healthy) return true;
+        }
+      }
+      const resolved = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+        ? window.TauriBridge.resolveApiUrl('/api/health')
+        : '/api/health';
+      const r = await fetch(resolved, { method: 'GET' });
+      if (r.ok) return true;
+    } catch (_) {}
+    await new Promise(res => setTimeout(res, intervalMs));
+  }
+  return false;
+}
+
 async function load() {
   initDesktopWindowControls();
   initDailyStartupVideo();
+
+  // Wait for backend to be ready (prevents startup race condition)
+  await waitForBackend(15000, 350);
+
   try {
     const authStatus = await api('/api/auth/status');
     if (!authStatus.authenticated) {
@@ -1766,11 +1792,34 @@ async function load() {
       updateUnifiedStatus(true, false, 'Server online', 'Drive offline');
     });
   } catch (e) {
-    window.__vsDashboardRendered = true;
+    window.__vsDashboardRendered = false;
     document.documentElement.classList.remove('vs-booting');
     dismissSplash();
     updateUnifiedStatus(false, false, 'Server offline', 'Drive offline');
-    content.innerHTML = message(e.message, true);
+    content.innerHTML = `
+      <div class="notice error" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;margin:20px 0;">
+        <div>
+          <strong style="display:block;margin-bottom:4px;">Server connection error: ${escapeHtml(e.message || 'Unable to connect to database server.')}</strong>
+          <span class="muted" style="font-size:12px;">Waiting for database server to respond on port 8768...</span>
+        </div>
+        <button class="btn secondary" onclick="load()" style="flex-shrink:0;">Retry Connection</button>
+      </div>
+    `;
+    if (!window.__vsAutoRetryTimer) {
+      window.__vsAutoRetryTimer = setInterval(async () => {
+        try {
+          const resolved = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+            ? window.TauriBridge.resolveApiUrl('/api/health')
+            : '/api/health';
+          const r = await fetch(resolved, { method: 'GET' });
+          if (r.ok) {
+            clearInterval(window.__vsAutoRetryTimer);
+            window.__vsAutoRetryTimer = null;
+            await load();
+          }
+        } catch (_) {}
+      }, 3000);
+    }
   }
 
 }
