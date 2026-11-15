@@ -7283,6 +7283,7 @@ class Handler(BaseHTTPRequestHandler):
             if is_loop and ctx and ctx.get("role") == "host":
                 if not self.get_cookie("vs_session"):
                     token_cookie = create_session(ctx["user_id"], ctx["device_id"], "127.0.0.1", session_type="web")
+            cur_token = self.get_auth_token() or token_cookie
             raw = json.dumps({
                 "initialized": has_host_user(),
                 "authenticated": bool(ctx),
@@ -7292,6 +7293,8 @@ class Handler(BaseHTTPRequestHandler):
                     "device_name": ctx["device_name"],
                     "device_id": ctx["device_id"]
                 } if ctx else None,
+                "session_token": cur_token if ctx else None,
+                "token": cur_token if ctx else None,
                 "is_loopback": is_loop
             }).encode()
             self.send_response(200)
@@ -8025,7 +8028,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 if is_auto_approved:
                     token = create_session(user_id, device_id, client_ip, session_type="web")
-                    raw = json.dumps({"ok": True, "status": "approved", "user_id": user_id, "role": role, "device_id": device_id, "device_name": device_name, "message": "Registered and signed in successfully."}).encode()
+                    raw = json.dumps({"ok": True, "status": "approved", "user_id": user_id, "role": role, "device_id": device_id, "device_name": device_name, "token": token, "session_token": token, "message": "Registered and signed in successfully."}).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_auth_cookie(token)
@@ -8065,7 +8068,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 client_ip = self.client_address[0]
                 token = create_session(user_id, device_id, client_ip, session_type="web")
-                raw = json.dumps({"ok": True, "user_id": user_id, "role": user["role"], "device_name": dev["device_name"], "device_id": device_id}).encode()
+                raw = json.dumps({"ok": True, "user_id": user_id, "role": user["role"], "device_name": dev["device_name"], "device_id": device_id, "token": token, "session_token": token}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_auth_cookie(token)

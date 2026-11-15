@@ -276,6 +276,17 @@ const getDeviceId = () => {
 };
 const getDeviceName = () => localStorage.getItem('vs-device-name') || '';
 const setDeviceName = (name) => localStorage.setItem('vs-device-name', name);
+const getSessionToken = () => localStorage.getItem('vs-session-token') || sessionStorage.getItem('vs-session-token') || '';
+const setSessionToken = (token) => {
+  if (token) {
+    localStorage.setItem('vs-session-token', token);
+    sessionStorage.setItem('vs-session-token', token);
+  }
+};
+const clearSessionToken = () => {
+  localStorage.removeItem('vs-session-token');
+  sessionStorage.removeItem('vs-session-token');
+};
 
 // ADR-015: Centralized Host-Client Architecture with Offline Read-Only Mode
 const VSOfflineManager = {
@@ -380,7 +391,10 @@ const VSOfflineManager = {
 
       const resp = await fetch(validateUrl, {
         method: 'GET',
-        headers: { 'X-VS-Device-Id': getDeviceId() },
+        headers: {
+          'X-VS-Device-Id': getDeviceId(),
+          ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {})
+        },
         credentials: 'include'
       });
 
@@ -854,6 +868,7 @@ const api = async (path, options = {}) => {
     headers: {
       'Content-Type': 'application/json',
       'X-VS-Device-Id': getDeviceId(),
+      ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {}),
       ...(options.headers || {})
     }
   }).then(async r => {
@@ -1083,13 +1098,21 @@ function renderRegisterForm() {
       });
 
       if (res.status === 'approved' || res.ok) {
-        result.innerHTML = message('Registration successful! Logging in...');
-        try {
-          await api('/api/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
-          });
-        } catch (_) {}
+        result.innerHTML = message('Registration successful! Signing in...');
+        const token = res.session_token || res.token;
+        if (token) {
+          setSessionToken(token);
+        } else {
+          try {
+            const loginRes = await api('/api/auth/login', {
+              method: 'POST',
+              body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
+            });
+            if (loginRes && (loginRes.session_token || loginRes.token)) {
+              setSessionToken(loginRes.session_token || loginRes.token);
+            }
+          } catch (_) {}
+        }
         authRoot.innerHTML = '';
         await load();
       } else {
@@ -1128,10 +1151,13 @@ function renderLoginForm() {
       return;
     }
     try {
-      await api('/api/auth/login', {
+      const res = await api('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
       });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
       authRoot.innerHTML = '';
       await load();
     } catch (e) {
@@ -1167,10 +1193,13 @@ function renderWaitingApproval(user_id, password) {
     if (res.status === 'approved') {
       if (resEl) resEl.innerHTML = message('Device approved! Logging in...');
       try {
-        await api('/api/auth/login', {
+        const loginRes = await api('/api/auth/login', {
           method: 'POST',
           body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
         });
+        if (loginRes && (loginRes.session_token || loginRes.token)) {
+          setSessionToken(loginRes.session_token || loginRes.token);
+        }
         authRoot.innerHTML = '';
         await load();
       } catch (e) {
@@ -1681,6 +1710,9 @@ async function load() {
       showAuthModal('register');
       return;
     }
+    if (authStatus.session_token || authStatus.token) {
+      setSessionToken(authStatus.session_token || authStatus.token);
+    }
 
     currentUser = authStatus.user;
     const userBadge = document.querySelector('#user-status');
@@ -1690,8 +1722,9 @@ async function load() {
       document.querySelector('#logout-btn').onclick = async () => {
         try {
           await api('/api/auth/logout', { method: 'POST', body: '{}' });
-          location.reload();
-        } catch (_) { location.reload(); }
+        } catch (_) {}
+        clearSessionToken();
+        location.reload();
       };
     }
 
