@@ -4176,3 +4176,119 @@ body.page-vs-ai-active .vs-ai-container {
 
 
 
+
+
+/* ==========================================================================
+   OTP / PIN Verification Component (ADR-015 Client Workstation Pairing)
+   ========================================================================== */
+.vs-otp-wrap {
+  margin: 12px 0 16px;
+  text-align: center;
+}
+.vs-otp-header {
+  margin-bottom: 14px;
+}
+.vs-otp-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--tx, #1e293b);
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+.vs-otp-subtitle {
+  font-size: 12.5px;
+  color: var(--muted, #64748b);
+  line-height: 1.45;
+  margin: 0;
+}
+.vs-otp-container {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  margin: 18px 0;
+}
+.vs-otp-box {
+  width: 44px;
+  height: 54px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 800;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, monospace;
+  color: #1e293b;
+  background: rgba(255, 255, 255, 0.85);
+  border: 2px solid rgba(203, 213, 225, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(18, 28, 58, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  caret-color: #2563eb;
+  outline: none;
+}
+.vs-otp-box:hover {
+  border-color: #94a3b8;
+}
+.vs-otp-box:focus {
+  border-color: #2563eb;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18), 0 6px 16px rgba(37, 99, 235, 0.15);
+  transform: scale(1.05) translateY(-2px);
+}
+.vs-otp-box.filled {
+  border-color: #3b82f6;
+  background: rgba(239, 246, 255, 0.95);
+  color: #1d4ed8;
+}
+.vs-otp-box.error {
+  border-color: #ef4444 !important;
+  background: rgba(254, 242, 242, 0.95) !important;
+  color: #b91c1c !important;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18) !important;
+  animation: otp-shake 0.35s ease-in-out;
+}
+@keyframes otp-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+.vs-otp-footer {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--muted, #64748b);
+}
+.vs-otp-link {
+  color: var(--blue, #2563eb);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.vs-otp-link:hover {
+  text-decoration: underline;
+}
+.vs-host-cfg-box {
+  background: rgba(241, 245, 249, 0.7);
+  border: 1px solid rgba(203, 213, 225, 0.8);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.vs-host-cfg-box label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.vs-host-cfg-box input {
+  width: 100%;
+  font-size: 13px;
+  font-family: monospace;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+}

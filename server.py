@@ -7018,8 +7018,10 @@ class Handler(BaseHTTPRequestHandler):
         if origin := self.cors_origin():
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Credentials", "true")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id, X-VS-Handshake-Token")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id, X-VS-Handshake-Token, X-Requested-With, Accept")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+            self.send_header("Access-Control-Max-Age", "86400")
             self.send_header("Vary", "Origin")
 
     def get_cookie(self, name: str) -> str:
@@ -7053,6 +7055,12 @@ class Handler(BaseHTTPRequestHandler):
     def _get_host_context_record(self) -> dict | None:
         with db() as con:
             host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
+            if not host_user:
+                t = now()
+                pwd_hash, salt = hash_password("host_admin_initial")
+                con.execute("INSERT OR IGNORE INTO users (user_id, password_hash, salt, role, status, created_at, updated_at) VALUES ('admin', ?, ?, 'host', 'active', ?, ?)",
+                            (pwd_hash, salt, t, t))
+                host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
             if host_user:
                 dev = con.execute("SELECT * FROM devices WHERE user_id=? AND status='approved' LIMIT 1", (host_user["user_id"],)).fetchone()
                 dev_id = dev["device_id"] if dev else "dev-main-host-001"

@@ -311,6 +311,14 @@ def run_all_gates():
     results["Gate 4"] = run_gate(4, "Client Isolated Silent Installation", gate4_client_install)
 
     # Start Host backend for Gates 5-10
+    if is_port_open(HOST_PORT):
+        print(f"\n[Lifecycle] Existing process on port {HOST_PORT} detected, clearing...")
+        try:
+            http_json(f"http://127.0.0.1:{HOST_PORT}/api/desktop/shutdown", method="POST", payload={"force": True})
+        except:
+            pass
+        time.sleep(1)
+
     host_cmd = [
         sys.executable,
         os.path.join(ROOT_DIR, "server.py"),

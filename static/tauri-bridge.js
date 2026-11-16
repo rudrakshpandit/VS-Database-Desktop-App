@@ -507,7 +507,25 @@
     saveFileDialog: saveFileDialog,
     saveFileToLocation: saveFileToLocation,
     openLocalFolder: openLocalFolder,
-    applyDragRegions: applyDragRegions
+    applyDragRegions: applyDragRegions,
+    isClientMode: async function() {
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          return await inv('is_client_mode');
+        } catch (_) {}
+      }
+      return false;
+    },
+    getAppMode: async function() {
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          return await inv('get_app_mode');
+        } catch (_) {}
+      }
+      return 'host';
+    }
   };
 
   global.TauriBridge = TauriBridge;
