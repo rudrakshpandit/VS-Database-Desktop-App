@@ -1,3 +1,250 @@
+
+// ==============================================================================
+// PHASE 16: REAL-TIME SYNC, RBAC, GLASS OTP & SETTINGS LOCK HELPERS
+// ==============================================================================
+let currentDataVersion = 0;
+let syncPollerActive = false;
+
+function startRealtimeSync() {
+  if (syncPollerActive) return;
+  syncPollerActive = true;
+  setInterval(async () => {
+    if (typeof VSOfflineManager !== 'undefined' && VSOfflineManager.isOffline()) return;
+    try {
+      const res = await api('/api/sync/version', { timeout: 2000 });
+      if (res && res.version) {
+        if (currentDataVersion === 0) {
+          currentDataVersion = res.version;
+          return;
+        }
+        if (res.version > currentDataVersion) {
+          currentDataVersion = res.version;
+          console.log('[RealtimeSync] Remote data version updated:', res.version, 'refreshing active views...');
+          if (current === 'clients' && typeof clientsPage === 'function') {
+            const cl = await api('/api/clients');
+            if (Array.isArray(cl)) {
+              clients = cl;
+              if (typeof renderClients === 'function') renderClients();
+            }
+          } else if (current === 'dashboard' && typeof dashboardPage === 'function') {
+            if (typeof loadStats === 'function') loadStats().catch(() => {});
+            if (typeof loadActivity === 'function') loadActivity().catch(() => {});
+          } else if (current === 'users' && typeof usersPage === 'function') {
+            usersPage().catch(() => {});
+          }
+          // Update clients array in background for search
+          api('/api/clients').then(cl => {
+            if (Array.isArray(cl)) clients = cl;
+          }).catch(() => {});
+          // Re-sync permissions
+          api('/api/auth/status').then(st => {
+            if (st && st.user) {
+              currentUser = st.user;
+              localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+              applyUserPermissions();
+            }
+          }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+  }, 1200);
+}
+
+function applyUserPermissions() {
+  if (!currentUser) return;
+  const perms = currentUser.permissions || {};
+  const isHost = currentUser.role === 'host';
+
+  const toggleNav = (page, allowed) => {
+    const btn = document.querySelector(`nav button[data-page="${page}"]`);
+    if (btn) btn.style.display = allowed ? 'flex' : 'none';
+  };
+
+  toggleNav('clients', isHost || perms.can_access_clients !== false);
+  toggleNav('automation', isHost || perms.can_access_automation !== false);
+  toggleNav('vs-ai', isHost || perms.can_access_vs_ai !== false);
+  toggleNav('backup', isHost || perms.can_access_backup !== false);
+  toggleNav('setup', isHost || perms.can_access_setup !== false);
+  toggleNav('pdf-studio', isHost || perms.can_access_pdf_studio !== false);
+  toggleNav('drive', isHost || perms.can_access_drive !== false);
+  toggleNav('users', isHost);
+
+  // If currently active page is now forbidden, safely redirect to dashboard
+  if (!isHost) {
+    if (current === 'automation' && perms.can_access_automation === false) { current = 'dashboard'; render(); }
+    if (current === 'vs-ai' && perms.can_access_vs_ai === false) { current = 'dashboard'; render(); }
+    if (current === 'backup' && perms.can_access_backup === false) { current = 'dashboard'; render(); }
+    if (current === 'setup' && perms.can_access_setup === false) { current = 'dashboard'; render(); }
+    if (current === 'users') { current = 'dashboard'; render(); }
+  }
+}
+
+function showHostApprovalPinModal(pin, userName, seconds = 600) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:999999;';
+  modal.innerHTML = `
+    <div class="glass card" style="max-width:440px;width:92%;padding:28px 24px;text-align:center;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);">
+      <div style="font-size:36px;margin-bottom:8px;">⚡</div>
+      <h2 style="font-size:20px;margin:0 0 6px;">Workstation Access Approved!</h2>
+      <p class="muted" style="font-size:13px;line-height:1.4;margin:0 0 16px;">
+        Workstation approved for <b>${escapeHtml(userName)}</b>.<br>
+        Staff member must enter this 6-digit PIN on their PC:
+      </p>
+      <div style="display:flex;justify-content:center;gap:8px;margin:18px 0;">
+        ${pin.split('').map(d => `<span style="display:inline-flex;width:44px;height:56px;align-items:center;justify-content:center;background:#fff;border:2.5px solid #2563eb;border-radius:12px;font-size:28px;font-weight:800;color:#1e40af;box-shadow:0 4px 12px rgba(37,99,235,0.2);">${d}</span>`).join('')}
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px;">
+        PIN expires in: <b id="host-approve-timer">10:00</b>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button class="btn secondary" id="btn-copy-approve-pin">📋 Copy PIN</button>
+        <button class="btn p" id="btn-close-approve-modal">Done</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  let rem = seconds;
+  const tId = setInterval(() => {
+    rem--;
+    const el = modal.querySelector('#host-approve-timer');
+    if (!el || rem <= 0) {
+      clearInterval(tId);
+      if (el) el.textContent = 'Expired';
+    } else {
+      const m = Math.floor(rem / 60);
+      const s = rem % 60;
+      el.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+  }, 1000);
+
+  modal.querySelector('#btn-copy-approve-pin').onclick = () => {
+    navigator.clipboard.writeText(pin);
+    alert(`PIN ${pin} copied to clipboard!`);
+  };
+  modal.querySelector('#btn-close-approve-modal').onclick = () => {
+    clearInterval(tId);
+    modal.remove();
+  };
+}
+
+function openUserPermissionsModal(userId, fullName, currentPerms = {}) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:999999;';
+  
+  const p = currentPerms || {};
+  const isChecked = (key, def = true) => (p[key] !== undefined ? p[key] : def) ? 'checked' : '';
+  const restrictedList = (p.restricted_clients || []).join(', ');
+
+  modal.innerHTML = `
+    <div class="glass card" style="max-width:560px;width:94%;padding:26px 24px;text-align:left;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h2 style="font-size:18px;margin:0;">🔑 User Permissions & Access Control</h2>
+        <button class="btn ib" id="btn-close-perms-x" style="font-size:16px;">✕</button>
+      </div>
+      <p class="muted" style="font-size:13px;margin:0 0 16px;">
+        Configure granular powers and access restrictions for <b>${escapeHtml(fullName || userId)}</b> (<code>${escapeHtml(userId)}</code>):
+      </p>
+
+      <div class="vs-perm-grid">
+        <div class="vs-perm-item">
+          <label for="p-clients">Access Clients (View & Search)</label>
+          <input type="checkbox" id="p-clients" ${isChecked('can_access_clients', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-del-clients">Allow Deleting Clients</label>
+          <input type="checkbox" id="p-del-clients" ${isChecked('can_delete_clients', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-del-files">Allow Deleting Files</label>
+          <input type="checkbox" id="p-del-files" ${isChecked('can_delete_files', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-automation">Access Automation Tab</label>
+          <input type="checkbox" id="p-automation" ${isChecked('can_access_automation', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-vs-ai">Access VS AI Assistant Tab</label>
+          <input type="checkbox" id="p-vs-ai" ${isChecked('can_access_vs_ai', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-drive">Access Google Drive Tab</label>
+          <input type="checkbox" id="p-drive" ${isChecked('can_access_drive', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-backup">Access Backup & Restore Tab</label>
+          <input type="checkbox" id="p-backup" ${isChecked('can_access_backup', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-pdf">Access PDF Studio Tab</label>
+          <input type="checkbox" id="p-pdf" ${isChecked('can_access_pdf_studio', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-setup">Access Setup Tab</label>
+          <input type="checkbox" id="p-setup" ${isChecked('can_access_setup', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-settings">Direct Settings Modification</label>
+          <input type="checkbox" id="p-settings" ${isChecked('can_edit_settings', false)}>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;">
+        <label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:4px;color:#334155;">
+          Restricted Client File Numbers (Comma-separated)
+        </label>
+        <p class="muted" style="font-size:11.5px;margin:0 0 6px;">
+          These specific clients will be completely hidden from this staff member.
+        </p>
+        <input id="p-restricted-clients" value="${escapeHtml(restrictedList)}" placeholder="e.g. VS001, VS008, VS015" style="width:100%;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;">
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px;">
+        <button class="btn secondary" id="btn-cancel-perms">Cancel</button>
+        <button class="btn p" id="btn-save-perms">Save Permissions</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#btn-close-perms-x').onclick = () => modal.remove();
+  modal.querySelector('#btn-cancel-perms').onclick = () => modal.remove();
+
+  modal.querySelector('#btn-save-perms').onclick = async () => {
+    const rawRestricted = modal.querySelector('#p-restricted-clients').value.trim();
+    const restricted_clients = rawRestricted ? rawRestricted.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [];
+
+    const newPerms = {
+      can_access_clients: modal.querySelector('#p-clients').checked,
+      can_delete_clients: modal.querySelector('#p-del-clients').checked,
+      can_delete_files: modal.querySelector('#p-del-files').checked,
+      can_access_automation: modal.querySelector('#p-automation').checked,
+      can_access_vs_ai: modal.querySelector('#p-vs-ai').checked,
+      can_access_drive: modal.querySelector('#p-drive').checked,
+      can_access_backup: modal.querySelector('#p-backup').checked,
+      can_access_pdf_studio: modal.querySelector('#p-pdf').checked,
+      can_access_setup: modal.querySelector('#p-setup').checked,
+      can_edit_settings: modal.querySelector('#p-settings').checked,
+      restricted_clients
+    };
+
+    try {
+      await api('/api/admin/users/permissions', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, permissions: newPerms })
+      });
+      alert(`Permissions updated successfully for ${fullName || userId}!`);
+      modal.remove();
+      if (typeof usersPage === 'function') await usersPage();
+    } catch (e) {
+      alert(`Failed to save permissions: ${e.message}`);
+    }
+  };
+}
+
+
 // =========================================================================
 // NATIVE WINDOWS DESKTOP SHELL HARDENING
 // =========================================================================
@@ -1289,32 +1536,18 @@ function renderRegisterForm() {
         <button type="button" class="btn secondary btn-sm" id="btn-test-reg-host" style="padding:0 12px;font-size:12px;white-space:nowrap;">Test</button>
       </div>
     </div>
-    <div><label>Desired User ID / Username *</label><input id="reg-user" placeholder="e.g. Rudra_Dev" autofocus></div>
+    <div><label>Staff Full Name *</label><input id="reg-fullname" placeholder="e.g. Rahul Sharma" autofocus></div>
+    <div style="margin-top:10px;"><label>User ID / Username *</label><input id="reg-user" placeholder="e.g. rahul_office"></div>
     <div style="margin-top:10px;"><label>Password * (min 6 characters)</label><input id="reg-pass" type="password" placeholder="••••••••"></div>
     <div style="margin-top:10px;"><label>Confirm Password *</label><input id="reg-pass-confirm" type="password" placeholder="••••••••"></div>
     <div style="margin-top:10px;"><label>Device / Workstation Name</label><input id="reg-device" value="${escapeHtml(getDeviceName() || 'Office Workstation')}"></div>
-    <div class="vs-otp-wrap" style="margin-top:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:12px;font-weight:700;color:#334155;">Pairing PIN (6-digit OTP)</span>
-        <span class="muted" style="font-size:11px;">Optional for Host, required for Client</span>
-      </div>
-      <div class="vs-otp-container" id="reg-otp-box-row" style="margin:10px 0;">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="0" inputmode="numeric">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="1" inputmode="numeric">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="2" inputmode="numeric">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="3" inputmode="numeric">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="4" inputmode="numeric">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="5" inputmode="numeric">
-      </div>
-    </div>
-    <div class="actions" style="margin-top:18px;"><button class="primary" id="btn-submit-reg" style="width:100%;">Sign Up & Register Device</button></div>
+    <div class="actions" style="margin-top:18px;"><button class="primary" id="btn-submit-reg" style="width:100%;">Submit Workstation Access Request</button></div>
     <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted);">
       Already paired? <a href="#" id="link-to-login" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign In here &rarr;</a>
     </div>
     <div id="auth-result"></div>
   `;
 
-  const regOtpHandler = setupOtpBoxes('#reg-otp-box-row');
   wireHostConnectivityChecker('#reg-host-url', '#reg-host-live-status', '#btn-test-reg-host');
 
   document.querySelector('#link-to-login')?.addEventListener('click', (e) => {
@@ -1327,11 +1560,11 @@ function renderRegisterForm() {
     if (hostInput && hostInput.value.trim() && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
       window.TauriBridge.setHostUrl(hostInput.value.trim());
     }
+    const full_name = document.querySelector('#reg-fullname').value.trim();
     const user_id = document.querySelector('#reg-user').value.trim();
     const password = document.querySelector('#reg-pass').value;
     const confirm = document.querySelector('#reg-pass-confirm').value;
     const device_name = document.querySelector('#reg-device').value.trim() || 'Office Workstation';
-    const pin = regOtpHandler.getValue().trim();
     const result = document.querySelector('#auth-result');
 
     if (!user_id || !password) {
@@ -1349,31 +1582,23 @@ function renderRegisterForm() {
 
     try {
       setDeviceName(device_name);
+      result.innerHTML = message('Submitting access request to Host...');
       const res = await api('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ user_id, password, device_name, device_id: getDeviceId(), pin })
+        body: JSON.stringify({ user_id, password, full_name, device_name, device_id: getDeviceId() })
       });
 
       if (res.status === 'approved' || res.ok) {
-        result.innerHTML = message('Registration successful! Signing in...');
-        const token = res.session_token || res.token;
-        if (token) {
-          setSessionToken(token);
+        if (res.session_token || res.token) {
+          result.innerHTML = message('Registration successful! Signing in...');
+          setSessionToken(res.session_token || res.token);
+          authRoot.innerHTML = '';
+          await load();
         } else {
-          try {
-            const loginRes = await api('/api/auth/login', {
-              method: 'POST',
-              body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
-            });
-            if (loginRes && (loginRes.session_token || loginRes.token)) {
-              setSessionToken(loginRes.session_token || loginRes.token);
-            }
-          } catch (_) {}
+          renderWaitingApproval(user_id, password, full_name);
         }
-        authRoot.innerHTML = '';
-        await load();
       } else {
-        renderWaitingApproval(user_id, password);
+        renderWaitingApproval(user_id, password, full_name);
       }
     } catch (e) {
       result.innerHTML = message(e.message, true);
@@ -1381,129 +1606,217 @@ function renderRegisterForm() {
   };
 }
 
-function renderLoginForm() {
-  const form = document.querySelector('#auth-form-body');
-  if (!form) return;
-  const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
-    ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
-    : 'http://127.0.0.1:8768';
-
-  form.innerHTML = `
-    <div class="vs-host-cfg-box">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <label style="margin:0;"><span>Host Server Address</span> <span class="muted" style="font-weight:normal;">Port 8768</span></label>
-        <span id="login-host-live-status" style="font-size:11px;font-weight:600;color:var(--muted);">Checking status...</span>
-      </div>
-      <div style="display:flex;gap:8px;">
-        <input id="login-host-url" value="${escapeHtml(currentHost)}" placeholder="e.g. 192.168.1.50:8768" style="flex:1;">
-        <button type="button" class="btn secondary btn-sm" id="btn-test-login-host" style="padding:0 12px;font-size:12px;white-space:nowrap;">Test</button>
-      </div>
-    </div>
-    <div><label>User ID</label><input id="login-user" placeholder="Enter your User ID" autofocus></div>
-    <div style="margin-top:12px;"><label>Password</label><input id="login-pass" type="password" placeholder="••••••••"></div>
-    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-do-login" style="width:100%;">Sign In</button></div>
-    <div style="text-align:center;margin-top:16px;font-size:12px;color:var(--text-muted);">
-      Need to pair workstation? <a href="#" id="link-to-pair" style="color:var(--blue);font-weight:700;text-decoration:none;">Enter Pairing PIN &rarr;</a>
-    </div>
-    <div id="auth-result"></div>
-  `;
-
-  wireHostConnectivityChecker('#login-host-url', '#login-host-live-status', '#btn-test-login-host');
-
-  document.querySelector('#link-to-pair')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    showAuthModal('otp');
-  });
-
-  document.querySelector('#link-to-register')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    showAuthModal('register');
-  });
-
-  document.querySelector('#btn-do-login').onclick = async () => {
-    const hostInput = document.querySelector('#login-host-url');
-    if (hostInput && hostInput.value.trim() && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
-      window.TauriBridge.setHostUrl(hostInput.value.trim());
-    }
-    const user_id = document.querySelector('#login-user').value.trim();
-    const password = document.querySelector('#login-pass').value;
-    const result = document.querySelector('#auth-result');
-    if (!user_id || !password) {
-      result.innerHTML = message('Please enter User ID and Password.', true);
-      return;
-    }
-    try {
-      const res = await api('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
-      });
-      if (res && (res.session_token || res.token)) {
-        setSessionToken(res.session_token || res.token);
-      }
-      authRoot.innerHTML = '';
-      await load();
-    } catch (e) {
-      result.innerHTML = message(e.message, true);
-    }
-  };
-}
-
-function renderWaitingApproval(user_id, password) {
+function renderWaitingApproval(user_id, password, full_name = '') {
   const form = document.querySelector('#auth-form-body');
   if (!form) return;
   form.innerHTML = `
-    <div style="text-align:center;padding:10px 0;">
-      <div style="font-size:36px;margin-bottom:10px;">⏳</div>
-      <h3 style="margin:0 0 8px;">Registration Submitted</h3>
+    <div style="text-align:center;padding:16px 8px;">
+      <div style="font-size:42px;margin-bottom:12px;animation:glassBlink 2s ease-in-out infinite;">⏳</div>
+      <h3 style="margin:0 0 8px;font-size:18px;">Workstation Request Sent</h3>
       <p class="muted" style="font-size:13px;line-height:1.5;">
-        User: <b>${user_id}</b><br>
-        Device: <b>${getDeviceName()}</b> (<code>${getDeviceId().substring(0, 12)}...</code>)<br><br>
-        Waiting for the Host Administrator to approve your device on the main office PC...
+        User: <b>${escapeHtml(full_name || user_id)}</b> (<code>${escapeHtml(user_id)}</code>)<br>
+        Device: <b>${escapeHtml(getDeviceName())}</b> (<code>${escapeHtml(getDeviceId().substring(0, 12))}...</code>)<br><br>
+        Waiting for Host Administrator to approve this request on the Host PC...
       </p>
-      <div class="actions" style="justify-content:center;margin-top:20px;">
-        <button class="secondary" id="btn-check-req">Check Approval Status</button>
-        <button class="secondary" id="btn-cancel-req">Back to Sign In</button>
+      <div style="background:rgba(241,245,249,0.8);border-radius:10px;padding:12px;margin:16px 0;font-size:12px;color:#475569;">
+        Once approved by Host, this screen will automatically prompt for the 6-digit Activation PIN.
+      </div>
+      <div class="actions" style="justify-content:center;margin-top:16px;">
+        <button class="btn secondary" id="btn-check-req">Check Status Now</button>
+        <button class="btn" id="btn-cancel-req">Back to Sign In</button>
       </div>
       <div id="auth-result" style="margin-top:14px;"></div>
     </div>
   `;
   document.querySelector('#btn-cancel-req').onclick = () => showAuthModal('login');
 
+  let pollActive = true;
   const checkStatus = async () => {
-    const res = await api(`/api/auth/request-status?device_id=${encodeURIComponent(getDeviceId())}&user_id=${encodeURIComponent(user_id)}`);
-    const resEl = document.querySelector('#auth-result');
-    if (res.status === 'approved') {
-      if (resEl) resEl.innerHTML = message('Device approved! Logging in...');
-      try {
-        const loginRes = await api('/api/auth/login', {
-          method: 'POST',
-          body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
-        });
-        if (loginRes && (loginRes.session_token || loginRes.token)) {
-          setSessionToken(loginRes.session_token || loginRes.token);
+    if (!pollActive) return;
+    try {
+      const res = await api(`/api/auth/request-status?device_id=${encodeURIComponent(getDeviceId())}&user_id=${encodeURIComponent(user_id)}`);
+      const resEl = document.querySelector('#auth-result');
+      if (res.status === 'approved_pending_pin') {
+        pollActive = false;
+        renderGlassFlipOtp(user_id, res.full_name || full_name);
+      } else if (res.status === 'approved') {
+        pollActive = false;
+        if (resEl) resEl.innerHTML = message('Device approved! Signing in...');
+        try {
+          const loginRes = await api('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
+          });
+          if (loginRes && (loginRes.session_token || loginRes.token)) {
+            setSessionToken(loginRes.session_token || loginRes.token);
+          }
+          authRoot.innerHTML = '';
+          await load();
+        } catch (_) {
+          renderGlassFlipOtp(user_id, res.full_name || full_name);
         }
-        authRoot.innerHTML = '';
-        await load();
-      } catch (e) {
-        if (resEl) resEl.innerHTML = message('Device approved! Please enter password on Login tab.');
-        setTimeout(() => showAuthModal('login'), 1500);
+      } else if (res.status === 'rejected') {
+        pollActive = false;
+        if (resEl) resEl.innerHTML = message('Access request was rejected by Host administrator.', true);
       }
-    } else if (res.status === 'rejected') {
-      if (resEl) resEl.innerHTML = message('Access request was rejected by Host.', true);
-    }
+    } catch (_) {}
   };
 
   document.querySelector('#btn-check-req').onclick = checkStatus;
   const timer = setInterval(() => {
-    if (!document.querySelector('#btn-check-req')) {
+    if (!document.querySelector('#btn-check-req') || !pollActive) {
       clearInterval(timer);
       return;
     }
     checkStatus().catch(() => {});
-  }, 4000);
+  }, 1500);
 }
 
-let startupVideoDismissTimeout = null;
+function renderGlassFlipOtp(user_id, fullName = '') {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  const LENGTH = 6;
+  const GAP = 54;
+
+  form.innerHTML = `
+    <div class="vs-glass-otp-card">
+      <div class="blobs"><i></i><i></i><i></i></div>
+      <div style="font-size:32px;margin-bottom:6px;">🔐</div>
+      <h1 style="font-size:20px;font-weight:700;margin:0 0 4px;color:#0f172a;">Enter 6-Digit Activation PIN</h1>
+      <p style="margin:0 0 14px;font-size:12.5px;color:#64748b;line-height:1.4;">
+        Host Administrator approved workstation access for <b>${escapeHtml(fullName || user_id)}</b>.<br>
+        Enter the 6-digit PIN displayed on the Host PC:
+      </p>
+
+      <div class="vs-glass-stage" id="otp-glass-stage">
+        <svg class="vs-glass-links" viewBox="-180 -90 360 180">
+          <path id="otp-l1" class="glow" d=""></path>
+          <path id="otp-l2" class="core" d=""></path>
+        </svg>
+        <div class="vs-glass-ring" id="otp-glass-ring"></div>
+      </div>
+
+      <input type="text" id="otp-glass-hidden-input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+
+      <div class="vs-glass-ok" id="otp-glass-ok">
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+        <h2 style="margin:16px 0 4px;font-size:18px;color:#0f172a;">Workstation Activated!</h2>
+        <p style="font-size:12px;color:#64748b;margin:0;">Launching VS Database workspace...</p>
+      </div>
+
+      <div id="otp-glass-status" style="margin-top:10px;font-size:12px;min-height:20px;font-weight:600;"></div>
+    </div>
+  `;
+
+  const stage = document.querySelector('#otp-glass-stage');
+  const ringEl = document.querySelector('#otp-glass-ring');
+  const okEl = document.querySelector('#otp-glass-ok');
+  const field = document.querySelector('#otp-glass-hidden-input');
+  const statusEl = document.querySelector('#otp-glass-status');
+
+  const boxes = [];
+  for (let i = 0; i < LENGTH; i++) {
+    const b = document.createElement('div');
+    b.className = 'vs-glass-box';
+    b.innerHTML = '<div class="in"><span></span><i class="vs-glass-caret"></i></div>';
+    b.onclick = () => { field.focus(); };
+    ringEl.appendChild(b);
+    boxes.push(b);
+  }
+
+  const place = (i, x, y, extra = {}) => {
+    const s = boxes[i].style;
+    s.setProperty('--x', x + 'px');
+    s.setProperty('--y', y + 'px');
+    s.setProperty('--ry', extra.ry || '0deg');
+    s.setProperty('--rot', extra.rot || '0deg');
+    s.setProperty('--s', extra.s !== undefined ? extra.s : 1);
+  };
+
+  const row = () => boxes.forEach((_, i) => place(i, (i - (LENGTH - 1) / 2) * GAP, 0, { ry: '0deg', rot: '0deg', s: 1 }));
+  const all = fn => boxes.forEach(fn);
+
+  row();
+
+  const renderBoxes = () => {
+    const v = field.value;
+    boxes.forEach((b, i) => {
+      b.querySelector('span').textContent = v[i] || '';
+      const active = i === Math.min(v.length, LENGTH - 1) && document.activeElement === field && !field.disabled && !v[i];
+      b.classList.toggle('active', active);
+      b.querySelector('.vs-glass-caret').style.display = active ? 'block' : 'none';
+    });
+  };
+
+  field.oninput = async () => {
+    field.value = field.value.replace(/\D/g, '').slice(0, LENGTH);
+    renderBoxes();
+    if (field.value.length === LENGTH) {
+      field.disabled = true;
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--pc);">Verifying PIN with Host...</span>';
+      try {
+        const res = await api('/api/auth/verify-approval-pin', {
+          method: 'POST',
+          body: JSON.stringify({ pin: field.value, device_id: getDeviceId(), user_id })
+        });
+        if (res && res.ok) {
+          if (statusEl) statusEl.innerHTML = '<span style="color:#10b981;">✓ PIN Verified! Activating...</span>';
+          // 4th Glass Flip animation: sequential 360 flip, green tint, collapse, checkmark
+          all(b => b.classList.add('flip'));
+          boxes.forEach((_, i) => setTimeout(() => place(i, (i - (LENGTH - 1) / 2) * GAP, 0, { ry: '360deg' }), 100 + i * 110));
+          setTimeout(() => all((b, i) => setTimeout(() => b.classList.add('good'), i * 60)), 1200);
+          setTimeout(() => stage.classList.add('collapse'), 1900);
+          setTimeout(() => {
+            okEl.querySelectorAll('.dot').forEach(d => d.remove());
+            for (let i = 0; i < 26; i++) {
+              const d = document.createElement('i'), a = Math.random() * 6.283, r = 80 + Math.random() * 120, s = 5 + Math.random() * 8;
+              d.className = 'dot';
+              d.style.cssText = `width:${s}px;height:${s}px;border-radius:${s * .3}px;--x:${Math.cos(a) * r}px;--y:${Math.sin(a) * r}px;--r:${Math.random() * 360}deg`;
+              okEl.appendChild(d);
+            }
+            okEl.classList.add('show');
+          }, 2400);
+
+          setTimeout(async () => {
+            const token = res.session_token || res.token;
+            if (token) setSessionToken(token);
+            if (res.user_id) {
+              currentUser = {
+                user_id: res.user_id,
+                role: res.role || 'staff',
+                full_name: res.full_name || res.user_id,
+                device_name: res.device_name || getDeviceName(),
+                device_id: getDeviceId(),
+                permissions: res.permissions || {}
+              };
+              localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+            }
+            authRoot.innerHTML = '';
+            await load();
+          }, 3600);
+        } else {
+          throw new Error(res.error || 'Invalid PIN');
+        }
+      } catch (err) {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--er);">${escapeHtml(err.message || 'Invalid or expired PIN')}</span>`;
+        stage.classList.add('error');
+        setTimeout(() => {
+          stage.classList.remove('error');
+          field.disabled = false;
+          field.value = '';
+          field.focus();
+          renderBoxes();
+        }, 700);
+      }
+    }
+  };
+
+  field.onfocus = renderBoxes;
+  field.onblur = renderBoxes;
+  field.focus();
+  renderBoxes();
+}
+
 
 function dismissStartupAnimationImmediately() {
   window.__vsSplashDismissed = true;
@@ -2033,22 +2346,30 @@ async function load() {
     }
 
     currentUser = authStatus.user;
+    if (currentUser) {
+      localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+    }
+    applyUserPermissions();
+    startRealtimeSync();
+
     const userBadge = document.querySelector('#user-status');
     if (userBadge) {
       userBadge.style.display = 'flex';
-      document.querySelector('#current-user-badge').textContent = `${currentUser.user_id} (${currentUser.role === 'host' ? 'Host' : 'Staff'})`;
+      const dispName = currentUser.full_name ? `${currentUser.full_name} (${currentUser.user_id})` : currentUser.user_id;
+      document.querySelector('#current-user-badge').textContent = `${dispName} (${currentUser.role === 'host' ? 'Host' : 'Staff'})`;
       document.querySelector('#logout-btn').onclick = async () => {
         try {
           await api('/api/auth/logout', { method: 'POST', body: '{}' });
         } catch (_) {}
         clearSessionToken();
+        localStorage.removeItem('vs-user-cache');
         location.reload();
       };
     }
 
     const navUsersBtn = document.querySelector('#nav-users');
     if (navUsersBtn) {
-      navUsersBtn.style.display = (!isClient || currentUser?.role === 'host') ? 'block' : 'none';
+      navUsersBtn.style.display = (!isClient && currentUser?.role === 'host') ? 'flex' : 'none';
     }
 
     [settings, clients, rules, firmTypes] = await Promise.all([
@@ -2088,6 +2409,26 @@ async function load() {
     document.documentElement.classList.remove('vs-booting');
     dismissSplash();
     updateUnifiedStatus(false, false, 'Server offline', 'Drive offline');
+
+    const cachedToken = getSessionToken();
+    const cachedUser = localStorage.getItem('vs-user-cache');
+    if (cachedToken && cachedUser) {
+      try {
+        currentUser = JSON.parse(cachedUser);
+        console.warn('[Offline Mode] Booting into Offline Read-Only mode with cached credentials.');
+        VSOfflineManager.transitionToOffline();
+        clients = (await VSOfflineManager.getCachedClientsAsync())?.clients || [];
+        settings = { firm_name: 'VS Database (Offline)' };
+        rules = [];
+        firmTypes = [];
+        await render();
+        applyUserPermissions();
+        window.__vsDashboardRendered = true;
+        return;
+      } catch (err) {
+        console.error('Failed to boot offline cached user:', err);
+      }
+    }
 
     // If client is not yet authenticated or pairing is needed, show auth/pairing modal directly
     if (isClient || !getSessionToken()) {
@@ -2161,7 +2502,26 @@ function setup() {
   const clientName = settings.client_folder_name || 'Client';
   const driveRootName = settings.google_portal_root_name || 'VS Database';
 
+  const isSettingsUnlocked = sessionStorage.getItem('vs-settings-unlock-token');
+  const isLockedStaff = (currentUser?.role !== 'host' && currentUser?.permissions?.can_edit_settings !== true && !isSettingsUnlocked);
+
   content.innerHTML = `
+    ${isLockedStaff ? `
+    <div class="glass card" style="background:rgba(254,243,199,0.92);border:1.5px solid rgba(245,158,11,0.7);margin-bottom:18px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+      <div>
+        <b style="color:#92400e;font-size:14px;display:flex;align-items:center;gap:6px;">🔒 System Configuration Locked</b>
+        <p style="margin:4px 0 0;font-size:12.5px;color:#78350f;">Staff cannot modify storage paths, Google Drive sync, or firm parameters without Host Authorization.</p>
+      </div>
+      <button type="button" class="btn p btn-sm" id="btn-request-settings-unlock" style="font-weight:700;">
+        🔑 Unlock with Host PIN
+      </button>
+    </div>
+    ` : (sessionStorage.getItem('vs-settings-unlock-token') ? `
+    <div class="glass card" style="background:rgba(236,253,245,0.92);border:1.5px solid rgba(16,185,129,0.7);margin-bottom:18px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;">
+      <b style="color:#065f46;font-size:13px;display:flex;align-items:center;gap:6px;">🔓 Settings Unlocked via Host Authorization PIN (Session Active)</b>
+      <span class="chip" style="background:#10b981;color:#fff;">Authorized</span>
+    </div>
+    ` : '')}
     <div class="glass card setup-wizard-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:14px;">
         <div>
@@ -2472,6 +2832,9 @@ function setup() {
         : null;
       if (pb) pb.simulate(1000);
 
+      if (sessionStorage.getItem('vs-settings-unlock-token')) {
+        payload.unlock_token = sessionStorage.getItem('vs-settings-unlock-token');
+      }
       settings = await api('/api/settings', {
         method: 'POST',
         body: JSON.stringify(payload)
@@ -2497,15 +2860,16 @@ function setup() {
       btnCheckUpdates.disabled = true;
       btnCheckUpdates.textContent = 'Checking GitHub...';
       updateMsg.style.display = 'block';
-      updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest version...</span>';
+      updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest release...</span>';
       try {
         const res = await api('/api/system/check-updates');
-        if (res.current_commit) commitBadge.textContent = `[${res.current_commit}]`;
+        window.__vsUpdateData = res;
+        if (res.current_version) commitBadge.textContent = `[v${res.current_version}]`;
         if (res.update_available) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New update available (${res.latest_commit})! Click "Update Now" to apply.</span>`;
+          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New version available (v${res.latest_version})! Click "Update Now" to install.</span>`;
           btnApplyUpdate.style.display = 'inline-flex';
         } else {
-          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date.</span>`;
+          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date (v${res.current_version || '2.1.0'}).</span>`;
           btnApplyUpdate.style.display = 'none';
         }
       } catch (err) {
@@ -2520,8 +2884,29 @@ function setup() {
   if (btnApplyUpdate) {
     btnApplyUpdate.onclick = async () => {
       btnApplyUpdate.disabled = true;
-      btnApplyUpdate.textContent = 'Applying Update...';
-      updateMsg.innerHTML = '<span style="color:#64748b;">Pulling latest update from GitHub...</span>';
+      btnApplyUpdate.textContent = 'Preparing Update...';
+      const uData = window.__vsUpdateData || {};
+      let isClient = false;
+      try {
+        if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+          isClient = await window.TauriBridge.isClientMode();
+        }
+      } catch (_) {}
+
+      const dlUrl = isClient ? (uData.client_download_url || uData.html_url) : (uData.host_download_url || uData.html_url);
+      if (dlUrl) {
+        updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">Opening update installer: <a href="${dlUrl}" target="_blank" style="color:var(--pc);text-decoration:underline;">Click here to download if it does not start automatically</a></span>`;
+        if (window.TauriBridge && typeof window.TauriBridge.openPath === 'function') {
+          try { window.TauriBridge.openPath(dlUrl); } catch (_) { window.open(dlUrl, '_blank'); }
+        } else {
+          window.open(dlUrl, '_blank');
+        }
+        btnApplyUpdate.disabled = false;
+        btnApplyUpdate.textContent = 'Update Now';
+        return;
+      }
+
+      updateMsg.innerHTML = '<span style="color:#64748b;">Applying update from repository...</span>';
       try {
         const res = await api('/api/system/apply-update', { method: 'POST', body: '{}' });
         if (res.ok) {
@@ -2593,6 +2978,37 @@ function setup() {
       }
     }
   };
+
+  // Handle staff settings lockdown
+  if (isLockedStaff) {
+    content.querySelectorAll('input:not(#btn-request-settings-unlock), select, textarea, button.primary, #btn-fresh-start').forEach(el => {
+      if (el.id !== 'btn-request-settings-unlock') {
+        el.disabled = true;
+        el.style.opacity = '0.65';
+        el.style.cursor = 'not-allowed';
+      }
+    });
+  }
+
+  document.querySelector('#btn-request-settings-unlock')?.addEventListener('click', async () => {
+    const enteredPin = prompt('Enter the 6-digit Settings Unlock PIN generated by Host PC:');
+    if (!enteredPin || enteredPin.trim().length < 6) return;
+    try {
+      const res = await api('/api/settings/verify-unlock-pin', {
+        method: 'POST',
+        body: JSON.stringify({ pin: enteredPin.trim() })
+      });
+      if (res && res.ok && res.unlock_token) {
+        sessionStorage.setItem('vs-settings-unlock-token', res.unlock_token);
+        alert('✓ Host Authorization Verified! Settings modification unlocked for this session.');
+        setup();
+      } else {
+        alert(res.error || 'Invalid or expired Unlock PIN.');
+      }
+    } catch (err) {
+      alert(`Authorization failed: ${err.message}`);
+    }
+  });
 }
 
 async function loadFirmTypes() {
@@ -5847,22 +6263,28 @@ async function usersPage() {
             <svg class="i" aria-hidden="true"><use href="#plus"/></svg> Generate Pairing PIN
           </button>
         </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn secondary btn-sm" id="btn-generate-settings-pin" style="font-weight:700;">
+            🔑 Generate Settings Unlock PIN
+          </button>
+        </div>
       </div>
       <div id="pairing-pin-display-container" style="display:none;margin-top:16px;"></div>
+      <div id="settings-pin-display-container" style="display:none;margin-top:16px;"></div>
     </section>
 
     ${pendingRequests.length > 0 ? `
     <section class="glass card" style="border-color:rgba(245,158,11,0.4);margin-bottom:16px;">
-      <h2 style="color:var(--wn);"><svg class="i"><use href="#alert"/></svg>Pending device access requests (${pendingRequests.length})</h2>
+      <h2 style="color:var(--wn);"><svg class="i"><use href="#alert"/></svg>Pending workstation access requests (${pendingRequests.length})</h2>
       <div id="pending-requests-container">
         ${pendingRequests.map(r => `
-          <div class="req-item" id="req-${r.request_id}" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);">
+          <div class="req-item" id="req-${r.request_id}" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px;">
             <div class="req-meta">
-              <b>${escapeHtml(r.user_id)}</b> &middot; Device: <strong>${escapeHtml(r.device_name)}</strong> (<code>${escapeHtml(r.ip_address)}</code>)<br>
-              <small class="muted">Requested at: ${new Date(r.created_at).toLocaleString()}</small>
+              <b>${escapeHtml(r.full_name || r.user_id)}</b> (<code>${escapeHtml(r.user_id)}</code>) &middot; Device: <strong>${escapeHtml(r.device_name)}</strong> (<code>${escapeHtml(r.ip_address)}</code>)<br>
+              <small class="muted">Requested: ${new Date(r.created_at).toLocaleString()}</small>
             </div>
             <div class="acts">
-              <button class="btn p btn-sm btn-approve" data-id="${r.request_id}">Approve</button>
+              <button class="btn p btn-sm btn-approve" data-id="${r.request_id}" style="font-weight:700;">⚡ Approve & Generate 6-Digit PIN</button>
               <button class="btn d btn-sm btn-reject" data-id="${r.request_id}">Reject</button>
             </div>
           </div>
@@ -5945,11 +6367,14 @@ async function usersPage() {
                 <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}</td>
                 <td>
                   <div class="acts">
-                    ${u.role !== 'host' ? (u.status === 'active' ? `
-                      <button class="btn btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="disabled">Disable</button>
-                    ` : `
-                      <button class="btn p btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="active">Enable</button>
-                    `) : `<span class="chip">Owner</span>`}
+                    ${u.role !== 'host' ? `
+                      <button class="btn btn-sm btn-manage-perms" data-uid="${escapeHtml(u.user_id)}" data-name="${escapeHtml(u.full_name || u.user_id)}" data-perms='${escapeHtml(JSON.stringify(u.permissions || {}))}' style="font-weight:600;">🔑 Permissions</button>
+                      ${u.status === 'active' ? `
+                        <button class="btn btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="disabled">Disable</button>
+                      ` : `
+                        <button class="btn p btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="active">Enable</button>
+                      `}
+                    ` : `<span class="chip">Owner</span>`}
                     <button class="btn btn-sm btn-change-pwd" data-uid="${escapeHtml(u.user_id)}">Reset password</button>
                   </div>
                 </td>
@@ -6024,11 +6449,58 @@ async function usersPage() {
     btn.onclick = async () => {
       try {
         btn.disabled = true;
-        await api('/api/admin/requests/approve', { method: 'POST', body: JSON.stringify({ request_id: btn.dataset.id }) });
+        btn.textContent = 'Approving & Generating PIN...';
+        const res = await api('/api/admin/requests/approve', { method: 'POST', body: JSON.stringify({ request_id: btn.dataset.id }) });
+        if (res && res.pin) {
+          showHostApprovalPinModal(res.pin, res.full_name || res.user_id, res.expires_in_seconds || 600);
+        }
         await usersPage();
-      } catch (e) { alert(e.message); }
+      } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = '⚡ Approve & Generate 6-Digit PIN'; }
     };
   });
+
+  content.querySelectorAll('.btn-manage-perms').forEach(btn => {
+    btn.onclick = () => {
+      let pObj = {};
+      try { pObj = JSON.parse(btn.dataset.perms || '{}'); } catch (_) {}
+      openUserPermissionsModal(btn.dataset.uid, btn.dataset.name, pObj);
+    };
+  });
+
+  const btnGenSettingsPin = content.querySelector('#btn-generate-settings-pin');
+  const settingsPinContainer = content.querySelector('#settings-pin-display-container');
+  if (btnGenSettingsPin && settingsPinContainer) {
+    btnGenSettingsPin.onclick = async () => {
+      try {
+        btnGenSettingsPin.disabled = true;
+        const res = await api('/api/admin/settings/generate-unlock-pin', { method: 'POST', body: '{}' });
+        if (res && res.pin) {
+          settingsPinContainer.style.display = 'block';
+          settingsPinContainer.innerHTML = `
+            <div style="background:rgba(254,243,199,0.7);border:1.5px dashed rgba(245,158,11,0.6);border-radius:14px;padding:16px 20px;text-align:center;">
+              <span style="font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;">Host Authorization Unlock PIN (Settings)</span>
+              <div style="display:flex;justify-content:center;gap:8px;margin:12px 0;">
+                ${res.pin.split('').map(d => `<span style="display:inline-flex;width:40px;height:50px;align-items:center;justify-content:center;background:#fff;border:2px solid #f59e0b;border-radius:10px;font-size:24px;font-weight:800;color:#b45309;box-shadow:0 3px 10px rgba(245,158,11,0.2);">${d}</span>`).join('')}
+              </div>
+              <p style="margin:0 0 8px;font-size:12.5px;color:#78350f;">
+                Give this 6-digit Unlock PIN to staff to authorize settings modification on their PC.<br>
+                Valid for 15 minutes (single-use).
+              </p>
+              <button class="btn secondary btn-sm" id="btn-copy-settings-unlock-pin">📋 Copy PIN</button>
+            </div>
+          `;
+          document.querySelector('#btn-copy-settings-unlock-pin')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(res.pin);
+            alert(`Unlock PIN ${res.pin} copied!`);
+          });
+        }
+      } catch (err) {
+        alert(`Failed to generate Settings PIN: ${err.message}`);
+      } finally {
+        btnGenSettingsPin.disabled = false;
+      }
+    };
+  }
 
   content.querySelectorAll('.btn-reject').forEach(btn => {
     btn.onclick = async () => {

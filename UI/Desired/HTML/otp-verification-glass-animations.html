@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OTP Verification – Glass Slabs, 6 Animations</title>
+<style>
+  :root {
+    --text:#1b2233; --mute:#6a7388; --blue:#3b82f6; --ok:#30c25b;
+    --glass-fill: linear-gradient(145deg, rgba(255,255,255,.55), rgba(255,255,255,.14) 55%, rgba(255,255,255,.3));
+    --glass-blur: blur(16px) saturate(190%) brightness(1.06);
+    --glass-edge:
+      inset 0 1.5px 1px rgba(255,255,255,.95), inset 0 -1.5px 1px rgba(255,255,255,.45),
+      inset 1.5px 0 1px rgba(255,255,255,.55), inset -1.5px 0 1px rgba(255,255,255,.35),
+      inset 0 0 18px rgba(255,255,255,.35), inset 0 -10px 18px -8px rgba(90,120,220,.18),
+      0 14px 28px -10px rgba(40,60,140,.35), 0 2px 6px rgba(40,60,140,.12);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { min-height: 100vh; display: grid; place-items: center; overflow: hidden; color: var(--text);
+         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+         background: linear-gradient(160deg, #eaf0ff, #f7f2ff 55%, #eafaff); }
+  .wrap { display: grid; gap: 16px; justify-items: center; width: 100%; }
+
+  .blob { position: absolute; border-radius: 50%; filter: blur(34px); opacity: .9; animation: drift 14s ease-in-out infinite alternate; }
+  .b1 { width: 240px; height: 240px; background: #7aa7ff; left: -60px; top: 8%; }
+  .b2 { width: 220px; height: 220px; background: #ff9ec7; right: -50px; top: 30%; animation-delay: -4s; }
+  .b3 { width: 200px; height: 200px; background: #7fe3ff; left: 20%; bottom: -60px; animation-delay: -8s; }
+  .b4 { width: 130px; height: 130px; background: #ffd98a; right: 24%; top: -30px; animation-delay: -2s; }
+  @keyframes drift { to { transform: translate(40px, -30px) scale(1.12); } }
+
+  /* animation picker (glass pill) */
+  .picker { position: relative; z-index: 2; }
+  .picker select { appearance: none; -webkit-appearance: none; border: 0; outline: 0; cursor: pointer; color: var(--text);
+        font: 600 14px/1 inherit; padding: 13px 44px 13px 20px; border-radius: 999px; background: var(--glass-fill);
+        backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); box-shadow: var(--glass-edge); }
+  .picker select:focus-visible { box-shadow: var(--glass-edge), 0 0 0 2px rgba(59,130,246,.6); }
+  .picker::after { content: ""; position: absolute; right: 18px; top: 50%; width: 7px; height: 7px; margin-top: -6px;
+        border: solid var(--text); border-width: 0 2px 2px 0; transform: rotate(45deg); pointer-events: none; }
+
+  .card { position: relative; width: min(92vw, 380px); min-height: 420px; padding: 36px 22px 26px; text-align: center; overflow: hidden;
+          border-radius: 38px; background: var(--glass-fill); backdrop-filter: blur(26px) saturate(180%); -webkit-backdrop-filter: blur(26px) saturate(180%);
+          box-shadow: var(--glass-edge), 0 40px 70px -30px rgba(40,60,140,.45); }
+  .card .blobs { position: absolute; inset: 0; z-index: -1; }
+  .card .blobs i { position: absolute; border-radius: 50%; filter: blur(26px); }
+  .card .blobs i:nth-child(1) { width: 150px; height: 150px; background: #8db4ff; left: 14%; top: 36%; }
+  .card .blobs i:nth-child(2) { width: 130px; height: 130px; background: #ffb0d0; right: 10%; top: 44%; }
+  .card .blobs i:nth-child(3) { width: 110px; height: 110px; background: #8fe9ff; left: 40%; top: 58%; }
+
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+  .sub { margin-top: 8px; font-size: 13px; color: var(--mute); line-height: 1.5; }
+
+  .stage { position: relative; height: 180px; margin: 16px 0 6px; perspective: 700px; }
+  .ring { position: absolute; inset: 0; }
+  .ring.spin { animation: spin 1.2s cubic-bezier(.65, 0, .35, 1); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ring.spin .in { animation: unspin 1.2s cubic-bezier(.65, 0, .35, 1); }
+  @keyframes unspin { to { transform: rotate(-360deg); } }
+
+  .box { position: absolute; left: 50%; top: 50%; width: 46px; height: 58px;
+         transform: translate(calc(-50% + var(--x, 0px)), calc(-50% + var(--y, 0px))) rotateY(var(--ry, 0deg)) rotate(var(--rot, 0deg)) scale(var(--s, 1));
+         transition: transform .75s cubic-bezier(.6, 0, .2, 1), opacity .5s; }
+  .box.spring { transition: transform .8s cubic-bezier(.2, 1.4, .4, 1), opacity .5s; }
+  .box.raf { transition: opacity .5s; }          /* position driven by requestAnimationFrame */
+  .box.flip { transition: transform .8s cubic-bezier(.4, 0, .2, 1), opacity .5s; }
+
+  .in, .tick { position: relative; width: 100%; height: 100%; display: grid; place-items: center; font-size: 22px; font-weight: 600;
+        border-radius: 16px; background: var(--glass-fill); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+        box-shadow: var(--glass-edge); transition: box-shadow .3s, background .3s; }
+  .in::before, .tick::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+        background: linear-gradient(125deg, rgba(255,255,255,.75) 0%, rgba(255,255,255,0) 38%); }
+  .in::after, .tick::after { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+        background: linear-gradient(140deg, #fff, rgba(255,255,255,0) 35%, rgba(255,255,255,0) 65%, rgba(255,255,255,.9));
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+        mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+  .in span { position: relative; z-index: 1; text-shadow: 0 1px 0 rgba(255,255,255,.7); }
+  .caret { display: none; width: 2px; height: 22px; background: var(--blue); border-radius: 2px; animation: blink 1s steps(1) infinite; position: relative; z-index: 1; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .box.active .in { background: linear-gradient(145deg, rgba(120,170,255,.5), rgba(255,255,255,.18) 60%, rgba(140,190,255,.35));
+        box-shadow: var(--glass-edge), 0 0 0 2px rgba(59,130,246,.55), 0 0 22px rgba(59,130,246,.45); }
+  .stage.linked .in, .box.lit .in { box-shadow: var(--glass-edge), 0 0 20px rgba(59,130,246,.4); }
+  .box.lit .in { background: linear-gradient(145deg, rgba(120,170,255,.45), rgba(255,255,255,.18) 60%, rgba(140,190,255,.3)); }
+  .box.good .in { background: linear-gradient(145deg, rgba(90,220,130,.6), rgba(255,255,255,.2) 60%, rgba(70,200,110,.4));
+        box-shadow: var(--glass-edge), 0 0 22px rgba(48,194,91,.5); }
+
+  svg.links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  svg.links path { fill: none; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0; }
+  svg.links .glow { stroke: rgba(255,255,255,.9); stroke-width: 6; filter: blur(2px); }
+  svg.links .core { stroke: var(--blue); stroke-width: 2; }
+  .stage.linked svg.links path { opacity: 1; stroke-dashoffset: 0; transition: stroke-dashoffset .9s ease .3s, opacity .3s .3s; }
+  .stage.collapse .box { transform: translate(-50%, -50%) scale(.15); opacity: 0; }
+  .stage.collapse svg.links path { opacity: 0; transition: opacity .3s; }
+
+  .stage.error { animation: shake .4s; }
+  .stage.error .in { box-shadow: var(--glass-edge), 0 0 0 2px rgba(239,68,68,.6), 0 0 18px rgba(239,68,68,.4); }
+  @keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+
+  .resend { font-size: 13px; color: var(--mute); margin-top: 18px; }
+  .resend button { background: none; border: 0; color: var(--text); font-weight: 600; cursor: pointer; font-size: inherit; }
+  .resend button:disabled { color: var(--mute); cursor: default; }
+  #field { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+
+  .ok { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px; opacity: 0; pointer-events: none; }
+  .ok.show { opacity: 1; pointer-events: auto; }
+  .ok h2 { color: var(--ok); font-size: 21px; letter-spacing: -.2px; }
+  .ok p { color: var(--mute); font-size: 13px; }
+  .tick { width: 66px; height: 66px; border-radius: 22px; transform: scale(0);
+        background: linear-gradient(145deg, rgba(90,220,130,.65), rgba(255,255,255,.2) 60%, rgba(70,200,110,.4));
+        box-shadow: var(--glass-edge), 0 0 30px rgba(48,194,91,.45); }
+  .ok.show .tick { animation: pop .55s .05s cubic-bezier(.2, 1.6, .4, 1) forwards; }
+  @keyframes pop { to { transform: scale(1); } }
+  .tick svg { position: relative; z-index: 1; width: 30px; stroke: #fff; fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round;
+        stroke-dasharray: 30; stroke-dashoffset: 30; filter: drop-shadow(0 1px 2px rgba(20,120,50,.5)); }
+  .ok.show .tick svg { animation: draw .4s .4s ease forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .secure { font-size: 12px; color: #1f9a46; }
+  .dot { position: absolute; left: 50%; top: 44%; opacity: 0; background: linear-gradient(145deg, rgba(255,255,255,.9), rgba(70,200,110,.7));
+         box-shadow: inset 0 1px 1px #fff, 0 3px 6px rgba(30,120,60,.3); }
+  .ok.show .dot { animation: fly 1.2s ease-out forwards; }
+  @keyframes fly { 0% { opacity: 1; transform: translate(0, 0) rotate(0); } 100% { opacity: 0; transform: translate(var(--x), var(--y)) rotate(var(--r)); } }
+  .replay { position: absolute; bottom: 14px; left: 0; right: 0; background: none; border: 0; color: var(--mute); font-size: 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+
+<div class="wrap">
+  <label class="picker">
+    <select id="anim" aria-label="Verification animation">
+      <option value="ring">1 · Ring Spin</option>
+      <option value="grid">2 · Grid Link</option>
+      <option value="wave">3 · Wave</option>
+      <option value="flip">4 · Glass Flip</option>
+      <option value="spiral">5 · Spiral In</option>
+      <option value="burst">6 · Star Burst</option>
+    </select>
+  </label>
+
+  <main class="card">
+    <div class="blobs"><i></i><i></i><i></i></div>
+
+    <div id="form">
+      <h1>Let’s verify your number</h1>
+      <p class="sub">We’ve sent a 6-digit code to your phone.<br>It’ll auto-verify once entered.</p>
+      <div class="stage" id="stage">
+        <div class="ring" id="ring">
+          <svg class="links" viewBox="-150 -90 300 180"><path class="glow" id="l1" pathLength="1"/><path class="core" id="l2" pathLength="1"/></svg>
+        </div>
+      </div>
+      <p class="resend">Didn’t receive the code? <button id="resend">Resend</button></p>
+      <input id="field" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="6 digit verification code">
+    </div>
+
+    <div class="ok" id="ok">
+      <h2>Verified Successfully</h2>
+      <p>Your number has been verified.</p>
+      <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <span class="secure">🔒 Verified and Secure</span>
+      <button class="replay" id="replay">Replay demo</button>
+    </div>
+  </main>
+</div>
+
+<script>
+const LENGTH = 6;
+const GAP = 52, RADIUS = 64;
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), ringEl = $('ring'), field = $('field'), okEl = $('ok'), formEl = $('form'), resend = $('resend'), picker = $('anim');
+
+// Replace with your real API call. Demo accepts any 6 digits except 000000.
+async function verifyCode(code) { return code !== '000000'; }
+
+/* ---------- build boxes ---------- */
+const boxes = [];
+for (let i = 0; i < LENGTH; i++) {
+  const b = document.createElement('div');
+  b.className = 'box';
+  b.innerHTML = '<div class="in"><span></span><i class="caret"></i></div>';
+  ringEl.appendChild(b); boxes.push(b);
+}
+
+/* ---------- helpers ---------- */
+let timers = [], raf = 0;
+const later = (ms, fn) => timers.push(setTimeout(fn, ms));
+const place = (i, x, y, extra = {}) => {
+  const s = boxes[i].style;
+  s.setProperty('--x', x + 'px'); s.setProperty('--y', y + 'px');
+  for (const k in extra) s.setProperty('--' + k, extra[k]);
+};
+const row = () => boxes.forEach((_, i) => place(i, (i - (LENGTH - 1) / 2) * GAP, 0, { ry: '0deg', rot: '0deg', s: 1 }));
+const circle = (r, rx = 1, ry = 1, off = -90) => boxes.map((_, i) => {
+  const a = (off + 360 / LENGTH * i) * Math.PI / 180;
+  return [Math.cos(a) * r * rx, Math.sin(a) * r * ry];
+});
+const closed = pts => 'M' + pts.map(p => p.map(n => n.toFixed(1)).join(' ')).join(' L') + ' Z';
+const setLines = d => { $('l1').setAttribute('d', d); $('l2').setAttribute('d', d); };
+const link = d => { setLines(d); stage.classList.add('linked'); };
+const all = fn => boxes.forEach(fn);
+const finish = ms => {               // collapse into the centre, then show the tick
+  later(ms, () => { all(b => b.classList.remove('raf')); stage.classList.add('collapse'); });
+  later(ms + 600, showSuccess);
+};
+
+/* ---------- the 6 animations ---------- */
+const ANIMS = {
+  // 1. slabs glide into a hexagon, lines connect, ring spins, collapse
+  ring() {
+    const pts = circle(RADIUS);
+    later(150, () => { pts.forEach((p, i) => place(i, p[0], p[1])); link(closed(pts)); });
+    later(1150, () => ringEl.classList.add('spin'));
+    finish(2400);
+  },
+
+  // 2. slabs snap into a 3 x 2 grid, grid lines draw between neighbours (like the original video)
+  grid() {
+    const cols = Math.ceil(LENGTH / 2), pos = [];
+    boxes.forEach((_, i) => pos.push([(i % cols - (cols - 1) / 2) * 62, (Math.floor(i / cols) - .5) * 78]));
+    let d = '';
+    pos.forEach((p, i) => {
+      if (i % cols < cols - 1 && i + 1 < LENGTH) d += `M${p[0]} ${p[1]} L${pos[i + 1][0]} ${pos[i + 1][1]} `;
+      if (i + cols < LENGTH) d += `M${p[0]} ${p[1]} L${pos[i + cols][0]} ${pos[i + cols][1]} `;
+    });
+    later(150, () => { pos.forEach((p, i) => place(i, p[0], p[1])); link(d); });
+    later(1300, () => all((b, i) => later(i * 80, () => b.classList.add('lit'))));
+    finish(2100);
+  },
+
+  // 3. a bouncing wave runs across the row, then all slabs glide together
+  wave() {
+    setLines('');
+    boxes.forEach((_, i) => {
+      later(150 + i * 120, () => { place(i, (i - (LENGTH - 1) / 2) * GAP, -30); boxes[i].classList.add('lit'); });
+      later(150 + i * 120 + 280, () => place(i, (i - (LENGTH - 1) / 2) * GAP, 0));
+    });
+    later(1400, () => all((_, i) => place(i, 0, 0, { s: .85 })));
+    finish(1900);
+  },
+
+  // 4. every slab flips 360° in turn and turns green
+  flip() {
+    setLines('');
+    all(b => b.classList.add('flip'));
+    boxes.forEach((_, i) => later(100 + i * 110, () => place(i, (i - (LENGTH - 1) / 2) * GAP, 0, { ry: '360deg' })));
+    later(1300, () => all((b, i) => later(i * 60, () => b.classList.add('good'))));
+    finish(2100);
+  },
+
+  // 5. slabs ride a shrinking, rotating spiral into the centre with lines attached
+  spiral() {
+    const start = circle(RADIUS);
+    later(100, () => { start.forEach((p, i) => place(i, p[0], p[1])); link(closed(start)); });
+    later(900, () => {
+      all(b => b.classList.add('raf'));
+      const t0 = performance.now(), dur = 1700;
+      const frame = now => {
+        const t = Math.min(1, (now - t0) / dur), e = t * t * (3 - 2 * t);
+        const pts = boxes.map((_, i) => {
+          const a = (-90 + 360 / LENGTH * i) * Math.PI / 180 + e * Math.PI * 4;
+          const r = RADIUS * (1 - e * .9);
+          return [Math.cos(a) * r, Math.sin(a) * r];
+        });
+        pts.forEach((p, i) => place(i, p[0], p[1], { s: 1 - e * .35 }));
+        setLines(closed(pts));
+        if (t < 1) raf = requestAnimationFrame(frame); else finish(0);
+      };
+      raf = requestAnimationFrame(frame);
+    });
+  },
+
+  // 6. slabs burst outward into a star (hexagram lines), then snap back in
+  burst() {
+    const pts = circle(80, 1.55, 1);
+    const star = pts.map((p, i) => `M${p[0].toFixed(1)} ${p[1].toFixed(1)} L${pts[(i + 2) % LENGTH][0].toFixed(1)} ${pts[(i + 2) % LENGTH][1].toFixed(1)}`).join(' ');
+    all(b => b.classList.add('spring'));
+    later(150, () => { pts.forEach((p, i) => place(i, p[0], p[1], { rot: (i % 2 ? 14 : -14) + 'deg', s: 1.1 })); link(star); });
+    later(1100, () => all(b => b.classList.add('lit')));
+    finish(1700);
+  }
+};
+
+/* ---------- input handling ---------- */
+function render() {
+  const v = field.value;
+  boxes.forEach((b, i) => {
+    b.querySelector('span').textContent = v[i] || '';
+    const active = i === Math.min(v.length, LENGTH - 1) && document.activeElement === field && !field.disabled && !v[i];
+    b.classList.toggle('active', active);
+    b.querySelector('.caret').style.display = active ? 'block' : 'none';
+  });
+}
+field.addEventListener('input', async () => {
+  field.value = field.value.replace(/\D/g, '').slice(0, LENGTH);
+  render();
+  if (field.value.length === LENGTH) {
+    field.disabled = true;
+    if (await verifyCode(field.value)) ANIMS[picker.value](); else fail();
+  }
+});
+field.addEventListener('focus', render);
+field.addEventListener('blur', render);
+
+function fail() {
+  stage.classList.add('error');
+  later(500, () => { stage.classList.remove('error'); field.disabled = false; field.value = ''; field.focus(); render(); });
+}
+
+/* ---------- success + reset ---------- */
+function showSuccess() {
+  formEl.style.display = 'none';
+  okEl.querySelectorAll('.dot').forEach(d => d.remove());
+  for (let i = 0; i < 26; i++) {
+    const d = document.createElement('i'), a = Math.random() * 6.283, r = 80 + Math.random() * 120, s = 5 + Math.random() * 8;
+    d.className = 'dot';
+    d.style.cssText = `width:${s}px;height:${s}px;border-radius:${s * .3}px;--x:${Math.cos(a) * r}px;--y:${Math.sin(a) * r}px;--r:${Math.random() * 360}deg`;
+    okEl.appendChild(d);
+  }
+  okEl.classList.add('show');
+}
+
+function reset() {
+  timers.forEach(clearTimeout); timers = []; cancelAnimationFrame(raf);
+  okEl.classList.remove('show'); formEl.style.display = '';
+  stage.classList.remove('linked', 'collapse', 'error'); ringEl.classList.remove('spin'); setLines('');
+  all(b => { b.classList.remove('lit', 'good', 'flip', 'spring'); b.classList.add('raf'); });   // 'raf' = no transition while snapping back
+  row(); void stage.offsetWidth;
+  all(b => b.classList.remove('raf'));
+  field.disabled = false; field.value = ''; field.focus(); render();
+}
+$('replay').onclick = reset;
+picker.onchange = reset;
+
+resend.onclick = () => {
+  let t = 30; resend.disabled = true; resend.textContent = 'Resend in 30s';
+  const id = setInterval(() => { resend.textContent = `Resend in ${--t}s`; if (t <= 0) { clearInterval(id); resend.disabled = false; resend.textContent = 'Resend'; } }, 1000);
+};
+
+row(); field.focus(); render();
+</script>
+</body>
+</html>

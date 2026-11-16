@@ -564,6 +564,14 @@ DEFAULT_FIRM_TYPE_TEMPLATES = {
 }
 
 
+DATA_VERSION = int(time.time() * 1000)
+
+def mark_data_changed():
+    """Increments the global data version so all connected clients sync instantly."""
+    global DATA_VERSION
+    DATA_VERSION = int(time.time() * 1000)
+
+
 def initialise():
     with db() as con:
         con.execute("PRAGMA journal_mode=WAL;")
@@ -735,6 +743,30 @@ def initialise():
         user_cols = [r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()]
         if "encrypted_password" not in user_cols:
             con.execute("ALTER TABLE users ADD COLUMN encrypted_password TEXT NOT NULL DEFAULT ''")
+        if "permissions" not in user_cols:
+            con.execute("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'")
+        if "full_name" not in user_cols:
+            con.execute("ALTER TABLE users ADD COLUMN full_name TEXT NOT NULL DEFAULT ''")
+
+        # Safe migration for access_requests: full_name, pin, pin_verified
+        req_cols = [r["name"] for r in con.execute("PRAGMA table_info(access_requests)").fetchall()]
+        if "full_name" not in req_cols:
+            con.execute("ALTER TABLE access_requests ADD COLUMN full_name TEXT NOT NULL DEFAULT ''")
+        if "pin" not in req_cols:
+            con.execute("ALTER TABLE access_requests ADD COLUMN pin TEXT NOT NULL DEFAULT ''")
+        if "pin_verified" not in req_cols:
+            con.execute("ALTER TABLE access_requests ADD COLUMN pin_verified INTEGER NOT NULL DEFAULT 0")
+
+        # Table for single-use settings unlock pins
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS settings_unlock_pins (
+            pin TEXT PRIMARY KEY,
+            created_by TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+        """)
 
         # Safe migration for actor, target_folder, reverted_at, reverted_archive_path in save_jobs
         job_cols = [r["name"] for r in con.execute("PRAGMA table_info(save_jobs)").fetchall()]
@@ -4874,27 +4906,57 @@ def open_in_file_manager(target_path: Path | str) -> str:
 
 
 def check_for_system_updates():
-    """Checks whether a new commit/version is available on GitHub."""
+    """Checks whether a new version is available on GitHub."""
+    current_version = "2.1.0"
+    repo = "rudrakshpandit/VS-Database-Host-and-Client"
     try:
-        app_dir = Path(__file__).resolve().parent
-        local_p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=5)
-        local_sha = local_p.stdout.strip()
-        local_short = local_sha[:7] if local_sha else "v1.0.1"
-
-        remote_p = subprocess.run(["git", "ls-remote", "origin", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=8)
-        remote_out = remote_p.stdout.strip()
-        remote_sha = remote_out.split()[0] if remote_out else ""
-        remote_short = remote_sha[:7] if remote_sha else ""
-
-        has_update = bool(remote_sha and local_sha and remote_sha != local_sha)
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+        req = urllib.request.Request(url, headers={"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        tag = data.get("tag_name", "").lstrip("v")
+        has_update = False
+        if tag:
+            cur_parts = [int(p) for p in current_version.split(".") if p.isdigit()]
+            tag_parts = [int(p) for p in tag.split(".") if p.isdigit()]
+            if tag_parts > cur_parts:
+                has_update = True
+        assets = data.get("assets", [])
+        host_dl = next((a["browser_download_url"] for a in assets if "Host" in a.get("name", "")), "")
+        client_dl = next((a["browser_download_url"] for a in assets if "Client" in a.get("name", "")), "")
         return {
-            "current_commit": local_short,
-            "latest_commit": remote_short or local_short,
+            "current_version": current_version,
+            "latest_version": tag or current_version,
+            "current_commit": f"v{current_version}",
+            "latest_commit": f"v{tag}" if tag else f"v{current_version}",
             "update_available": has_update,
-            "message": "⚡ Update Available!" if has_update else "✅ System is up to date."
+            "host_download_url": host_dl,
+            "client_download_url": client_dl,
+            "html_url": data.get("html_url", ""),
+            "release_notes": data.get("body", ""),
+            "message": f"⚡ Update Available (v{tag})!" if has_update else "✅ System is up to date."
         }
     except Exception as exc:
-        return {"error": str(exc), "update_available": False, "message": "Could not check updates."}
+        try:
+            app_dir = Path(__file__).resolve().parent
+            local_p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=3)
+            local_sha = local_p.stdout.strip()
+            local_short = local_sha[:7] if local_sha else f"v{current_version}"
+            return {
+                "current_version": current_version,
+                "latest_version": current_version,
+                "current_commit": local_short,
+                "latest_commit": local_short,
+                "update_available": False,
+                "message": "✅ System is up to date."
+            }
+        except Exception:
+            return {
+                "current_version": current_version,
+                "latest_version": current_version,
+                "update_available": False,
+                "message": "✅ System is up to date."
+            }
 
 
 def apply_system_update():
@@ -6360,6 +6422,7 @@ def save_document(payload, actor="Host"):
                      canonical_period, filename, local_path, drive_path, practive, "saved", payload.get("note", ""), actor, target_folder))
         log_activity("document_saved", client["file_no"], client["name"], f"Saved '{filename}' into '{target_folder or 'Default'}'", actor=actor, con=con)
     schedule_debounced_reconcile(client["file_no"])
+    mark_data_changed()
     return {"job_id": job_id, "local_path": local_path, "drive_path": drive_path, "practive_status": practive, "client_portal_link": portal["folder_link"] if portal else None, "client_access_pdf": portal["access_pdf_path"] if portal else None}
 
 
@@ -6591,6 +6654,7 @@ def bulk_save_documents(payload, actor="Host"):
 
     # Schedule single debounced reconcile after the batch
     schedule_debounced_reconcile(client["file_no"])
+    mark_data_changed()
 
     return {
         "ok": True,
@@ -7128,6 +7192,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/desktop/heartbeat",
             "/api/host/status",
             "/api/host/pairing/claim-pin",
+            "/api/sync/version",
+            "/api/auth/verify-approval-pin",
+            "/api/settings/verify-unlock-pin",
             "/api/auth/validate-session",
             "/api/staging/incoming",
             "/api/staging/incoming/clear",
@@ -7164,6 +7231,40 @@ class Handler(BaseHTTPRequestHandler):
             if ctx.get("role") != "host":
                 self.reject(403, "Access restricted to Host administrator.")
                 return False
+
+        # Granular RBAC enforcement for non-host staff
+        if ctx.get("role") != "host":
+            user_perms = {}
+            with db() as con:
+                u_row = con.execute("SELECT permissions FROM users WHERE user_id=?", (ctx.get("user_id"),)).fetchone()
+                if u_row and u_row["permissions"]:
+                    try:
+                        user_perms = json.loads(u_row["permissions"])
+                    except Exception:
+                        user_perms = {}
+            if path.startswith("/api/automation/") and user_perms.get("can_access_automation") is False:
+                self.reject(403, "Access restricted: Automation module is disabled for your account.")
+                return False
+            if path.startswith("/api/ai/") and user_perms.get("can_access_vs_ai") is False:
+                self.reject(403, "Access restricted: VS AI module is disabled for your account.")
+                return False
+            if path.startswith("/api/backup/") and user_perms.get("can_access_backup") is False:
+                self.reject(403, "Access restricted: Backup and Restore is disabled for your account.")
+                return False
+            if path.startswith("/api/pdf-studio/") and user_perms.get("can_access_pdf_studio") is False:
+                self.reject(403, "Access restricted: PDF Studio is disabled for your account.")
+                return False
+            if path in ("/api/setup/provision", "/api/setup/fresh-start") and user_perms.get("can_access_setup") is False:
+                self.reject(403, "Access restricted: Setup operations disabled for your account.")
+                return False
+            if path in ("/api/clients/delete", "/api/clients/bulk-delete") or (self.command == "DELETE" and path.startswith("/api/clients/")):
+                if user_perms.get("can_delete_clients") is False:
+                    self.reject(403, "Permission denied: Client deletion is disabled for your account.")
+                    return False
+            if self.command == "DELETE" and "/files/" in path:
+                if user_perms.get("can_delete_files") is False:
+                    self.reject(403, "Permission denied: File deletion is disabled for your account.")
+                    return False
 
         if self.command in ("POST", "PUT", "DELETE"):
             if ctx.get("role") == "readonly" or ctx.get("device_status") != "approved":
@@ -7202,6 +7303,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self.send_json({"ok": True, "server_time": now()})
+
+        if path == "/api/sync/version":
+            return self.send_json({"version": DATA_VERSION, "server_time": now()})
 
         if path.startswith("/api/ai/"):
             return self.handle_ai_get(path)
@@ -7306,15 +7410,31 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.get_cookie("vs_session"):
                     token_cookie = create_session(ctx["user_id"], ctx["device_id"], "127.0.0.1", session_type="web")
             cur_token = self.get_auth_token() or token_cookie
+            user_data = None
+            if ctx:
+                perms = {}
+                fname = ctx.get("user_id")
+                with db() as con:
+                    u_row = con.execute("SELECT full_name, permissions FROM users WHERE user_id=?", (ctx["user_id"],)).fetchone()
+                    if u_row:
+                        fname = u_row["full_name"] or ctx["user_id"]
+                        if u_row["permissions"]:
+                            try:
+                                perms = json.loads(u_row["permissions"])
+                            except Exception:
+                                perms = {}
+                user_data = {
+                    "user_id": ctx["user_id"],
+                    "full_name": fname,
+                    "role": ctx["role"],
+                    "device_name": ctx["device_name"],
+                    "device_id": ctx["device_id"],
+                    "permissions": perms
+                }
             raw = json.dumps({
                 "initialized": has_host_user(),
                 "authenticated": bool(ctx),
-                "user": {
-                    "user_id": ctx["user_id"],
-                    "role": ctx["role"],
-                    "device_name": ctx["device_name"],
-                    "device_id": ctx["device_id"]
-                } if ctx else None,
+                "user": user_data,
                 "session_token": cur_token if ctx else None,
                 "token": cur_token if ctx else None,
                 "is_loopback": is_loop
@@ -7333,11 +7453,17 @@ class Handler(BaseHTTPRequestHandler):
             device_id = query.get("device_id", [""])[0]
             user_id = query.get("user_id", [""])[0]
             with db() as con:
-                row = con.execute("SELECT status FROM access_requests WHERE device_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1", (device_id, user_id)).fetchone()
+                row = con.execute("SELECT status, pin, pin_verified, user_id, full_name FROM access_requests WHERE device_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1", (device_id, user_id)).fetchone()
                 if not row and device_id:
-                    row = con.execute("SELECT status FROM access_requests WHERE device_id=? ORDER BY created_at DESC LIMIT 1", (device_id,)).fetchone()
-            status = row["status"] if row else "none"
-            return self.send_json({"status": status})
+                    row = con.execute("SELECT status, pin, pin_verified, user_id, full_name FROM access_requests WHERE device_id=? ORDER BY created_at DESC LIMIT 1", (device_id,)).fetchone()
+            if not row:
+                return self.send_json({"status": "none"})
+            if row["status"] == "approved":
+                if row["pin_verified"] == 0:
+                    return self.send_json({"status": "approved_pending_pin", "user_id": row["user_id"], "full_name": row["full_name"]})
+                else:
+                    return self.send_json({"status": "approved", "user_id": row["user_id"]})
+            return self.send_json({"status": row["status"]})
 
         if path == "/api/auth/extension-status":
             ctx = self.get_auth_context()
@@ -7354,7 +7480,7 @@ class Handler(BaseHTTPRequestHandler):
             ctx = self.get_auth_context()
             is_host = bool(ctx and ctx.get("role") == "host")
             with db() as con:
-                raw_users = [dict(r) for r in con.execute("SELECT user_id, role, status, encrypted_password, created_at, updated_at FROM users ORDER BY created_at ASC")]
+                raw_users = [dict(r) for r in con.execute("SELECT user_id, full_name, role, status, encrypted_password, permissions, created_at, updated_at FROM users ORDER BY created_at ASC")]
                 users = []
                 for u in raw_users:
                     pwd_text = ""
@@ -7363,16 +7489,24 @@ class Handler(BaseHTTPRequestHandler):
                             pwd_text = vault_decrypt(u["encrypted_password"])
                         except Exception:
                             pwd_text = ""
+                    perms = {}
+                    if u.get("permissions"):
+                        try:
+                            perms = json.loads(u["permissions"])
+                        except Exception:
+                            perms = {}
                     users.append({
                         "user_id": u["user_id"],
+                        "full_name": u.get("full_name") or u["user_id"],
                         "role": u["role"],
                         "status": u["status"],
+                        "permissions": perms,
                         "password_text": pwd_text if is_host else "",
                         "created_at": u["created_at"],
                         "updated_at": u["updated_at"]
                     })
                 devices = [dict(r) for r in con.execute("SELECT device_id, user_id, device_name, ip_address, status, created_at, approved_at, last_seen_at FROM devices ORDER BY last_seen_at DESC")]
-                requests = [dict(r) for r in con.execute("SELECT request_id, user_id, device_id, device_name, ip_address, status, created_at FROM access_requests ORDER BY created_at DESC LIMIT 50")]
+                requests = [dict(r) for r in con.execute("SELECT request_id, user_id, full_name, device_id, device_name, ip_address, status, pin, pin_verified, created_at FROM access_requests ORDER BY created_at DESC LIMIT 50")]
             return self.send_json({"users": users, "devices": devices, "requests": requests})
 
         if path == "/api/settings":
@@ -7513,8 +7647,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(rows)
 
         if path == "/api/clients":
+            ctx = self.get_auth_context()
+            restricted = set()
+            if ctx and ctx.get("role") != "host":
+                with db() as con:
+                    u_row = con.execute("SELECT permissions FROM users WHERE user_id=?", (ctx.get("user_id"),)).fetchone()
+                    if u_row and u_row["permissions"]:
+                        try:
+                            perms = json.loads(u_row["permissions"])
+                            restricted = set(str(x).strip().upper() for x in perms.get("restricted_clients", []))
+                        except Exception:
+                            pass
             with db() as con:
                 rows = [dict(r) for r in con.execute("SELECT * FROM clients ORDER BY name")]
+            if restricted:
+                rows = [r for r in rows if str(r.get("file_no", "")).strip().upper() not in restricted]
             return self.send_json(rows)
 
         if path == "/api/clients/export":
@@ -8002,6 +8149,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/api/auth/register", "/api/auth/request-access"):
                 user_id = str(payload.get("user_id", "")).strip()
                 password = str(payload.get("password", "")).strip()
+                full_name = str(payload.get("full_name", "")).strip() or user_id
                 device_id = str(payload.get("device_id", "")).strip() or str(uuid.uuid4())
                 device_name = str(payload.get("device_name", "")).strip() or "Office PC"
                 pin = str(payload.get("pin", "")).strip()
@@ -8022,7 +8170,7 @@ class Handler(BaseHTTPRequestHandler):
                             con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
                             pin_approved = True
 
-                is_auto_approved = is_loop or pin_approved or (not has_host_user())
+                is_auto_approved = pin_approved or (not has_host_user())
                 role = "host" if (not has_host_user()) else "staff"
                 user_status = "active" if is_auto_approved else "pending"
                 device_status = "approved" if is_auto_approved else "pending"
@@ -8034,23 +8182,24 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("Incorrect password for existing User ID.")
                         enc_pwd = vault_encrypt(password)
                         if is_auto_approved:
-                            con.execute("UPDATE users SET encrypted_password=?, status='active' WHERE user_id=?", (enc_pwd, user_id))
+                            con.execute("UPDATE users SET full_name=?, encrypted_password=?, status='active' WHERE user_id=?", (full_name, enc_pwd, user_id))
                         else:
-                            con.execute("UPDATE users SET encrypted_password=? WHERE user_id=?", (enc_pwd, user_id))
+                            con.execute("UPDATE users SET full_name=?, encrypted_password=? WHERE user_id=?", (full_name, enc_pwd, user_id))
                         role = existing_user["role"]
                     else:
                         pwd_hash, salt = hash_password(password)
                         enc_pwd = vault_encrypt(password)
-                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                    (user_id, pwd_hash, salt, role, user_status, t, t, enc_pwd))
+                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password, full_name, permissions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')",
+                                    (user_id, pwd_hash, salt, role, user_status, t, t, enc_pwd, full_name))
 
                     con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status=excluded.status, updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
                                 (device_id, user_id, device_name, client_ip, device_status, t, t, t if is_auto_approved else None, t))
 
                     if not is_auto_approved:
-                        con.execute("INSERT INTO access_requests (request_id, user_id, device_id, device_name, ip_address, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-                                    (req_id, user_id, device_id, device_name, client_ip, t, t))
+                        con.execute("INSERT INTO access_requests (request_id, user_id, full_name, device_id, device_name, ip_address, status, pin, pin_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', '', 0, ?, ?)",
+                                    (req_id, user_id, full_name, device_id, device_name, client_ip, t, t))
 
+                mark_data_changed()
                 if is_auto_approved:
                     token = create_session(user_id, device_id, client_ip, session_type="web")
                     raw = json.dumps({"ok": True, "status": "approved", "user_id": user_id, "role": role, "device_id": device_id, "device_name": device_name, "token": token, "session_token": token, "message": "Registered and signed in successfully."}).encode()
@@ -8256,14 +8405,140 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/admin/requests/approve":
                 req_id = str(payload.get("request_id", "")).strip()
                 t = now()
+                pin = f"{secrets.randbelow(900000) + 100000}"
+                expires_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 600, timezone.utc).isoformat(timespec="seconds")
                 with db() as con:
                     req = con.execute("SELECT * FROM access_requests WHERE request_id=?", (req_id,)).fetchone()
                     if not req:
                         raise ValueError("Request not found.")
-                    con.execute("UPDATE access_requests SET status='approved', updated_at=? WHERE request_id=?", (t, req_id))
-                    con.execute("UPDATE users SET status='active', updated_at=? WHERE user_id=?", (t, req["user_id"]))
-                    con.execute("UPDATE devices SET status='approved', approved_at=?, updated_at=? WHERE device_id=?", (t, t, req["device_id"]))
-                return self.send_json({"ok": True, "request_id": req_id, "status": "approved"})
+                    con.execute("UPDATE access_requests SET status='approved', pin=?, pin_verified=0, updated_at=? WHERE request_id=?", (pin, t, req_id))
+                    con.execute("INSERT OR REPLACE INTO device_pairing_pins (pin, user_id, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                                (pin, req["user_id"], expires_at, t))
+                mark_data_changed()
+                staff_name = req["full_name"] if ("full_name" in req.keys() and req["full_name"]) else req["user_id"]
+                return self.send_json({
+                    "ok": True,
+                    "request_id": req_id,
+                    "status": "approved",
+                    "pin": pin,
+                    "user_id": req["user_id"],
+                    "full_name": staff_name,
+                    "expires_in_seconds": 600
+                })
+
+            if path == "/api/auth/verify-approval-pin":
+                pin = str(payload.get("pin", "")).strip()
+                device_id = str(payload.get("device_id", "")).strip()
+                user_id = str(payload.get("user_id", "")).strip()
+                if not pin or not device_id:
+                    raise ValueError("PIN and device_id are required.")
+                t = now()
+                client_ip = self.client_address[0]
+                with db() as con:
+                    req = None
+                    if user_id:
+                        req = con.execute("SELECT * FROM access_requests WHERE pin=? AND device_id=? AND user_id=? AND status='approved' AND pin_verified=0 ORDER BY updated_at DESC LIMIT 1", (pin, device_id, user_id)).fetchone()
+                    if not req:
+                        req = con.execute("SELECT * FROM access_requests WHERE pin=? AND device_id=? AND status='approved' AND pin_verified=0 ORDER BY updated_at DESC LIMIT 1", (pin, device_id)).fetchone()
+                    if not req:
+                        pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=? AND used=0 AND expires_at>=?", (pin, t)).fetchone()
+                        if not pin_row:
+                            raise ValueError("Invalid, expired, or already used 6-digit PIN.")
+                        target_user_id = pin_row["user_id"]
+                    else:
+                        target_user_id = req["user_id"]
+                        con.execute("UPDATE access_requests SET pin_verified=1, updated_at=? WHERE request_id=?", (t, req["request_id"]))
+
+                    con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
+                    con.execute("UPDATE users SET status='active', updated_at=? WHERE user_id=?", (t, target_user_id))
+                    con.execute("UPDATE devices SET status='approved', ip_address=?, approved_at=?, updated_at=?, last_seen_at=? WHERE device_id=?",
+                                (client_ip, t, t, t, device_id))
+                    u_row = con.execute("SELECT user_id, full_name, role, permissions FROM users WHERE user_id=?", (target_user_id,)).fetchone()
+                    dev_row = con.execute("SELECT device_name FROM devices WHERE device_id=?", (device_id,)).fetchone()
+                    d_name = dev_row["device_name"] if dev_row else "Workstation"
+
+                token = create_session(target_user_id, device_id, client_ip, session_type="workstation")
+                mark_data_changed()
+                perms = {}
+                if u_row and u_row["permissions"]:
+                    try:
+                        perms = json.loads(u_row["permissions"])
+                    except Exception:
+                        pass
+                user_full = u_row["full_name"] if (u_row and "full_name" in u_row.keys() and u_row["full_name"]) else target_user_id
+                raw = json.dumps({
+                    "ok": True,
+                    "session_token": token,
+                    "token": token,
+                    "user_id": target_user_id,
+                    "full_name": user_full,
+                    "role": u_row["role"] if u_row else "staff",
+                    "device_id": device_id,
+                    "device_name": d_name,
+                    "permissions": perms
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_auth_cookie(token)
+                self.send_header("Content-Length", len(raw))
+                self.send_cors_headers()
+                self.end_headers()
+                return self.wfile.write(raw)
+
+            if path == "/api/admin/users/permissions":
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to configure permissions.")
+                target_user = str(payload.get("user_id", "")).strip()
+                perms = payload.get("permissions", {})
+                if not target_user:
+                    raise ValueError("Target user_id is required.")
+                perms_json = json.dumps(perms)
+                with db() as con:
+                    con.execute("UPDATE users SET permissions=?, updated_at=? WHERE user_id=?", (perms_json, now(), target_user))
+                mark_data_changed()
+                return self.send_json({"ok": True, "user_id": target_user, "permissions": perms})
+
+            if path == "/api/admin/settings/generate-unlock-pin":
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to generate Settings Unlock PIN.")
+                pin = f"{secrets.randbelow(900000) + 100000}"
+                t = now()
+                expires_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 900, timezone.utc).isoformat(timespec="seconds")
+                with db() as con:
+                    con.execute(
+                        "INSERT INTO settings_unlock_pins (pin, created_by, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                        (pin, ctx.get("user_id", "admin"), expires_at, t)
+                    )
+                mark_data_changed()
+                return self.send_json({
+                    "ok": True,
+                    "pin": pin,
+                    "expires_in_seconds": 900,
+                    "expires_at": expires_at
+                })
+
+            if path == "/api/settings/verify-unlock-pin":
+                pin = str(payload.get("pin", "")).strip()
+                if not pin:
+                    raise ValueError("6-digit Unlock PIN is required.")
+                t = now()
+                with db() as con:
+                    pin_row = con.execute("SELECT * FROM settings_unlock_pins WHERE pin=?", (pin,)).fetchone()
+                    if not pin_row:
+                        return self.send_json({"ok": False, "error": "Invalid Unlock PIN."}, 400)
+                    if pin_row["used"] != 0:
+                        return self.send_json({"ok": False, "error": "Unlock PIN has already been used."}, 400)
+                    if pin_row["expires_at"] < t:
+                        return self.send_json({"ok": False, "error": "Unlock PIN has expired."}, 400)
+                    con.execute("UPDATE settings_unlock_pins SET used=1 WHERE pin=?", (pin,))
+                unlock_token = f"unlock_{secrets.token_hex(16)}"
+                return self.send_json({
+                    "ok": True,
+                    "unlock_token": unlock_token,
+                    "message": "Host Authorization granted. Settings editing unlocked."
+                })
 
             if path == "/api/admin/requests/reject":
                 req_id = str(payload.get("request_id", "")).strip()
@@ -8323,6 +8598,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "user_id": user_id, "message": f"Password updated for {user_id}"})
 
             if path == "/api/settings":
+                ctx = self.get_auth_context()
+                if ctx and ctx.get("role") != "host":
+                    unlock_token = str(payload.get("unlock_token", "")).strip() or self.headers.get("X-VS-Settings-Unlock-Token", "").strip()
+                    unlock_pin = str(payload.get("unlock_pin", "")).strip()
+                    authorized = False
+                    if unlock_pin:
+                        with db() as con:
+                            pin_row = con.execute("SELECT * FROM settings_unlock_pins WHERE pin=? AND used=0 AND expires_at>=?", (unlock_pin, now())).fetchone()
+                            if pin_row:
+                                con.execute("UPDATE settings_unlock_pins SET used=1 WHERE pin=?", (unlock_pin,))
+                                authorized = True
+                    elif unlock_token and unlock_token.startswith("unlock_"):
+                        authorized = True
+                    if not authorized:
+                        raise ValueError("Host authorization required to modify system settings. Enter the 6-digit Unlock PIN provided by Host administrator.")
+
                 for key in ("local_root", "drive_root", "google_drive_mode", "office_root", "client_portal_root",
                             "office_folder_name", "client_folder_name", "google_portal_root_name",
                             "firm_name", "firm_title", "firm_city", "firm_phone", "firm_upi_id", "host_pin",
@@ -8336,6 +8627,7 @@ class Handler(BaseHTTPRequestHandler):
                 
                 # Auto-provision workspace directories and update passes
                 provision_res = provision_workspace()
+                mark_data_changed()
                 return self.send_json({**settings_payload(), "provision_result": provision_res})
 
             if path == "/api/setup/provision":
@@ -8781,6 +9073,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                     threading.Thread(target=generate_client_portal_pdf_background, args=(client, not bool(existing)), daemon=True).start()
+                mark_data_changed()
                 return self.send_json(client, 201)
 
             if path == "/api/clients/rename":
@@ -8800,6 +9093,7 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("INSERT INTO clients VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(file_no) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
                                 (new_fno, new_name, client["mobile"], client["client_type"], client["client_group"], client["tags"], client["status"], client["users"], now()))
                     log_activity("client_renamed", new_fno, new_name, f"Renamed client from '{old_name}' to '{new_name}'", con=con)
+                mark_data_changed()
                 return self.send_json({"ok": True, "file_no": new_fno, "name": new_name, "old_name": old_name})
 
             if path == "/api/security-alerts/dismiss":
@@ -8920,6 +9214,7 @@ class Handler(BaseHTTPRequestHandler):
                         deleted_count += 1
                         deleted_fnos.append(fno)
 
+                mark_data_changed()
                 return self.send_json({
                     "status": "success",
                     "deleted": deleted_count,

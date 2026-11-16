@@ -1,6 +1,6 @@
 [package]
 name = "vs-database"
-version = "2.0.0"
+version = "2.1.0"
 description = "VS Database 2.0 Desktop Application"
 authors = ["VS Database Team"]
 edition = "2021"
