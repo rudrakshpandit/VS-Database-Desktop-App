@@ -2376,8 +2376,20 @@ def get_dashboard_stats() -> dict:
     }
 
 
+def get_local_lan_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 def get_desktop_health() -> dict:
     """Instant health check for desktop launcher and watchdog."""
+    lan_ip = get_local_lan_ip()
     return {
         "ok": True,
         "service": "VS Database Desktop",
@@ -2386,7 +2398,9 @@ def get_desktop_health() -> dict:
         "status": "ready",
         "mode": "host" if HOST_MODE else "standard",
         "host_mode": HOST_MODE,
-        "central_authority": HOST_MODE
+        "central_authority": HOST_MODE,
+        "host_ip": lan_ip,
+        "host_address": f"{lan_ip}:{PORT}"
     }
 
 
@@ -7726,6 +7740,7 @@ class Handler(BaseHTTPRequestHandler):
             with db() as con:
                 active_s = con.execute("SELECT COUNT(*) FROM sessions WHERE status = 'active'").fetchone()[0]
                 dev_count = con.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+            lan_ip = get_local_lan_ip()
             return self.send_json({
                 "ok": True,
                 "host_mode": HOST_MODE,
@@ -7733,6 +7748,8 @@ class Handler(BaseHTTPRequestHandler):
                 "central_authority": True,
                 "active_sessions": active_s,
                 "registered_devices": dev_count,
+                "host_ip": lan_ip,
+                "host_address": f"{lan_ip}:{PORT}",
                 "server_time": now()
             })
 

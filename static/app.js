@@ -2048,7 +2048,7 @@ async function load() {
 
     const navUsersBtn = document.querySelector('#nav-users');
     if (navUsersBtn) {
-      navUsersBtn.style.display = currentUser.role === 'host' ? 'block' : 'none';
+      navUsersBtn.style.display = (!isClient || currentUser?.role === 'host') ? 'block' : 'none';
     }
 
     [settings, clients, rules, firmTypes] = await Promise.all([
@@ -5825,7 +5825,32 @@ async function usersPage() {
   const data = await api('/api/admin/users');
   const pendingRequests = data.requests.filter(r => r.status === 'pending');
 
+  let hostLanAddr = '192.168.1.50:8768';
+  try {
+    const hStat = await api('/api/desktop/health');
+    if (hStat && hStat.host_address) hostLanAddr = hStat.host_address;
+  } catch (_) {}
+
   content.innerHTML = `
+    <!-- 1. Workstation Pairing (PIN Generation) Card -->
+    <section class="glass card" style="border-left:4px solid var(--pc);margin-bottom:18px;">
+      <div class="row" style="align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <h2 style="margin:0 0 4px;"><svg class="i" style="color:var(--pc);"><use href="#check"/></svg>Pair Workstation (6-Digit PIN)</h2>
+          <p class="muted" style="margin:0;font-size:13px;">Generate a single-use 6-digit PIN to connect staff client PCs to this Host PC.</p>
+          <div style="margin-top:8px;font-size:12.5px;color:var(--ink);">
+            Host Server Address for Client PCs: <code style="background:rgba(0,0,0,0.06);padding:3px 8px;border-radius:6px;font-weight:700;color:var(--pc);" id="host-lan-address-text">${escapeHtml(hostLanAddr)}</code>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn p" id="btn-generate-pairing-pin" style="padding:10px 18px;font-weight:700;">
+            <svg class="i" aria-hidden="true"><use href="#plus"/></svg> Generate Pairing PIN
+          </button>
+        </div>
+      </div>
+      <div id="pairing-pin-display-container" style="display:none;margin-top:16px;"></div>
+    </section>
+
     ${pendingRequests.length > 0 ? `
     <section class="glass card" style="border-color:rgba(245,158,11,0.4);margin-bottom:16px;">
       <h2 style="color:var(--wn);"><svg class="i"><use href="#alert"/></svg>Pending device access requests (${pendingRequests.length})</h2>
@@ -5938,6 +5963,62 @@ async function usersPage() {
   `;
 
   // Attach handlers
+
+  const genBtn = content.querySelector('#btn-generate-pairing-pin');
+  const pinContainer = content.querySelector('#pairing-pin-display-container');
+  if (genBtn && pinContainer) {
+    genBtn.onclick = async () => {
+      try {
+        genBtn.disabled = true;
+        genBtn.innerHTML = '<span class="muted">Generating...</span>';
+        const res = await api('/api/host/pairing/generate-pin', { method: 'POST', body: '{}' });
+        if (res && res.ok && res.pin) {
+          const pin = res.pin;
+          let remaining = res.expires_in_seconds || 300;
+          pinContainer.style.display = 'block';
+          pinContainer.innerHTML = `
+            <div style="background:linear-gradient(135deg, rgba(72,105,232,0.08), rgba(99,102,241,0.12));border:1.5px dashed rgba(72,105,232,0.4);border-radius:14px;padding:20px;text-align:center;">
+              <span class="muted" style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Active Workstation Pairing PIN</span>
+              <div style="display:flex;justify-content:center;gap:10px;margin:14px 0;">
+                ${pin.split('').map(d => `<span style="display:inline-flex;width:44px;height:54px;align-items:center;justify-content:center;background:#fff;border:2px solid var(--pc);border-radius:10px;font-size:26px;font-weight:800;color:var(--pc);box-shadow:0 4px 12px rgba(72,105,232,0.15);">${d}</span>`).join('')}
+              </div>
+              <p style="margin:0 0 10px;font-size:13px;color:var(--ink);">
+                Enter these 6 digits on the <strong>Client Workstation</strong> to pair instantly.<br>
+                <span id="pin-countdown-text" style="color:var(--muted);font-size:12px;">PIN expires in: <b>5:00</b></span>
+              </p>
+              <button class="btn secondary btn-sm" id="btn-copy-pin">📋 Copy PIN</button>
+            </div>
+          `;
+
+          if (window.__vsPinTimer) clearInterval(window.__vsPinTimer);
+          window.__vsPinTimer = setInterval(() => {
+            remaining--;
+            const countEl = document.querySelector('#pin-countdown-text');
+            if (countEl) {
+              if (remaining <= 0) {
+                clearInterval(window.__vsPinTimer);
+                countEl.innerHTML = '<span style="color:var(--er);font-weight:700;">PIN expired. Please generate a new PIN.</span>';
+              } else {
+                const m = Math.floor(remaining / 60);
+                const s = remaining % 60;
+                countEl.innerHTML = `PIN expires in: <b>${m}:${s < 10 ? '0' : ''}${s}</b>`;
+              }
+            }
+          }, 1000);
+
+          document.querySelector('#btn-copy-pin')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(pin);
+            alert(`PIN ${pin} copied to clipboard!`);
+          });
+        }
+      } catch (err) {
+        alert(`Failed to generate PIN: ${err.message}`);
+      } finally {
+        genBtn.disabled = false;
+        genBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#plus"/></svg> Generate Pairing PIN';
+      }
+    };
+  }
 
   content.querySelectorAll('.btn-approve').forEach(btn => {
     btn.onclick = async () => {
@@ -6140,9 +6221,10 @@ async function dashboard() {
     </div>
 
     <!-- Quick Actions Row -->
-    <div class="row" style="margin-top:16px;">
+    <div class="row" style="margin-top:16px;flex-wrap:wrap;gap:8px;">
       <button class="btn p" id="dash-quick-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
       <button class="btn" id="dash-quick-save-file"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Save file</button>
+      <button class="btn" id="dash-quick-pair-pin" style="border-color:var(--pc);color:var(--pc);font-weight:700;"><svg class="i" aria-hidden="true"><use href="#users"/></svg>Pair Workstation (PIN)</button>
       <button class="btn" id="qa-open-explorer"><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Open explorer</button>
       <button class="btn" id="qa-reconcile"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Reconcile folders</button>
       <button class="btn" id="qa-backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg>Backup</button>
@@ -6228,6 +6310,7 @@ function attachDashboardEvents() {
   });
 
   document.querySelector('#dash-quick-save-file')?.addEventListener('click', () => navigateTo('save'));
+  document.querySelector('#dash-quick-pair-pin')?.addEventListener('click', () => navigateTo('users'));
   document.querySelector('#card-stat-clients')?.addEventListener('click', () => navigateTo('clients'));
   document.querySelector('#card-stat-folders')?.addEventListener('click', () => navigateTo('folders'));
   document.querySelector('#card-stat-files')?.addEventListener('click', () => navigateTo('save'));
