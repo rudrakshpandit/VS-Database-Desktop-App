@@ -2893,7 +2893,9 @@ function setup() {
         }
       } catch (_) {}
 
-      const dlUrl = isClient ? (uData.client_download_url || uData.html_url) : (uData.host_download_url || uData.html_url);
+      const rawDl = isClient ? (uData.lan_client_download_url || uData.client_download_url || uData.html_url) : (uData.lan_host_download_url || uData.host_download_url || uData.html_url);
+      const hostUrl = typeof getHostServerUrl === 'function' ? getHostServerUrl() : '';
+      const dlUrl = rawDl && rawDl.startsWith('/') ? (hostUrl ? `${hostUrl.replace(/\/$/, '')}${rawDl}` : rawDl) : rawDl;
       if (dlUrl) {
         updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">Opening update installer: <a href="${dlUrl}" target="_blank" style="color:var(--pc);text-decoration:underline;">Click here to download if it does not start automatically</a></span>`;
         if (window.TauriBridge && typeof window.TauriBridge.openPath === 'function') {

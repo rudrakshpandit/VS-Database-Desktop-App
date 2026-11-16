@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import urllib.request
 from urllib.parse import parse_qs, urlparse, unquote
 from xml.etree import ElementTree as ET
 from reportlab.lib.pagesizes import A4
@@ -4905,13 +4906,31 @@ def open_in_file_manager(target_path: Path | str) -> str:
         return p_str
 
 
-def check_for_system_updates():
+def get_github_auth_token():
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        return token
+    try:
+        p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        out, _ = p.communicate('protocol=https\nhost=github.com\n\n', timeout=3)
+        creds = dict(l.split('=', 1) for l in out.strip().splitlines() if '=' in l)
+        return creds.get('password')
+    except Exception:
+        pass
+    return None
+
+
+def check_for_system_updates(client_ver=None):
     """Checks whether a new version is available on GitHub."""
-    current_version = "2.1.0"
+    current_version = client_ver if client_ver else "2.1.0"
     repo = "rudrakshpandit/VS-Database-Host-and-Client"
     try:
         url = f"https://api.github.com/repos/{repo}/releases/latest"
-        req = urllib.request.Request(url, headers={"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"})
+        headers = {"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"}
+        gh_token = get_github_auth_token()
+        if gh_token:
+            headers["Authorization"] = f"token {gh_token}"
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
         tag = data.get("tag_name", "").lstrip("v")
@@ -4932,6 +4951,8 @@ def check_for_system_updates():
             "update_available": has_update,
             "host_download_url": host_dl,
             "client_download_url": client_dl,
+            "lan_client_download_url": "/api/system/download-update?product=client",
+            "lan_host_download_url": "/api/system/download-update?product=host",
             "html_url": data.get("html_url", ""),
             "release_notes": data.get("body", ""),
             "message": f"⚡ Update Available (v{tag})!" if has_update else "✅ System is up to date."
@@ -7206,6 +7227,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/auth/login",
             "/api/auth/extension-exchange",
             "/api/auth/extension-direct-connect",
+            "/api/system/check-updates",
+            "/api/system/download-update",
             "/api/google/callback",
             "/api/template.csv"
         }
@@ -7712,7 +7735,35 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if path == "/api/system/check-updates":
-            return self.send_json(check_for_system_updates())
+            query_params = parse_qs(urlparse(self.path).query)
+            c_ver = query_params.get("version", [None])[0]
+            return self.send_json(check_for_system_updates(client_ver=c_ver))
+
+        if path == "/api/system/download-update":
+            query_params = parse_qs(urlparse(self.path).query)
+            prod = query_params.get("product", ["client"])[0].lower()
+            fname = "VS Database Client Setup.exe" if prod == "client" else "VS Database Host Setup.exe"
+            app_root = Path(__file__).resolve().parent
+            candidates = [
+                app_root / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.1.0_x64-setup.exe",
+            ]
+            fpath = next((p for p in candidates if p.exists()), None)
+            if fpath:
+                fsize = fpath.stat().st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                self.send_header("Content-Length", str(fsize))
+                self.end_headers()
+                with open(str(fpath), "rb") as f:
+                    try:
+                        shutil.copyfileobj(f, self.wfile)
+                    except (ConnectionResetError, BrokenPipeError):
+                        pass
+                return
+            return self.send_error(404, "Installer setup package not found on host.")
 
         if path == "/api/system/autostart":
             return self.send_json(get_autostart_status())
