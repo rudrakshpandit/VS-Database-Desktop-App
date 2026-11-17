@@ -43,4 +43,9 @@ src-tauri/gen/
 # Backups & test artifacts
 backups/
 *.bak
+.env
+.env.*
+*.key
+*.pem
+
 

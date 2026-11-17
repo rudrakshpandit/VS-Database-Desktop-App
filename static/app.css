@@ -4179,79 +4179,101 @@ body.page-vs-ai-active .vs-ai-container {
 
 
 /* ==========================================================================
-   OTP / PIN Verification Component (ADR-015 Client Workstation Pairing)
+   OTP / PIN Verification Component (ADR-015 4th Glass Flip Animation)
    ========================================================================== */
 .vs-otp-wrap {
   margin: 12px 0 16px;
   text-align: center;
+  position: relative;
 }
 .vs-otp-header {
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 .vs-otp-title {
   font-size: 18px;
   font-weight: 800;
   color: var(--tx, #1e293b);
   letter-spacing: -0.02em;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 .vs-otp-subtitle {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--muted, #64748b);
-  line-height: 1.45;
+  line-height: 1.4;
   margin: 0;
 }
-.vs-otp-container {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  align-items: center;
-  margin: 18px 0;
+.vs-otp-flip-stage {
+  position: relative;
+  height: 90px;
+  margin: 14px 0 8px;
+  perspective: 700px;
 }
-.vs-otp-box {
+.vs-otp-flip-ring {
+  position: absolute;
+  inset: 0;
+}
+.vs-otp-box-3d {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 44px;
-  height: 54px;
-  text-align: center;
+  height: 56px;
+  transform: translate(calc(-50% + var(--x, 0px)), calc(-50% + var(--y, 0px))) rotateY(var(--ry, 0deg)) rotate(var(--rot, 0deg)) scale(var(--s, 1));
+  transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.5s;
+}
+.vs-otp-box-3d .otp-in {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
   font-size: 22px;
-  font-weight: 800;
-  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, monospace;
+  font-weight: 700;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.7), rgba(255,255,255,0.2) 55%, rgba(255,255,255,0.4));
+  backdrop-filter: blur(16px) saturate(190%) brightness(1.06);
+  -webkit-backdrop-filter: blur(16px) saturate(190%) brightness(1.06);
+  box-shadow: inset 0 1.5px 1px rgba(255,255,255,0.95), inset 0 -1.5px 1px rgba(255,255,255,0.45),
+              0 10px 24px -8px rgba(40,60,140,0.25), 0 2px 6px rgba(40,60,140,0.1);
+  transition: box-shadow 0.3s, background 0.3s, border-color 0.3s;
   color: #1e293b;
-  background: rgba(255, 255, 255, 0.85);
-  border: 2px solid rgba(203, 213, 225, 0.9);
-  border-radius: 12px;
-  box-shadow: 0 4px 10px rgba(18, 28, 58, 0.04);
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  caret-color: #2563eb;
-  outline: none;
 }
-.vs-otp-box:hover {
-  border-color: #94a3b8;
+.vs-otp-box-3d.active .otp-in {
+  background: linear-gradient(145deg, rgba(120,170,255,0.5), rgba(255,255,255,0.25) 60%, rgba(140,190,255,0.4));
+  box-shadow: inset 0 1.5px 1px #fff, 0 0 0 2px rgba(59,130,246,0.6), 0 0 20px rgba(59,130,246,0.45);
 }
-.vs-otp-box:focus {
-  border-color: #2563eb;
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18), 0 6px 16px rgba(37, 99, 235, 0.15);
-  transform: scale(1.05) translateY(-2px);
+.vs-otp-box-3d.filled .otp-in {
+  background: linear-gradient(145deg, rgba(239,246,255,0.85), rgba(255,255,255,0.4) 60%, rgba(219,234,254,0.6));
+  color: #2563eb;
 }
-.vs-otp-box.filled {
-  border-color: #3b82f6;
-  background: rgba(239, 246, 255, 0.95);
-  color: #1d4ed8;
+.vs-otp-box-3d.good .otp-in {
+  background: linear-gradient(145deg, rgba(90,220,130,0.65), rgba(255,255,255,0.3) 60%, rgba(70,200,110,0.45)) !important;
+  box-shadow: inset 0 1.5px 1px #fff, 0 0 22px rgba(48,194,91,0.6) !important;
+  color: #065f46 !important;
 }
-.vs-otp-box.error {
-  border-color: #ef4444 !important;
-  background: rgba(254, 242, 242, 0.95) !important;
-  color: #b91c1c !important;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18) !important;
-  animation: otp-shake 0.35s ease-in-out;
+.vs-otp-flip-stage.error {
+  animation: otp-stage-shake 0.4s ease-in-out;
 }
-@keyframes otp-shake {
-  0%, 100% { transform: translateX(0); }
-  20%, 60% { transform: translateX(-6px); }
-  40%, 80% { transform: translateX(6px); }
+.vs-otp-flip-stage.error .otp-in {
+  box-shadow: inset 0 1.5px 1px #fff, 0 0 0 2px rgba(239,68,68,0.7), 0 0 18px rgba(239,68,68,0.4);
+}
+@keyframes otp-stage-shake {
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}
+.vs-otp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 20px;
+  background: #2563eb;
+  border-radius: 2px;
+  animation: otp-caret-blink 1s steps(1) infinite;
+}
+@keyframes otp-caret-blink {
+  50% { opacity: 0; }
 }
 .vs-otp-footer {
-  margin-top: 14px;
+  margin-top: 10px;
   font-size: 12px;
   color: var(--muted, #64748b);
 }
@@ -4551,3 +4573,45 @@ svg.vs-glass-links .core {
   height: 18px;
   cursor: pointer;
 }
+
+/* VS Glass Switch Clean Isolation */
+.vs-glass-switch {
+  display: inline-flex !important;
+  align-items: center !important;
+  cursor: pointer !important;
+  position: relative !important;
+  user-select: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.vs-glass-switch input[type="checkbox"] {
+  display: none !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+  position: absolute !important;
+}
+.vs-glass-switch .sw-track {
+  width: 52px;
+  height: 28px;
+  border-radius: 14px;
+  position: relative;
+  transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+.vs-glass-switch .sw-knob {
+  width: 22px;
+  height: 22px;
+  background: #ffffff;
+  border-radius: 50%;
+  position: absolute;
+  top: 3px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+

@@ -469,6 +469,7 @@ pub fn run() {
     // Setup lifecycle: supervisor spawn & health check
     builder = builder.setup(|app| {
         if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_decorations(false);
             let _ = window.show();
             let _ = window.unminimize();
             let _ = window.set_focus();

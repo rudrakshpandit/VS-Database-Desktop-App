@@ -32,22 +32,20 @@ function startRealtimeSync() {
           } else if (current === 'users' && typeof usersPage === 'function') {
             usersPage().catch(() => {});
           }
-          // Update clients array in background for search
-          api('/api/clients').then(cl => {
-            if (Array.isArray(cl)) clients = cl;
-          }).catch(() => {});
-          // Re-sync permissions
-          api('/api/auth/status').then(st => {
-            if (st && st.user) {
-              currentUser = st.user;
-              localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
-              applyUserPermissions();
-            }
-          }).catch(() => {});
+          // Only re-sync permissions if needed
+          if (current === 'setup' || current === 'users') {
+            api('/api/auth/status').then(st => {
+              if (st && st.user) {
+                currentUser = st.user;
+                localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+                applyUserPermissions();
+              }
+            }).catch(() => {});
+          }
         }
       }
     } catch (_) {}
-  }, 1200);
+  }, 3500);
 }
 
 function applyUserPermissions() {
@@ -1276,6 +1274,14 @@ function dismissSplash() {
     splash.style.pointerEvents = 'none';
     setTimeout(() => { splash.style.display = 'none'; }, 250);
   }
+  const overlay = document.getElementById('vs-daily-startup-splash');
+  if (overlay) {
+    overlay.style.display = 'none';
+    overlay.style.opacity = '0';
+    overlay.style.visibility = 'hidden';
+    overlay.classList.remove('fade-out');
+  }
+  document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
   if (typeof dismissStartupAnimationImmediately === 'function') {
     dismissStartupAnimationImmediately();
   }
@@ -1283,68 +1289,70 @@ function dismissSplash() {
 
 function setupOtpBoxes(containerSelector, onComplete) {
   const container = document.querySelector(containerSelector);
-  if (!container) return { getValue: () => '', clear: () => {}, setError: () => {} };
-  const inputs = Array.from(container.querySelectorAll('.vs-otp-box'));
+  const hiddenInput = document.getElementById('otp-hidden-field');
+  const stage = document.getElementById('otp-flip-stage');
+  if (!container || !hiddenInput) return { getValue: () => '', clear: () => {}, setError: () => {}, triggerFlip: () => {} };
 
-  inputs.forEach((input, idx) => {
-    input.addEventListener('input', (e) => {
-      const val = e.target.value.replace(/[^0-9]/g, '');
-      input.value = val ? val[val.length - 1] : '';
-      if (input.value) {
-        input.classList.add('filled');
-        input.classList.remove('error');
-        if (idx < inputs.length - 1) {
-          inputs[idx + 1].focus();
-        }
-      } else {
-        input.classList.remove('filled');
-      }
-      const full = inputs.map(i => i.value).join('');
-      if (full.length === inputs.length && typeof onComplete === 'function') {
-        onComplete(full);
-      }
+  const slabs = Array.from(container.querySelectorAll('.vs-otp-box-3d'));
+
+  const updateDisplay = () => {
+    const raw = hiddenInput.value.replace(/[^0-9]/g, '').slice(0, 6);
+    hiddenInput.value = raw;
+    slabs.forEach((slab, idx) => {
+      const valEl = slab.querySelector('.otp-val');
+      const caret = slab.querySelector('.vs-otp-caret');
+      const digit = raw[idx] || '';
+      if (valEl) valEl.textContent = digit;
+      slab.classList.toggle('filled', !!digit);
+      slab.classList.toggle('active', idx === raw.length);
+      if (caret) caret.style.display = (idx === raw.length) ? 'inline-block' : 'none';
     });
 
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Backspace') {
-        if (!input.value && idx > 0) {
-          inputs[idx - 1].focus();
-          inputs[idx - 1].value = '';
-          inputs[idx - 1].classList.remove('filled', 'error');
-        } else {
-          input.value = '';
-          input.classList.remove('filled', 'error');
-        }
-      } else if (e.key === 'ArrowLeft' && idx > 0) {
-        inputs[idx - 1].focus();
-      } else if (e.key === 'ArrowRight' && idx < inputs.length - 1) {
-        inputs[idx + 1].focus();
-      }
-    });
+    if (raw.length === 6 && typeof onComplete === 'function') {
+      onComplete(raw);
+    }
+  };
 
-    input.addEventListener('paste', (e) => {
-      e.preventDefault();
-      const pasted = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
-      if (!pasted) return;
-      pasted.split('').slice(0, inputs.length).forEach((char, i) => {
-        inputs[i].value = char;
-        inputs[i].classList.add('filled');
-        inputs[i].classList.remove('error');
-      });
-      const nextFocus = Math.min(pasted.length, inputs.length - 1);
-      inputs[nextFocus].focus();
-      const full = inputs.map(i => i.value).join('');
-      if (full.length === inputs.length && typeof onComplete === 'function') {
-        onComplete(full);
-      }
-    });
+  hiddenInput.addEventListener('input', updateDisplay);
+  hiddenInput.addEventListener('focus', () => {
+    const len = hiddenInput.value.length;
+    slabs.forEach((slab, idx) => slab.classList.toggle('active', idx === Math.min(len, 5)));
+  });
+  hiddenInput.addEventListener('blur', () => {
+    slabs.forEach(slab => slab.classList.remove('active'));
   });
 
+  container.addEventListener('click', () => hiddenInput.focus());
+
   return {
-    getValue: () => inputs.map(i => i.value).join(''),
-    clear: () => inputs.forEach(i => { i.value = ''; i.classList.remove('filled', 'error'); }),
-    setError: (err) => inputs.forEach(i => i.classList.toggle('error', !!err)),
-    focusFirst: () => inputs[0]?.focus()
+    getValue: () => hiddenInput.value.trim(),
+    clear: () => {
+      hiddenInput.value = '';
+      slabs.forEach(s => {
+        s.style.setProperty('--ry', '0deg');
+        s.classList.remove('filled', 'active', 'good');
+        const v = s.querySelector('.otp-val');
+        if (v) v.textContent = '';
+      });
+      updateDisplay();
+    },
+    setError: (err) => {
+      if (stage) stage.classList.toggle('error', !!err);
+      if (err) setTimeout(() => stage && stage.classList.remove('error'), 500);
+    },
+    triggerFlip: () => {
+      slabs.forEach((b, i) => {
+        setTimeout(() => {
+          b.style.setProperty('--ry', '360deg');
+        }, 80 + i * 100);
+      });
+      setTimeout(() => {
+        slabs.forEach((b, i) => {
+          setTimeout(() => b.classList.add('good'), i * 50);
+        });
+      }, 1000);
+    },
+    focusFirst: () => hiddenInput.focus()
   };
 }
 
@@ -1459,18 +1467,21 @@ function renderOtpPairingForm() {
     <div class="vs-otp-wrap">
       <div class="vs-otp-header">
         <div class="vs-otp-title">Let's verify your pairing PIN</div>
-        <p class="vs-otp-subtitle">We've sent/generated a 6-digit PIN on the Host PC.<br>It'll auto-verify once entered.</p>
+        <p class="vs-otp-subtitle">Enter the 6-digit PIN approved by the Host PC.<br>It'll auto-verify with 3D glass flip once entered.</p>
       </div>
-      <div class="vs-otp-container" id="otp-box-row">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="0" autofocus inputmode="numeric" autocomplete="off">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="1" inputmode="numeric" autocomplete="off">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="2" inputmode="numeric" autocomplete="off">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="3" inputmode="numeric" autocomplete="off">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="4" inputmode="numeric" autocomplete="off">
-        <input type="text" maxlength="1" class="vs-otp-box" data-index="5" inputmode="numeric" autocomplete="off">
+      <div class="vs-otp-flip-stage" id="otp-flip-stage">
+        <div class="vs-otp-flip-ring" id="otp-box-row">
+          <div class="vs-otp-box-3d" data-index="0" style="--x: -130px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="1" style="--x: -78px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="2" style="--x: -26px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="3" style="--x: 26px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="4" style="--x: 78px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="5" style="--x: 130px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+        </div>
+        <input id="otp-hidden-field" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;z-index:5;">
       </div>
       <div class="vs-otp-footer">
-        Didn't receive the code? Ask Host Admin to generate in <b>Users & Devices</b>.
+        Need PIN? Ask Host Admin in <b>Users & Devices</b> to approve request.
       </div>
     </div>
     <div class="actions" style="margin-top:16px;">
@@ -1505,13 +1516,14 @@ function renderOtpPairingForm() {
       });
 
       if (res && (res.ok || res.token)) {
-        if (result) result.innerHTML = message('✓ Workstation paired successfully! Loading...');
+        otpHandler.triggerFlip();
+        if (result) result.innerHTML = message('✓ 6-Digit PIN Verified! Slabs Flipped & Paired Successfully!');
         const token = res.session_token || res.token;
         if (token) setSessionToken(token);
         setTimeout(async () => {
           authRoot.innerHTML = '';
           await load();
-        }, 500);
+        }, 1600);
       } else {
         throw new Error(res.error || 'Pairing failed. Please verify PIN.');
       }
@@ -1953,6 +1965,7 @@ function getTodayDateKey() {
 }
 
 let startupVideoHasRun = false;
+let startupVideoDismissTimeout = null;
 window.__vsDashboardRendered = false;
 
 function initDailyStartupVideo(force = false) {
@@ -2471,12 +2484,10 @@ async function load() {
       navUsersBtn.style.display = (!isClient && currentUser?.role === 'host') ? 'flex' : 'none';
     }
 
-    [settings, clients, rules, firmTypes] = await Promise.all([
-      api('/api/settings'),
-      api('/api/clients'),
-      api('/api/rules'),
-      api('/api/firm-types')
-    ]);
+    try { settings = await api('/api/settings'); } catch (_) { settings = {}; }
+    try { clients = await api('/api/clients'); } catch (_) { clients = []; }
+    try { rules = await api('/api/rules'); } catch (_) { rules = { services: [], periods: [] }; }
+    try { firmTypes = await api('/api/firm-types'); } catch (_) { firmTypes = []; }
 
     updateUnifiedStatus(true, false, 'Server online', 'Drive checking...');
 
@@ -2532,10 +2543,8 @@ async function load() {
       }
     }
 
-    // Ensure auth modal is presented if unauthenticated or offline fallback not available
-    showAuthModal(isClient ? 'otp' : 'login');
-  }
-
+    // If offline cached user boot failed, proceed to connection error UI
+    console.warn('[Load] Central server unreachable and no active offline session.');
     const configuredHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
       ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
       : 'http://127.0.0.1:8768';
@@ -2591,7 +2600,6 @@ async function load() {
       }, 3000);
     }
   }
-
 }
 
 function setup() {
@@ -6371,6 +6379,12 @@ async function activity() {
 }
 
 async function usersPage() {
+  if (!currentUser) {
+    try {
+      const st = await api('/api/auth/status');
+      if (st && st.user) currentUser = st.user;
+    } catch (_) {}
+  }
   if (currentUser?.role !== 'host') {
     content.innerHTML = message('Access restricted to Host administrator.', true);
     return;
@@ -7623,10 +7637,17 @@ load().then(() => {
   }
 });
 
-// Fast periodic staging poller: detects incoming files from Chrome Extension
+// Periodic staging poller: detects incoming files from Chrome Extension on Host PC
 let isPollingStaging = false;
 async function pollIncomingStaging() {
   if (window.__isSavingDocument || isPollingStaging || incomingDrainInProgress) return;
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+  if (isClient) return; // Client workstations do not drain host extension staging
   try {
     isPollingStaging = true;
     // 1. Check for remote navigation requests (e.g. from extension or secondary launcher)
@@ -7663,7 +7684,7 @@ async function pollIncomingStaging() {
     isPollingStaging = false;
   }
 }
-setInterval(pollIncomingStaging, 800);
+setInterval(pollIncomingStaging, 2500);
 window.addEventListener('focus', pollIncomingStaging);
 
 

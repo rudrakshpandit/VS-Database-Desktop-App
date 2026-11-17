@@ -7181,14 +7181,9 @@ class Handler(BaseHTTPRequestHandler):
     def get_auth_context(self) -> dict | None:
         token = self.get_auth_token()
         if token:
-            return validate_session(token, self.client_address[0])
-        # For localhost / loopback callers: require secret handshake token from supervisor
-        if ipaddress.ip_address(self.client_address[0]).is_loopback:
-            handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
-            if _HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN:
-                return self._get_host_context_record()
-            # Unauthenticated loopback requests are rejected from host administrative privileges
-            return None
+            ctx = validate_session(token, self.client_address[0])
+            if ctx:
+                return ctx
         return None
 
     def send_auth_cookie(self, token: str, max_age: int = 31536000):
@@ -7206,6 +7201,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self.is_local_client():
             self.reject(403, "This server accepts requests from private LAN devices only.")
             return False
+        if path.startswith("/api/desktop/"):
+            handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+            if _HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN:
+                return True
+            if ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return True
         public_endpoints = {
             "/api/health",
             "/api/desktop/health",
@@ -7747,6 +7748,7 @@ class Handler(BaseHTTPRequestHandler):
             candidates = [
                 app_root / fname,
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.0_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.1.0_x64-setup.exe",
             ]
             fpath = next((p for p in candidates if p.exists()), None)
@@ -8188,7 +8190,7 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
                                 (device_id, user_id, device_name, client_ip, t, t, t, t))
                 token = create_session(user_id, device_id, client_ip, session_type="web")
-                raw = json.dumps({"ok": True, "user_id": user_id, "role": "host", "device_id": device_id, "device_name": device_name}).encode()
+                raw = json.dumps({"ok": True, "user_id": user_id, "role": "host", "device_id": device_id, "device_name": device_name, "token": token, "session_token": token}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_auth_cookie(token)

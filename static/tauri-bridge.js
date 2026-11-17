@@ -433,12 +433,14 @@
 
   // 7. Transparent fetch monkey-patching for cross-origin Tauri requests & Handshake Token injection
   let cachedHandshakeToken = null;
-  async function initHandshakeToken() {
+  let handshakePromise = null;
+  function initHandshakeToken() {
     const inv = getTauriInvoke();
     if (inv) {
-      try {
-        cachedHandshakeToken = await inv('get_desktop_handshake_token');
-      } catch (_) {}
+      handshakePromise = inv('get_desktop_handshake_token').then(t => {
+        cachedHandshakeToken = t;
+        return t;
+      }).catch(() => null);
     }
   }
   if (isTauri()) {
@@ -447,7 +449,7 @@
 
   if (typeof window !== 'undefined' && window.fetch) {
     const originalFetch = window.fetch;
-    window.fetch = function (resource, init) {
+    window.fetch = async function (resource, init) {
       let finalResource = resource;
       const targetBase = getBaseUrl();
       if (targetBase !== window.location.origin) {
@@ -463,6 +465,10 @@
             }
           } catch (_) {}
         }
+      }
+
+      if (!cachedHandshakeToken && handshakePromise) {
+        try { await handshakePromise; } catch (_) {}
       }
 
       if (cachedHandshakeToken) {
