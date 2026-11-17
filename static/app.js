@@ -9,7 +9,7 @@ function startRealtimeSync() {
   if (syncPollerActive) return;
   syncPollerActive = true;
   setInterval(async () => {
-    if (typeof VSOfflineManager !== 'undefined' && VSOfflineManager.isOffline()) return;
+    if (window.__isSavingDocument || (typeof VSOfflineManager !== 'undefined' && VSOfflineManager.isOffline())) return;
     try {
       const res = await api('/api/sync/version', { timeout: 2000 });
       if (res && res.version) {
@@ -1147,6 +1147,22 @@ async function fileToBase64(file) {
   if (file._b64) return file._b64;
   if (file.base64) return file.base64;
   if (file.file_base64) return file.file_base64;
+  if (typeof FileReader !== 'undefined' && file instanceof Blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = reader.result;
+        if (typeof res === 'string') {
+          const comma = res.indexOf(',');
+          resolve(comma !== -1 ? res.slice(comma + 1) : res);
+        } else {
+          resolve('');
+        }
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
   if (typeof file.arrayBuffer === 'function') {
     const bytes = new Uint8Array(await file.arrayBuffer());
     let binary = '';
@@ -1516,6 +1532,84 @@ function renderOtpPairingForm() {
   document.querySelector('#btn-submit-otp').onclick = () => {
     doVerify(otpHandler.getValue());
   };
+}
+
+function renderLoginForm() {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
+    ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
+    : 'http://127.0.0.1:8768';
+
+  form.innerHTML = `
+    <div class="vs-host-cfg-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <label style="margin:0;"><span>Host Server Address</span> <span class="muted" style="font-weight:normal;">Port 8768</span></label>
+        <span id="login-host-live-status" style="font-size:11px;font-weight:600;color:var(--muted);">Checking status...</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="login-host-url" value="${escapeHtml(currentHost)}" placeholder="e.g. 192.168.1.50:8768" style="flex:1;">
+        <button type="button" class="btn secondary btn-sm" id="btn-test-login-host" style="padding:0 12px;font-size:12px;white-space:nowrap;">Test</button>
+      </div>
+    </div>
+    <div style="margin-top:12px;"><label>User ID</label><input id="login-user" placeholder="Enter your User ID" autofocus></div>
+    <div style="margin-top:12px;"><label>Password</label><input id="login-pass" type="password" placeholder="••••••••"></div>
+    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-do-login" style="width:100%;">Sign In</button></div>
+    <div style="text-align:center;margin-top:16px;font-size:12px;color:var(--text-muted);display:flex;justify-content:center;gap:14px;">
+      <a href="#" id="link-to-pair" style="color:var(--blue);font-weight:700;text-decoration:none;">Pair with PIN &rarr;</a>
+      <span style="color:var(--line);">|</span>
+      <a href="#" id="link-to-register" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign Up / Request &rarr;</a>
+    </div>
+    <div id="auth-result"></div>
+  `;
+
+  wireHostConnectivityChecker('#login-host-url', '#login-host-live-status', '#btn-test-login-host');
+
+  document.querySelector('#link-to-pair')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('otp');
+  });
+
+  document.querySelector('#link-to-register')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('register');
+  });
+
+  const doLogin = async () => {
+    const hostInput = document.querySelector('#login-host-url');
+    if (hostInput && hostInput.value.trim() && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+      window.TauriBridge.setHostUrl(hostInput.value.trim());
+    }
+    const user_id = document.querySelector('#login-user')?.value.trim();
+    const password = document.querySelector('#login-pass')?.value;
+    const result = document.querySelector('#auth-result');
+    if (!user_id || !password) {
+      if (result) result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
+    try {
+      if (result) result.innerHTML = message('Signing in...');
+      const res = await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
+      });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
+      authRoot.innerHTML = '';
+      await load();
+    } catch (e) {
+      if (result) result.innerHTML = message(e.message, true);
+    }
+  };
+
+  document.querySelector('#btn-do-login')?.addEventListener('click', doLogin);
+  document.querySelector('#login-pass')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.querySelector('#login-user')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.querySelector('#login-pass')?.focus();
+  });
 }
 
 function renderRegisterForm() {
@@ -2338,7 +2432,12 @@ async function load() {
   try {
     const authStatus = await api('/api/auth/status');
     if (!authStatus.authenticated) {
-      showAuthModal(isClient ? 'otp' : 'register');
+      clearSessionToken();
+      if (isClient) {
+        showAuthModal(authStatus.initialized ? 'login' : 'otp');
+      } else {
+        showAuthModal(authStatus.initialized ? 'login' : 'register');
+      }
       return;
     }
     if (authStatus.session_token || authStatus.token) {
@@ -2381,6 +2480,7 @@ async function load() {
 
     updateUnifiedStatus(true, false, 'Server online', 'Drive checking...');
 
+    current = 'dashboard';
     await render();
     document.querySelectorAll('nav button').forEach(b => {
       const isCur = b.dataset.page === current;
@@ -2390,7 +2490,7 @@ async function load() {
     });
     window.__vsDashboardRendered = true;
     // Reveal .app at opacity:1 safely behind the 100% opaque #vs-daily-startup-splash so fade-out has zero washout
-    document.documentElement.classList.remove('vs-booting');
+    document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
     dismissSplash();
 
     // Check Google Drive status asynchronously without blocking initial dashboard render
@@ -2405,8 +2505,9 @@ async function load() {
       updateUnifiedStatus(true, false, 'Server online', 'Drive offline');
     });
   } catch (e) {
+    console.error('[Load Error]:', e);
     window.__vsDashboardRendered = false;
-    document.documentElement.classList.remove('vs-booting');
+    document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
     dismissSplash();
     updateUnifiedStatus(false, false, 'Server offline', 'Drive offline');
 
@@ -2421,6 +2522,7 @@ async function load() {
         settings = { firm_name: 'VS Database (Offline)' };
         rules = [];
         firmTypes = [];
+        current = 'dashboard';
         await render();
         applyUserPermissions();
         window.__vsDashboardRendered = true;
@@ -2430,11 +2532,9 @@ async function load() {
       }
     }
 
-    // If client is not yet authenticated or pairing is needed, show auth/pairing modal directly
-    if (isClient || !getSessionToken()) {
-      showAuthModal('otp');
-      return;
-    }
+    // Ensure auth modal is presented if unauthenticated or offline fallback not available
+    showAuthModal(isClient ? 'otp' : 'login');
+  }
 
     const configuredHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
       ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
@@ -2638,8 +2738,8 @@ function setup() {
             </label>
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span style="font-size:13px;color:#475569;">Release Channel:</span>
-              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.1.0 (Production)</span>
-              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.1.0]</span>
+              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.0 (Production)</span>
+              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.0]</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -2675,16 +2775,14 @@ function setup() {
               </p>
             </div>
             <div style="flex-shrink:0;">
-              <label class="sw t1" id="sw-app-autostart-label" title="Toggle Desktop App autostart">
-                <input type="checkbox" id="toggle-app-autostart" role="switch" aria-label="Autostart App at startup" ${settings.app_autostart ? 'checked' : ''}>
-                <span class="track glass">
-                  <span class="lbl y">Yes</span>
-                  <span class="lbl n">No</span>
-                  <span class="thumb">
-                    <svg class="ic tick"><use href="#tick"/></svg>
-                    <svg class="ic cross"><use href="#x"/></svg>
-                  </span>
-                </span>
+              <label class="vs-glass-switch" id="sw-app-autostart-label" title="Toggle Desktop App autostart" style="display:inline-flex;align-items:center;cursor:pointer;position:relative;">
+                <input type="checkbox" id="toggle-app-autostart" role="switch" aria-label="Autostart App at startup" style="position:absolute;opacity:0;pointer-events:none;" ${settings.app_autostart ? 'checked' : ''}>
+                <div class="sw-track" style="width:52px;height:28px;background:${settings.app_autostart ? '#10b981' : '#cbd5e1'};border-radius:14px;position:relative;transition:background 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:inset 0 2px 4px rgba(0,0,0,0.1);">
+                  <div class="sw-knob" style="width:22px;height:22px;background:#ffffff;border-radius:50%;position:absolute;top:3px;left:${settings.app_autostart ? '27px' : '3px'};transition:all 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:0 2px 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;">
+                    <span class="sw-icon" style="font-size:11px;line-height:1;color:${settings.app_autostart ? '#10b981' : '#94a3b8'};font-weight:900;">${settings.app_autostart ? '✓' : ''}</span>
+                  </div>
+                </div>
+                <span class="sw-text" style="margin-left:12px;font-size:13px;font-weight:700;color:${settings.app_autostart ? '#059669' : '#64748b'};min-width:40px;">${settings.app_autostart ? 'Yes' : 'No'}</span>
               </label>
             </div>
           </div>
@@ -2869,7 +2967,7 @@ function setup() {
           updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New version available (v${res.latest_version})! Click "Update Now" to install.</span>`;
           btnApplyUpdate.style.display = 'inline-flex';
         } else {
-          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date (v${res.current_version || '2.1.0'}).</span>`;
+          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date (v${res.current_version || '2.2.0'}).</span>`;
           btnApplyUpdate.style.display = 'none';
         }
       } catch (err) {
@@ -2925,44 +3023,78 @@ function setup() {
     };
   }
 
-  // Windows Desktop App Autostart Toggle Handler (Glass UI Kit .sw.t1)
+  // Windows Desktop App Autostart Toggle Handler
   const appAutostartToggle = document.getElementById('toggle-app-autostart');
+  const appAutostartLabel = document.getElementById('sw-app-autostart-label');
   if (appAutostartToggle) {
-    // Sync live state from backend on load
+    const updateSwitchUI = (checked) => {
+      appAutostartToggle.checked = checked;
+      const track = appAutostartLabel?.querySelector('.sw-track');
+      const knob = appAutostartLabel?.querySelector('.sw-knob');
+      const icon = appAutostartLabel?.querySelector('.sw-icon');
+      const text = appAutostartLabel?.querySelector('.sw-text');
+      if (track) track.style.background = checked ? '#10b981' : '#cbd5e1';
+      if (knob) knob.style.left = checked ? '27px' : '3px';
+      if (icon) {
+        icon.textContent = checked ? '✓' : '';
+        icon.style.color = checked ? '#10b981' : '#94a3b8';
+      }
+      if (text) {
+        text.textContent = checked ? 'Yes' : 'No';
+        text.style.color = checked ? '#059669' : '#64748b';
+      }
+    };
+
     api('/api/system/autostart').then(res => {
       if (res && typeof res.app_autostart === 'boolean') {
-        appAutostartToggle.checked = res.app_autostart;
+        updateSwitchUI(res.app_autostart);
       }
     }).catch(() => {});
 
-    appAutostartToggle.onchange = async () => {
-      const isEnabled = appAutostartToggle.checked;
-      try {
-        const resp = await api('/api/system/autostart', {
-          method: 'POST',
-          body: JSON.stringify({ app_autostart: isEnabled })
-        });
-        if (resp && resp.ok) {
-          appAutostartToggle.checked = !!resp.app_autostart;
-          const msg = resp.message || (isEnabled ? 'Desktop App autostart enabled' : 'Desktop App autostart disabled');
-          if (typeof showGlassToast === 'function') {
-            showGlassToast(msg, 'success');
-          } else if (typeof toast === 'function') {
-            toast(msg);
+    if (appAutostartLabel) {
+      appAutostartLabel.onclick = async (e) => {
+        e.preventDefault();
+        let isClient = false;
+        try {
+          if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+            isClient = await window.TauriBridge.isClientMode();
           }
-        } else {
-          throw new Error((resp && resp.error) || 'Failed to update autostart setting');
+        } catch (_) {}
+        if (isClient || (currentUser && currentUser.role !== 'host')) {
+          alert('This option is disabled from Host side.');
+          return;
         }
-      } catch (err) {
-        appAutostartToggle.checked = !isEnabled; // Revert switch on error
-        const errMsg = err.message || 'Error updating autostart';
-        if (typeof showGlassToast === 'function') {
-          showGlassToast(errMsg, 'error');
-        } else if (typeof toast === 'function') {
-          toast(errMsg, true);
+
+        const newChecked = !appAutostartToggle.checked;
+        updateSwitchUI(newChecked);
+
+        try {
+          const resp = await api('/api/system/autostart', {
+            method: 'POST',
+            body: JSON.stringify({ app_autostart: newChecked })
+          });
+          if (resp && resp.ok) {
+            updateSwitchUI(!!resp.app_autostart);
+            const msg = resp.message || (newChecked ? 'Desktop App autostart enabled' : 'Desktop App autostart disabled');
+            if (typeof showGlassToast === 'function') {
+              showGlassToast(msg, 'success');
+            } else if (typeof toast === 'function') {
+              toast(msg);
+            }
+          } else {
+            throw new Error((resp && resp.error) || 'Failed to update autostart setting');
+          }
+        } catch (err) {
+          updateSwitchUI(!newChecked);
+          const errMsg = err.message || 'Error updating autostart';
+          if (typeof showGlassToast === 'function') {
+            showGlassToast(errMsg, 'error');
+          } else if (typeof toast === 'function') {
+            toast(errMsg, true);
+          }
         }
-      }
-    };
+      };
+    }
   }
 
   // Clean Fresh Start Handler
@@ -5746,6 +5878,7 @@ function save() {
       }
 
       // If <= 5 files and no queue active: interactive saving
+      window.__isSavingDocument = true;
       const saveBtn = field('save-document');
       saveBtn.disabled = true;
       saveBtn.textContent = 'Saving Documents...';
@@ -5865,6 +5998,8 @@ function save() {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save Documents';
       }
+    } finally {
+      window.__isSavingDocument = false;
     }
   };
 }
@@ -6674,7 +6809,7 @@ async function dashboard() {
     <div class="grid5" id="dash-stats-grid">
       <div class="glass stat" id="card-stat-clients" style="cursor:pointer;" title="Click to view Clients">
         <span>Clients</span>
-        <b id="stat-total-clients">${clients.length || '0'}</b>
+        <b id="stat-total-clients">${(clients && clients.length) || '0'}</b>
       </div>
       <div class="glass stat" id="card-stat-folders" style="cursor:pointer;" title="Click to view Folders">
         <span>Folders</span>
@@ -6744,7 +6879,7 @@ async function dashboard() {
         </div>
         <p class="muted" style="font-size:12.5px;margin-bottom:16px;line-height:1.5;">
           <span id="dash-local-free-text">...</span> free of <span id="dash-local-usage-text">Calculating...</span>. Backups share this disk. <a href="#backup" id="dash-open-backup-tab" style="color:var(--pc);font-weight:600;text-decoration:none;">Move backups to Drive</a>
-          <span style="display:block;margin-top:4px;font-size:11.5px;">Path: <code id="dash-local-path-text">${escapeHtml(settings.local_root || 'D:\\Code Trial')}</code> &middot; Managed: <strong id="dash-local-managed-text" style="color:var(--pc);">0 B</strong></span>
+          <span style="display:block;margin-top:4px;font-size:11.5px;">Path: <code id="dash-local-path-text">${escapeHtml((settings && settings.local_root) || 'D:\\Code Trial')}</code> &middot; Managed: <strong id="dash-local-managed-text" style="color:var(--pc);">0 B</strong></span>
         </p>
 
         <!-- Google Drive Cloud Storage -->
@@ -7491,7 +7626,7 @@ load().then(() => {
 // Fast periodic staging poller: detects incoming files from Chrome Extension
 let isPollingStaging = false;
 async function pollIncomingStaging() {
-  if (isPollingStaging || incomingDrainInProgress) return;
+  if (window.__isSavingDocument || isPollingStaging || incomingDrainInProgress) return;
   try {
     isPollingStaging = true;
     // 1. Check for remote navigation requests (e.g. from extension or secondary launcher)

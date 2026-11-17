@@ -4922,7 +4922,7 @@ def get_github_auth_token():
 
 def check_for_system_updates(client_ver=None):
     """Checks whether a new version is available on GitHub."""
-    current_version = client_ver if client_ver else "2.1.0"
+    current_version = client_ver if client_ver else "2.2.0"
     repo = "rudrakshpandit/VS-Database-Host-and-Client"
     try:
         url = f"https://api.github.com/repos/{repo}/releases/latest"
@@ -8281,11 +8281,20 @@ class Handler(BaseHTTPRequestHandler):
                     if user["status"] == "pending":
                         raise ValueError("Account access is pending Host approval.")
 
+                    client_ip = self.client_address[0]
+                    is_loop = ipaddress.ip_address(client_ip).is_loopback
                     if not device_id:
-                        raise ValueError("Device identifier required.")
+                        device_id = str(uuid.uuid4())
                     dev = con.execute("SELECT * FROM devices WHERE device_id=? AND user_id=?", (device_id, user_id)).fetchone()
                     if not dev:
-                        raise ValueError("Device not registered. Please submit an access request.")
+                        if user["role"] == "host" or is_loop:
+                            t_dev = now()
+                            dev_name = "Host Server PC" if user["role"] == "host" else "Office Workstation"
+                            con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+                                        (device_id, user_id, dev_name, client_ip, t_dev, t_dev, t_dev, t_dev))
+                            dev = {"device_name": dev_name, "status": "approved"}
+                        else:
+                            raise ValueError("Device not registered. Please submit an access request.")
                     if dev["status"] == "pending":
                         raise ValueError("Device approval is pending Host approval.")
                     if dev["status"] in ("disabled", "revoked", "rejected"):
