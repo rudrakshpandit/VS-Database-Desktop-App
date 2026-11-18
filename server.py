@@ -4922,7 +4922,7 @@ def get_github_auth_token():
 
 def check_for_system_updates(client_ver=None):
     """Checks whether a new version is available on GitHub."""
-    current_version = client_ver if client_ver else "2.2.0"
+    current_version = client_ver if client_ver else "2.2.1"
     repo = "rudrakshpandit/VS-Database-Host-and-Client"
     try:
         url = f"https://api.github.com/repos/{repo}/releases/latest"
@@ -4951,7 +4951,7 @@ def check_for_system_updates(client_ver=None):
             "update_available": has_update,
             "host_download_url": host_dl,
             "client_download_url": client_dl,
-            "lan_client_download_url": "/api/system/download-update?product=client",
+            "lan_client_download_url": "/api/system/download-update?product=host" if "host" in (client_dl or "").lower() else "/api/system/download-update?product=client",
             "lan_host_download_url": "/api/system/download-update?product=host",
             "html_url": data.get("html_url", ""),
             "release_notes": data.get("body", ""),
@@ -7748,6 +7748,7 @@ class Handler(BaseHTTPRequestHandler):
             candidates = [
                 app_root / fname,
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.1_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.0_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.1.0_x64-setup.exe",
             ]
@@ -7765,7 +7766,39 @@ class Handler(BaseHTTPRequestHandler):
                     except (ConnectionResetError, BrokenPipeError):
                         pass
                 return
-            return self.send_error(404, "Installer setup package not found on host.")
+
+            # Fallback: stream installer directly from GitHub Releases via API token
+            try:
+                repo = "rudrakshpandit/VS-Database-Host-and-Client"
+                gh_token = get_github_auth_token()
+                rel_url = f"https://api.github.com/repos/{repo}/releases/latest"
+                rel_headers = {"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"}
+                if gh_token:
+                    rel_headers["Authorization"] = f"token {gh_token}"
+                rel_req = urllib.request.Request(rel_url, headers=rel_headers)
+                with urllib.request.urlopen(rel_req, timeout=6) as rel_resp:
+                    rel_data = json.loads(rel_resp.read().decode())
+                target_word = "Host" if prod == "host" else "Client"
+                asset = next((a for a in rel_data.get("assets", []) if target_word in a.get("name", "")), None)
+                if asset and asset.get("url"):
+                    dl_headers = {"User-Agent": "VS-Database-App", "Accept": "application/octet-stream"}
+                    if gh_token:
+                        dl_headers["Authorization"] = f"token {gh_token}"
+                    dl_req = urllib.request.Request(asset["url"], headers=dl_headers)
+                    with urllib.request.urlopen(dl_req, timeout=30) as dl_resp:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/octet-stream")
+                        self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                        cl = dl_resp.headers.get("Content-Length")
+                        if cl:
+                            self.send_header("Content-Length", cl)
+                        self.end_headers()
+                        shutil.copyfileobj(dl_resp, self.wfile)
+                    return
+            except Exception as exc:
+                print(f"[Update Stream Error] {exc}")
+
+            return self.send_error(404, "Installer setup package not found on host or GitHub.")
 
         if path == "/api/system/autostart":
             return self.send_json(get_autostart_status())
@@ -8170,12 +8203,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_automation_post(path, payload)
 
             if path == "/api/auth/setup-host":
-                if has_host_user():
-                    raise ValueError("Host user is already configured.")
-                user_id = str(payload.get("user_id", "")).strip()
+                client_ip = self.client_address[0]
+                is_loop = ipaddress.ip_address(client_ip).is_loopback
+                if not is_loop and has_host_user():
+                    raise ValueError("Host administrator can only be configured or reset locally on the Host PC.")
+                user_id = str(payload.get("user_id", "")).strip() or "Rudra_Dev"
                 password = str(payload.get("password", "")).strip()
+                full_name = str(payload.get("full_name", "")).strip() or "Rudraksh Sikhwal"
                 device_id = str(payload.get("device_id", "")).strip() or str(uuid.uuid4())
-                device_name = str(payload.get("device_name", "")).strip() or "Host PC"
+                device_name = str(payload.get("device_name", "")).strip() or "Host Server PC"
                 if not user_id or not password:
                     raise ValueError("User ID and password are required.")
                 if len(password) < 6:
@@ -8183,14 +8219,18 @@ class Handler(BaseHTTPRequestHandler):
                 pwd_hash, salt = hash_password(password)
                 enc_pwd = vault_encrypt(password)
                 t = now()
-                client_ip = self.client_address[0]
                 with db() as con:
-                    con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password) VALUES (?, ?, ?, 'host', 'active', ?, ?, ?)",
-                                (user_id, pwd_hash, salt, t, t, enc_pwd))
-                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+                    existing = con.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+                    if existing:
+                        con.execute("UPDATE users SET password_hash=?, salt=?, role='host', status='active', updated_at=?, encrypted_password=?, full_name=? WHERE user_id=?",
+                                    (pwd_hash, salt, t, enc_pwd, full_name, user_id))
+                    else:
+                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password, full_name, permissions) VALUES (?, ?, ?, 'host', 'active', ?, ?, ?, ?, '{}')",
+                                    (user_id, pwd_hash, salt, t, t, enc_pwd, full_name))
+                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status='approved', updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
                                 (device_id, user_id, device_name, client_ip, t, t, t, t))
                 token = create_session(user_id, device_id, client_ip, session_type="web")
-                raw = json.dumps({"ok": True, "user_id": user_id, "role": "host", "device_id": device_id, "device_name": device_name, "token": token, "session_token": token}).encode()
+                raw = json.dumps({"ok": True, "user_id": user_id, "role": "host", "device_id": device_id, "device_name": device_name, "token": token, "session_token": token, "message": "Host Administrator configured and signed in successfully."}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_auth_cookie(token)
@@ -8223,8 +8263,12 @@ class Handler(BaseHTTPRequestHandler):
                             con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
                             pin_approved = True
 
-                is_auto_approved = pin_approved or (not has_host_user())
-                role = "host" if (not has_host_user()) else "staff"
+                if is_loop:
+                    is_auto_approved = True
+                    role = "host"
+                else:
+                    is_auto_approved = pin_approved or (not has_host_user())
+                    role = "host" if (not has_host_user()) else "staff"
                 user_status = "active" if is_auto_approved else "pending"
                 device_status = "approved" if is_auto_approved else "pending"
 

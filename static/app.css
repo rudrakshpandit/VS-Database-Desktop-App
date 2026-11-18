@@ -71,9 +71,8 @@ body {
 /* Flicker-free startup intro: prevent dashboard flash before initial DOM render completes */
 html.vs-booting .app,
 html.vs-booting .orbs {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
+  opacity: 0;
+  pointer-events: none;
 }
 
 html.vs-boot-skip #vs-daily-startup-splash {
@@ -4591,6 +4590,8 @@ svg.vs-glass-links .core {
   height: 0 !important;
   pointer-events: none !important;
   position: absolute !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
 }
 .vs-glass-switch .sw-track {
   width: 52px;

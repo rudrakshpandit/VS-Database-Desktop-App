@@ -1,4 +1,6 @@
 
+window.APP_VERSION = '2.2.1';
+
 // ==============================================================================
 // PHASE 16: REAL-TIME SYNC, RBAC, GLASS OTP & SETTINGS LOCK HELPERS
 // ==============================================================================
@@ -535,6 +537,7 @@ const clearSessionToken = () => {
 
 // ADR-015: Centralized Host-Client Architecture with Offline Read-Only Mode
 const VSOfflineManager = {
+  STATE_CHECKING: 'CHECKING',
   STATE_ONLINE: 'ONLINE',
   STATE_OFFLINE: 'OFFLINE',
   STATE_RECONNECTING: 'RECONNECTING',
@@ -543,15 +546,29 @@ const VSOfflineManager = {
   currentState: 'ONLINE',
   consecutiveFailures: 0,
   heartbeatInterval: null,
+  heartbeatInFlight: false,
   cachedClientsKey: 'vs_cached_clients_ro',
   lastOnlineTimestamp: Date.now(),
   initialized: false,
 
-  init() {
+  async init() {
     if (this.initialized) return;
     this.initialized = true;
     this.injectStyles();
-    this.startHeartbeat();
+
+    let isClient = false;
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+        isClient = await window.TauriBridge.isClientMode();
+      }
+    } catch (_) {}
+
+    if (isClient) {
+      this.currentState = this.STATE_CHECKING;
+      this.lockdownMutations();
+      this.showCheckingBanner();
+    }
+    this.startHeartbeat(isClient);
     console.log('[OfflineManager] Initialized. Monitoring Host reachability...');
   },
 
@@ -567,13 +584,15 @@ const VSOfflineManager = {
     return this.currentState === this.STATE_REVOKED;
   },
 
-  startHeartbeat() {
+  startHeartbeat(checkImmediately = false) {
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (checkImmediately) this.checkHeartbeat();
     this.heartbeatInterval = setInterval(() => this.checkHeartbeat(), 2000);
   },
 
   async checkHeartbeat() {
-    if (this.currentState === this.STATE_REVOKED) return;
+    if (this.currentState === this.STATE_REVOKED || this.heartbeatInFlight) return;
+    this.heartbeatInFlight = true;
 
     const healthUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
       ? window.TauriBridge.resolveApiUrl('/api/desktop/health')
@@ -591,22 +610,30 @@ const VSOfflineManager = {
         signal: controller ? controller.signal : undefined,
         headers: { 'X-VS-Device-Id': getDeviceId() }
       });
-      if (timeoutId) clearTimeout(timeoutId);
 
       if (resp.ok) {
         if (this.consecutiveFailures > 0 || this.currentState === this.STATE_OFFLINE) {
           console.log('[OfflineManager] Host response detected! Initiating session revalidation...');
           await this.handleReconnection();
         } else {
+          const wasChecking = this.currentState === this.STATE_CHECKING;
           this.consecutiveFailures = 0;
+          this.currentState = this.STATE_ONLINE;
           this.lastOnlineTimestamp = Date.now();
+          if (wasChecking) {
+            this.hideBanners();
+            this.unlockMutations();
+            window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_ONLINE } }));
+          }
         }
       } else {
         this.handleFailure();
       }
     } catch (e) {
-      if (timeoutId) clearTimeout(timeoutId);
       this.handleFailure();
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      this.heartbeatInFlight = false;
     }
   },
 
@@ -898,6 +925,24 @@ const VSOfflineManager = {
     });
   },
 
+  showCheckingBanner() {
+    let banner = document.getElementById('vs-offline-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'vs-offline-banner';
+      document.body.prepend(banner);
+    }
+    banner.className = 'vs-network-banner vs-banner-checking';
+    banner.innerHTML = `
+      <div class="vs-banner-content">
+        <span class="vs-banner-icon">&#8635;</span>
+        <span class="vs-banner-title">CHECKING CONNECTION TO CENTRAL HOST...</span>
+        <span class="vs-banner-desc">Edits are paused until Host availability is confirmed.</span>
+      </div>
+    `;
+    banner.style.display = 'block';
+  },
+
   showOfflineBanner() {
     let banner = document.getElementById('vs-offline-banner');
     if (!banner) {
@@ -906,6 +951,7 @@ const VSOfflineManager = {
       banner.className = 'vs-network-banner vs-banner-offline';
       document.body.prepend(banner);
     }
+    banner.className = 'vs-network-banner vs-banner-offline';
     const cachedData = this.getCachedClients();
     const cachedTime = cachedData ? new Date(cachedData.timestamp).toLocaleTimeString() : 'N/A';
     banner.innerHTML = `
@@ -991,6 +1037,11 @@ const VSOfflineManager = {
         color: #ffffff;
         border-bottom: 2px solid #b45309;
       }
+      .vs-banner-checking {
+        background: rgba(37, 99, 235, 0.95);
+        color: #ffffff;
+        border-bottom: 2px solid #1d4ed8;
+      }
       .vs-banner-content {
         display: flex;
         align-items: center;
@@ -1075,6 +1126,12 @@ if (typeof document !== 'undefined') {
 
 const api = async (path, options = {}) => {
   const method = (options.method || 'GET').toUpperCase();
+
+  // Keep mutations disabled until the Host health check confirms availability.
+  const isReadOnlyMethod = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+  if (VSOfflineManager.currentState === VSOfflineManager.STATE_CHECKING && !isReadOnlyMethod) {
+    return Promise.reject(new Error('Host connection is still being checked. Please retry when the connection status is confirmed.'));
+  }
 
   // ADR-015: Offline Read-Only Mode enforcement
   if (VSOfflineManager.isOffline()) {
@@ -1356,20 +1413,55 @@ function setupOtpBoxes(containerSelector, onComplete) {
   };
 }
 
-function showAuthModal(type = 'otp') {
+async function showAuthModal(type = 'otp') {
   dismissSplash();
+  document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
+
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+
+  if (!isClient) {
+    if (type !== 'host-login' && type !== 'host-setup') {
+      type = 'host-login';
+    }
+  } else {
+    if (type === 'host-login' || type === 'host-setup') {
+      type = 'otp';
+    }
+  }
+
   const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
     ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
     : 'http://127.0.0.1:8768';
 
   let title = 'Verify Workstation PIN';
   let desc = 'Enter the 6-digit PIN generated by the Host PC to pair this workstation.';
-  if (type === 'register') {
-    title = 'Sign Up / Register';
-    desc = 'Create your user account and register this device to get started.';
-  } else if (type === 'login') {
-    title = 'Sign In to VS Database';
-    desc = 'Enter your credentials to access VS Database.';
+  let tabsHtml = '';
+
+  if (!isClient) {
+    title = type === 'host-setup' ? 'Master Administrator Setup' : 'Host Administrator Sign In';
+    desc = 'Authoritative Central Server & Master Database Vault';
+    tabsHtml = `
+      <button id="tab-host-login" class="${type === 'host-login' ? 'active' : ''}">Host Sign In</button>
+      <button id="tab-host-setup" class="${type === 'host-setup' ? 'active' : ''}">Master Setup / Reset</button>
+    `;
+  } else {
+    if (type === 'register') {
+      title = 'Request Workstation Access';
+      desc = 'Submit an access request to the Host PC to obtain your 6-digit pairing PIN.';
+    } else if (type === 'login') {
+      title = 'Sign In to VS Database';
+      desc = 'Enter your approved staff credentials to access VS Database.';
+    }
+    tabsHtml = `
+      <button id="tab-otp" class="${type === 'otp' ? 'active' : ''}">Pair (PIN)</button>
+      <button id="tab-register" class="${type === 'register' ? 'active' : ''}">Request Access</button>
+      <button id="tab-login" class="${type === 'login' ? 'active' : ''}">Sign In</button>
+    `;
   }
 
   authRoot.innerHTML = `
@@ -1381,26 +1473,172 @@ function showAuthModal(type = 'otp') {
           <p class="muted" style="font-size:12px;margin:0;">${desc}</p>
         </div>
         <div class="auth-tabs">
-          <button id="tab-otp" class="${type === 'otp' ? 'active' : ''}">Pair (PIN)</button>
-          <button id="tab-login" class="${type === 'login' ? 'active' : ''}">Sign In</button>
-          <button id="tab-register" class="${type === 'register' ? 'active' : ''}">Sign Up</button>
+          ${tabsHtml}
         </div>
         <div id="auth-form-body"></div>
       </div>
     </div>
   `;
 
-  document.querySelector('#tab-otp')?.addEventListener('click', () => showAuthModal('otp'));
-  document.querySelector('#tab-register')?.addEventListener('click', () => showAuthModal('register'));
-  document.querySelector('#tab-login')?.addEventListener('click', () => showAuthModal('login'));
-
-  if (type === 'otp') {
-    renderOtpPairingForm();
-  } else if (type === 'register') {
-    renderRegisterForm();
+  if (!isClient) {
+    document.querySelector('#tab-host-login')?.addEventListener('click', () => showAuthModal('host-login'));
+    document.querySelector('#tab-host-setup')?.addEventListener('click', () => showAuthModal('host-setup'));
+    if (type === 'host-setup') {
+      renderHostSetupForm();
+    } else {
+      renderHostLoginForm();
+    }
   } else {
-    renderLoginForm();
+    document.querySelector('#tab-otp')?.addEventListener('click', () => showAuthModal('otp'));
+    document.querySelector('#tab-register')?.addEventListener('click', () => showAuthModal('register'));
+    document.querySelector('#tab-login')?.addEventListener('click', () => showAuthModal('login'));
+    if (type === 'otp') {
+      renderOtpPairingForm();
+    } else if (type === 'register') {
+      renderRegisterForm();
+    } else {
+      renderLoginForm();
+    }
   }
+}
+
+function renderHostLoginForm() {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  form.innerHTML = `
+    <div style="background:rgba(238,242,255,0.7);border:1px solid #c7d2fe;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:#3730a3;">
+      👑 <strong>Host Server Console:</strong> Sign in with Master Administrator credentials to manage clients, folders, staff workstations, and database backups.
+    </div>
+    <div>
+      <label>Host Admin User ID</label>
+      <input id="host-login-user" value="Rudra_Dev" placeholder="e.g. Rudra_Dev" autofocus>
+    </div>
+    <div style="margin-top:12px;">
+      <label>Master Password</label>
+      <input id="host-login-pass" type="password" placeholder="••••••••">
+    </div>
+    <div class="actions" style="margin-top:20px;">
+      <button class="primary" id="btn-do-host-login" style="width:100%;font-weight:700;">Sign In as Host Administrator</button>
+    </div>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted);">
+      First time or forgot password? <a href="#" id="link-to-host-setup" style="color:var(--blue);font-weight:700;text-decoration:none;">Set / Reset Master Admin &rarr;</a>
+    </div>
+    <div id="auth-result"></div>
+  `;
+
+  document.querySelector('#link-to-host-setup')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('host-setup');
+  });
+
+  const doHostLogin = async () => {
+    const user_id = document.querySelector('#host-login-user')?.value.trim();
+    const password = document.querySelector('#host-login-pass')?.value;
+    const result = document.querySelector('#auth-result');
+    if (!user_id || !password) {
+      if (result) result.innerHTML = message('Please enter Master User ID and Password.', true);
+      return;
+    }
+    try {
+      if (result) result.innerHTML = message('Authenticating Host Administrator...');
+      const res = await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
+      });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
+      authRoot.innerHTML = '';
+      await load();
+    } catch (e) {
+      if (result) result.innerHTML = message(e.message, true);
+    }
+  };
+
+  document.querySelector('#btn-do-host-login')?.addEventListener('click', doHostLogin);
+  document.querySelector('#host-login-pass')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doHostLogin();
+  });
+  document.querySelector('#host-login-user')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.querySelector('#host-login-pass')?.focus();
+  });
+}
+
+function renderHostSetupForm() {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  form.innerHTML = `
+    <div style="background:rgba(238,242,255,0.7);border:1px solid #c7d2fe;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:#3730a3;">
+      🛠️ <strong>Master Administrator Setup:</strong> Configure or reset the primary master credentials for this Host server.
+    </div>
+    <div>
+      <label>Host Administrator Name</label>
+      <input id="host-setup-fullname" value="Rudraksh Sikhwal" placeholder="e.g. Rudraksh Sikhwal">
+    </div>
+    <div style="margin-top:10px;">
+      <label>Host Admin User ID</label>
+      <input id="host-setup-user" value="Rudra_Dev" placeholder="e.g. Rudra_Dev">
+    </div>
+    <div style="margin-top:10px;">
+      <label>New Master Password (min 6 characters)</label>
+      <input id="host-setup-pass" type="password" placeholder="••••••••">
+    </div>
+    <div style="margin-top:10px;">
+      <label>Confirm Master Password</label>
+      <input id="host-setup-pass-confirm" type="password" placeholder="••••••••">
+    </div>
+    <div class="actions" style="margin-top:18px;">
+      <button class="primary" id="btn-submit-host-setup" style="width:100%;font-weight:700;">Save & Activate Host Administrator</button>
+    </div>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted);">
+      Already configured? <a href="#" id="link-to-host-login" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign In here &rarr;</a>
+    </div>
+    <div id="auth-result"></div>
+  `;
+
+  document.querySelector('#link-to-host-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('host-login');
+  });
+
+  document.querySelector('#btn-submit-host-setup')?.addEventListener('click', async () => {
+    const full_name = document.querySelector('#host-setup-fullname')?.value.trim() || 'Rudraksh Sikhwal';
+    const user_id = document.querySelector('#host-setup-user')?.value.trim() || 'Rudra_Dev';
+    const password = document.querySelector('#host-setup-pass')?.value;
+    const confirm = document.querySelector('#host-setup-pass-confirm')?.value;
+    const result = document.querySelector('#auth-result');
+
+    if (!user_id || !password) {
+      if (result) result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
+    if (password.length < 6) {
+      if (result) result.innerHTML = message('Password must be at least 6 characters.', true);
+      return;
+    }
+    if (confirm && password !== confirm) {
+      if (result) result.innerHTML = message('Passwords do not match.', true);
+      return;
+    }
+
+    try {
+      if (result) result.innerHTML = message('Saving Host Master Administrator credentials...');
+      const res = await api('/api/auth/setup-host', {
+        method: 'POST',
+        body: JSON.stringify({ user_id, password, full_name, device_id: getDeviceId(), device_name: 'Host PC' })
+      });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
+      if (result) result.innerHTML = message('Host Administrator activated successfully! Loading dashboard...', false);
+      setTimeout(async () => {
+        authRoot.innerHTML = '';
+        await load();
+      }, 500);
+    } catch (e) {
+      if (result) result.innerHTML = message(e.message, true);
+    }
+  });
 }
 
 function wireHostConnectivityChecker(inputId, statusId, testBtnId) {
@@ -2449,7 +2687,7 @@ async function load() {
       if (isClient) {
         showAuthModal(authStatus.initialized ? 'login' : 'otp');
       } else {
-        showAuthModal(authStatus.initialized ? 'login' : 'register');
+        showAuthModal(authStatus.initialized ? 'host-login' : 'host-setup');
       }
       return;
     }
@@ -2746,8 +2984,8 @@ function setup() {
             </label>
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span style="font-size:13px;color:#475569;">Release Channel:</span>
-              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.0 (Production)</span>
-              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.0]</span>
+              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.1 (Production)</span>
+              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.1]</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -2968,7 +3206,8 @@ function setup() {
       updateMsg.style.display = 'block';
       updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest release...</span>';
       try {
-        const res = await api('/api/system/check-updates');
+        const curVer = window.APP_VERSION || '2.2.1';
+        const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
         window.__vsUpdateData = res;
         if (res.current_version) commitBadge.textContent = `[v${res.current_version}]`;
         if (res.update_available) {
@@ -6379,6 +6618,13 @@ async function activity() {
 }
 
 async function usersPage() {
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+
   if (!currentUser) {
     try {
       const st = await api('/api/auth/status');
@@ -6386,6 +6632,21 @@ async function usersPage() {
     } catch (_) {}
   }
   if (currentUser?.role !== 'host') {
+    if (!isClient) {
+      content.innerHTML = `
+        <div class="card" style="max-width:540px;margin:40px auto;text-align:center;padding:28px;">
+          <h2 style="margin-top:0;">Host Administrator Authentication Required</h2>
+          <p class="muted" style="margin-bottom:20px;font-size:13px;">
+            You are currently accessing from the Host PC console, but your active session (${escapeHtml(currentUser?.user_id || 'Staff')}) does not have Host Administrator authority.
+          </p>
+          <button class="primary" id="btn-switch-to-host-login" style="padding:10px 24px;font-weight:700;">Sign In as Host Administrator</button>
+        </div>
+      `;
+      document.querySelector('#btn-switch-to-host-login')?.addEventListener('click', () => {
+        showAuthModal('host-login');
+      });
+      return;
+    }
     content.innerHTML = message('Access restricted to Host administrator.', true);
     return;
   }

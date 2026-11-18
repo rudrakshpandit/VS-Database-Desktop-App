@@ -801,24 +801,32 @@ function desktopEndpointForPort(port) {
 }
 
 let cachedDesktopEndpoint = 'http://127.0.0.1:8767';
+let lastEndpointVerifiedAt = 0;
 
-async function findDesktopEndpoint(timeoutMs = 400) {
-  // 1. Ultra-fast check on cached/default 8767 endpoint (completes in 1-2ms on local loopback)
+async function findDesktopEndpoint(timeoutMs = 250) {
+  const now = Date.now();
+  // 1. Instant 0ms memory cache if verified within last 4 seconds
+  if (cachedDesktopEndpoint && (now - lastEndpointVerifiedAt < 4000)) {
+    return cachedDesktopEndpoint;
+  }
+
+  // 2. Ultra-fast 35ms loopback check on primary candidate (local loopback responds in < 2ms)
   const candidate = cachedDesktopEndpoint || 'http://127.0.0.1:8767';
   try {
     const fastResp = await fetch(`${candidate}/api/desktop/health`, {
-      signal: AbortSignal.timeout(120)
+      signal: AbortSignal.timeout(35)
     });
     if (fastResp.ok) {
       const health = await fastResp.json().catch(() => null);
       if (health && health.ok && health.service === 'VS Database Desktop') {
         cachedDesktopEndpoint = candidate;
+        lastEndpointVerifiedAt = Date.now();
         return candidate;
       }
     }
   } catch (_) {}
 
-  // 2. Fast check of stored server or fallback localhost
+  // 3. Fast check of stored server or fallback localhost
   const stored = await chrome.storage.local.get(['server']);
   let storedServer = (stored.server || '').replace(/\/$/, '');
   if (storedServer.includes(':8766')) storedServer = '';
@@ -826,11 +834,12 @@ async function findDesktopEndpoint(timeoutMs = 400) {
   const quickCandidates = [storedServer, 'http://127.0.0.1:8767', 'http://localhost:8767'].filter(Boolean);
   for (const ep of [...new Set(quickCandidates)]) {
     try {
-      const resp = await fetch(`${ep}/api/desktop/health`, { signal: AbortSignal.timeout(180) });
+      const resp = await fetch(`${ep}/api/desktop/health`, { signal: AbortSignal.timeout(60) });
       if (resp.ok) {
         const h = await resp.json().catch(() => null);
         if (h && h.ok && h.service === 'VS Database Desktop') {
           cachedDesktopEndpoint = ep;
+          lastEndpointVerifiedAt = Date.now();
           await chrome.storage.local.set({ server: ep });
           return ep;
         }
@@ -838,7 +847,7 @@ async function findDesktopEndpoint(timeoutMs = 400) {
     } catch (_) {}
   }
 
-  // 3. Fallback scan across dynamic range (8767-8799)
+  // 4. Fallback scan across dynamic range (8767-8799)
   const checks = await Promise.all(DESKTOP_PORTS.map(async p => {
     const ep = `http://127.0.0.1:${p}`;
     try {
@@ -853,6 +862,7 @@ async function findDesktopEndpoint(timeoutMs = 400) {
   const endpoint = checks.find(Boolean) || null;
   if (endpoint) {
     cachedDesktopEndpoint = endpoint;
+    lastEndpointVerifiedAt = Date.now();
     await chrome.storage.local.set({ server: endpoint });
   }
   return endpoint;
@@ -916,6 +926,68 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
     headers: { 'Content-Type': 'application/json' },
     body: '{}'
   }).catch(() => {});
+  if (originTabId) {
+    startReturnCheck(originTabId);
+  }
+
+  return { ok: true, endpoint: targetEndpoint, result: serverResult };
+}
+
+// Stream single file directly into Desktop App Staging without lock congestion
+async function stageSingleFileToDesktopApp(fileItem, originTabId = null, bringToFront = false) {
+  let targetEndpoint = await findDesktopEndpoint(250);
+  if (!targetEndpoint) {
+    if (originTabId) {
+      chrome.tabs.sendMessage(originTabId, { type: 'TRIGGER_PROTOCOL_LAUNCH' }).catch(() => {});
+    }
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      targetEndpoint = await findDesktopEndpoint(150);
+      if (targetEndpoint) break;
+    }
+  }
+
+  if (!targetEndpoint) {
+    return { ok: false, error: 'Desktop application is not running.' };
+  }
+
+  const payload = {
+    single: fileItem,
+    is_redirected: true,
+    origin_tab_id: originTabId
+  };
+
+  let serverResult = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const postRes = await fetch(`${targetEndpoint}/api/staging/incoming`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (postRes.ok) {
+        serverResult = await postRes.json();
+        break;
+      }
+    } catch (e) {
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+
+  if (!serverResult || !serverResult.success) {
+    return { ok: false, error: 'Could not deliver file to desktop app.', result: serverResult };
+  }
+
+  if (bringToFront) {
+    fetch(`${targetEndpoint}/api/desktop/bring_to_front`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    }).catch(() => {});
+    if (originTabId) {
+      startReturnCheck(originTabId);
+    }
+  }
 
   return { ok: true, endpoint: targetEndpoint, result: serverResult };
 }
@@ -937,7 +1009,15 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
       let sourceLocalPath = file?.source_local_path || file?.local_path || null;
       let b64 = file?.file_base64 || file?.base64 || message.base64 || '';
 
-      if (!b64 && downloadId) {
+      // 1. High-Performance Zero-Copy Ingestion: Check local disk first!
+      if (!sourceLocalPath && downloadId) {
+        sourceLocalPath = await waitForDownloadComplete(downloadId, 3000);
+      }
+
+      // If file exists on local disk, clear base64 payload to eliminate network and JSON encoding overhead
+      if (sourceLocalPath) {
+        b64 = '';
+      } else if (!b64 && downloadId) {
         const cap = captureCache.get(getCaptureKey(file?.url || file?.source_url, downloadId));
         if (cap) {
           try {
@@ -945,11 +1025,6 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
             if (res && res.base64) b64 = res.base64;
           } catch (_) {}
         }
-      }
-
-      // Only wait for Chrome disk write if we DO NOT already have in-memory base64
-      if (!b64 && !sourceLocalPath && downloadId) {
-        sourceLocalPath = await waitForDownloadComplete(downloadId, 60000);
       }
 
       const fileItem = {
@@ -966,24 +1041,15 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
       };
 
       const originTabId = sender.tab?.id || null;
-      const payload = {
-        files: [fileItem],
-        is_redirected: true,
-        origin_tab_id: originTabId
-      };
-
-      const sendResult = await redirectToDesktopApp(payload, originTabId);
+      const sendResult = await stageSingleFileToDesktopApp(fileItem, originTabId, true);
 
       // EXPLICIT RECEIPT ACKNOWLEDGEMENT CONTRACT:
-      // Permanently block and erase the Chrome download once server confirms staging
       if (sendResult && sendResult.ok && sendResult.result && sendResult.result.success) {
-        const stagedList = sendResult.result.files || [];
-        for (const sf of stagedList) {
-          const dlId = sf.download_id || downloadId;
-          if (dlId) {
-            cancelOrDeleteDownload(dlId);
-          }
+        if (downloadId) {
+          cancelOrDeleteDownload(downloadId);
+          captureCache.delete(`dl_${downloadId}`);
         }
+        if (file?.url) captureCache.delete(file.url);
         await chrome.storage.local.remove(['pending_detected_file', 'latest_download_detected']);
       } else {
         console.warn('[Extension] Staging was not acknowledged by desktop; preserving local download intact.');
@@ -994,7 +1060,72 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
     return true;
   }
 
-  // 4. Send Bulk Documents directly to VS Database Desktop App (No browser tab)
+  // 3b. Real-Time Sequential Single File Stager (Used by Bulk Collector to stream files one-by-one with KB progress)
+  if (message.type === 'STAGE_SINGLE_FILE') {
+    (async () => {
+      try {
+        const file = message.file || {};
+        const rawDlId = file.download_id || file.downloadId;
+        const numId = Number(rawDlId);
+        const dlId = (!isNaN(numId) && Number.isInteger(numId) && numId > 0) ? numId : null;
+
+        let sourceLocalPath = file.source_local_path || file.local_path || null;
+        let b64 = file.file_base64 || file.base64 || '';
+
+        // 1. High-Performance Zero-Copy Ingestion: Check local disk first!
+        if (!sourceLocalPath && dlId) {
+          sourceLocalPath = await waitForDownloadComplete(dlId, 3000);
+        }
+
+        // If file exists on local disk, clear base64 payload to eliminate network and JSON encoding overhead
+        if (sourceLocalPath) {
+          b64 = '';
+        } else if (!b64 && dlId) {
+          const cap = captureCache.get(getCaptureKey(file.url || file.source_url, dlId));
+          if (cap) {
+            try {
+              const res = await cap;
+              if (res && res.base64) b64 = res.base64;
+            } catch (_) {}
+          }
+        }
+
+        const fileItem = {
+          download_id: dlId,
+          id: file.id || (dlId ? `dl_${dlId}` : `file_${Date.now()}`),
+          filename: file.filename || 'document.pdf',
+          source_local_path: sourceLocalPath,
+          file_base64: b64,
+          base64: b64,
+          source_url: file.url || file.source_url || '',
+          url: file.url || '',
+          mime: file.mime || 'application/pdf',
+          size: file.size || 0
+        };
+
+        const originTabId = sender.tab?.id || null;
+        const sendResult = await stageSingleFileToDesktopApp(fileItem, originTabId, Boolean(message.is_last));
+
+        // Immediate memory and disk cleanup on confirmed receipt
+        if (sendResult && sendResult.ok && sendResult.result && sendResult.result.success) {
+          if (dlId) {
+            cancelOrDeleteDownload(dlId);
+            captureCache.delete(`dl_${dlId}`);
+          }
+          if (file.url) {
+            captureCache.delete(file.url);
+          }
+        }
+
+        sendResponse({ ok: Boolean(sendResult && sendResult.ok), result: sendResult?.result, error: sendResult?.error });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // 4. Send Bulk Documents directly to VS Database Desktop App (Streams one-by-one to prevent freezes)
   if (message.type === 'OPEN_WEBSITE_FOR_BULK_SAVE' || message.type === 'OPEN_EXTENSION_FOR_BULK_SAVE') {
     (async () => {
       try {
@@ -1007,14 +1138,24 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
           }
         }
 
-        // Resolve local disk paths across queued items only when base64 is missing
-        const enrichedFiles = await Promise.all((files || []).map(async f => {
+        const originTabId = sender.tab?.id || null;
+        let lastResult = null;
+        let successCount = 0;
+
+        for (let idx = 0; idx < files.length; idx++) {
+          const f = files[idx];
           const rawDlId = f.download_id || f.downloadId;
           const numId = Number(rawDlId);
           const dlId = (!isNaN(numId) && Number.isInteger(numId) && numId > 0) ? numId : null;
           let sourceLocalPath = f.source_local_path || f.local_path || null;
           let b64 = f.file_base64 || f.base64 || '';
-          if (!b64 && dlId) {
+
+          if (!sourceLocalPath && dlId) {
+            sourceLocalPath = await waitForDownloadComplete(dlId, 3000);
+          }
+          if (sourceLocalPath) {
+            b64 = '';
+          } else if (!b64 && dlId) {
             const cap = captureCache.get(getCaptureKey(f.url || f.source_url, dlId));
             if (cap) {
               try {
@@ -1023,13 +1164,10 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
               } catch (_) {}
             }
           }
-          if (!b64 && !sourceLocalPath && dlId) {
-            try {
-              sourceLocalPath = await waitForDownloadComplete(dlId, 60000);
-            } catch (_) {}
-          }
-          return {
+
+          const fileItem = {
             download_id: dlId,
+            id: f.id || (dlId ? `dl_${dlId}` : `file_${Date.now()}_${idx}`),
             filename: f.filename || 'document.pdf',
             source_local_path: sourceLocalPath,
             file_base64: b64,
@@ -1039,33 +1177,23 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
             mime: f.mime || 'application/pdf',
             size: f.size || 0
           };
-        }));
 
-        const originTabId = sender.tab?.id || null;
-        const payload = {
-          files: enrichedFiles,
-          is_redirected: true,
-          origin_tab_id: originTabId
-        };
-
-        const sendResult = await redirectToDesktopApp(payload, originTabId);
-
-        // EXPLICIT RECEIPT ACKNOWLEDGEMENT CONTRACT:
-        if (sendResult && sendResult.ok && sendResult.result && sendResult.result.success) {
-          const stagedList = sendResult.result.files || [];
-          for (const sf of stagedList) {
-            const numId = Number(sf.download_id);
-            if (!isNaN(numId) && numId > 0) {
-              cancelOrDeleteDownload(numId);
+          const isLast = (idx === files.length - 1);
+          const res = await stageSingleFileToDesktopApp(fileItem, originTabId, isLast);
+          if (res && res.ok && res.result && res.result.success) {
+            successCount++;
+            lastResult = res.result;
+            if (dlId) {
+              cancelOrDeleteDownload(dlId);
+              captureCache.delete(`dl_${dlId}`);
             }
+            if (f.url) captureCache.delete(f.url);
           }
-          isBulkModeActive = false;
-          await chrome.storage.local.remove(['bulk_pending_files', 'bulk_mode']);
-        } else {
-          console.warn('[Extension] Bulk staging was not acknowledged by desktop; preserving local downloads intact.');
         }
 
-        sendResponse({ ok: Boolean(sendResult && sendResult.ok), result: sendResult?.result });
+        isBulkModeActive = false;
+        await chrome.storage.local.remove(['bulk_pending_files', 'bulk_mode']);
+        sendResponse({ ok: successCount > 0, result: lastResult, count: successCount });
       } catch (err) {
         console.error('[Extension] Error in OPEN_WEBSITE_FOR_BULK_SAVE:', err);
         sendResponse({ ok: false, error: err.message });
@@ -1250,29 +1378,42 @@ try {
 // ========================================================
 // DESKTOP APP SAVE COMPLETION: AUTOMATIC RETURN TO BROWSER
 // ========================================================
-let isCheckingBrowserReturn = false;
-async function checkPendingBrowserReturn() {
-  if (isCheckingBrowserReturn) return;
-  isCheckingBrowserReturn = true;
-  try {
-    const store = await chrome.storage.local.get(['server']);
-    const serverBase = (store.server || 'http://127.0.0.1:8767').replace(/\/$/, '');
-    const resp = await fetch(`${serverBase}/api/desktop/pending_browser_return`, { signal: AbortSignal.timeout(800) });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data && data.pending && data.origin_tab_id) {
-        await chrome.tabs.update(data.origin_tab_id, { active: true }).catch(() => {});
-        const originTab = await chrome.tabs.get(data.origin_tab_id).catch(() => null);
-        if (originTab && originTab.windowId) {
-          await chrome.windows.update(originTab.windowId, { focused: true }).catch(() => {});
+// DESKTOP APP SAVE COMPLETION: ON-DEMAND RETURN TO BROWSER
+// ========================================================
+let returnCheckTimer = null;
+let returnCheckExpiresAt = 0;
+
+function startReturnCheck(originTabId, timeoutMs = 180000) {
+  if (!originTabId) return;
+  returnCheckExpiresAt = Date.now() + timeoutMs;
+  if (returnCheckTimer) return;
+
+  const poll = async () => {
+    if (Date.now() > returnCheckExpiresAt) {
+      clearInterval(returnCheckTimer);
+      returnCheckTimer = null;
+      return;
+    }
+
+    try {
+      const endpoint = cachedDesktopEndpoint || 'http://127.0.0.1:8767';
+      const resp = await fetch(`${endpoint}/api/desktop/pending_browser_return`, { signal: AbortSignal.timeout(350) });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.pending && data.origin_tab_id) {
+          clearInterval(returnCheckTimer);
+          returnCheckTimer = null;
+
+          await chrome.tabs.update(data.origin_tab_id, { active: true }).catch(() => {});
+          const originTab = await chrome.tabs.get(data.origin_tab_id).catch(() => null);
+          if (originTab && originTab.windowId) {
+            await chrome.windows.update(originTab.windowId, { focused: true }).catch(() => {});
+          }
         }
       }
-    }
-  } catch (_) {}
-  finally {
-    isCheckingBrowserReturn = false;
-  }
-}
+    } catch (_) {}
+  };
 
-setInterval(checkPendingBrowserReturn, 1500);
+  returnCheckTimer = setInterval(poll, 1000);
+}
 

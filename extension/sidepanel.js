@@ -620,10 +620,18 @@ async function saveAllDocuments() {
   const uploadPractive = $('check-practive-sync').checked;
   const savedResults = [];
 
+  const totalBytes = fileQueue.reduce((acc, f) => acc + (f.size || (f.base64 ? Math.round(f.base64.length * 0.75) : 0)), 0);
+  let transferredBytes = 0;
+
   try {
     for (let i = 0; i < fileQueue.length; i++) {
       const item = fileQueue[i];
-      btn.textContent = `Moving & Routing ${i + 1} of ${fileQueue.length}... ⏳`;
+      const thisSize = item.size || (item.base64 ? Math.round(item.base64.length * 0.75) : 0);
+      const pct = totalBytes > 0 ? Math.round((transferredBytes / totalBytes) * 100) : Math.round((i / fileQueue.length) * 100);
+
+      btn.textContent = totalBytes > 0
+        ? `Saving ${i + 1}/${fileQueue.length} (${formatBytes(transferredBytes)}/${formatBytes(totalBytes)} · ${pct}%)... ⏳`
+        : `Moving & Routing ${i + 1} of ${fileQueue.length}... ⏳`;
 
       const res = await apiCall('/api/file-router/route', {
         method: 'POST',
@@ -640,6 +648,7 @@ async function saveAllDocuments() {
         }
       });
       savedResults.push(res);
+      transferredBytes += thisSize;
     }
 
     // Clean storage & reset queue
