@@ -1,5 +1,5 @@
 
-window.APP_VERSION = '2.2.2';
+window.APP_VERSION = '2.2.3';
 
 // ==============================================================================
 // PHASE 16: REAL-TIME SYNC, RBAC, GLASS OTP & SETTINGS LOCK HELPERS
@@ -2796,8 +2796,8 @@ function showUpdateAvailableModal(res) {
   const existing = document.getElementById('vs-update-modal-overlay');
   if (existing) existing.remove();
 
-  const curVer = res.current_version || window.APP_VERSION || '2.2.1';
-  const latestVer = res.latest_version || '2.2.2';
+  const curVer = res.current_version || window.APP_VERSION || '2.2.2';
+  const latestVer = res.latest_version || '2.2.3';
 
   let notesHtml = '';
   if (res.release_notes && typeof res.release_notes === 'string' && res.release_notes.trim()) {
@@ -2820,8 +2820,8 @@ function showUpdateAvailableModal(res) {
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
 
-        <div class="vs-update-header">
-          <div class="vs-update-icon-glow">
+        <div class="vs-update-header" id="vs-update-modal-header">
+          <div class="vs-update-icon-glow" id="vs-update-icon-container">
             <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
@@ -2831,13 +2831,13 @@ function showUpdateAvailableModal(res) {
           <div>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
               <h3 id="vs-update-modal-title" class="vs-update-title">Update Available</h3>
-              <span class="vs-update-badge-pill">v${escapeHtml(latestVer)}</span>
+              <span class="vs-update-badge-pill" id="vs-update-badge-pill">v${escapeHtml(latestVer)}</span>
             </div>
-            <p class="vs-update-subtitle">A newer version of VS Database is ready to install</p>
+            <p class="vs-update-subtitle" id="vs-update-modal-subtitle">A newer version of VS Database is ready to install</p>
           </div>
         </div>
 
-        <div class="vs-update-body">
+        <div class="vs-update-body" id="vs-update-modal-body">
           <div class="vs-update-diff-bar">
             <div class="vs-update-diff-item">
               <span class="diff-lbl">Installed:</span>
@@ -2859,7 +2859,7 @@ function showUpdateAvailableModal(res) {
           <div id="vs-update-progress-area" style="display:none;"></div>
         </div>
 
-        <div class="vs-update-footer">
+        <div class="vs-update-footer" id="vs-update-modal-footer">
           <button type="button" id="btn-modal-update-later" class="btn vs-update-btn-secondary vs-update-btn-later">
             <span>Later</span>
           </button>
@@ -2875,12 +2875,29 @@ function showUpdateAvailableModal(res) {
   document.body.insertAdjacentHTML('beforeend', modalHtml);
   const overlay = document.getElementById('vs-update-modal-overlay');
   const btnClose = document.getElementById('vs-update-btn-close');
-  const btnLater = document.getElementById('btn-modal-update-later') || document.getElementById('vs-update-btn-later');
-  const btnNow = document.getElementById('btn-modal-update-now') || document.getElementById('vs-update-btn-now');
-  const progArea = document.getElementById('vs-update-progress-area');
+  const btnLater = document.getElementById('btn-modal-update-later');
+  const btnNow = document.getElementById('btn-modal-update-now');
+  const modalHeader = document.getElementById('vs-update-modal-header');
+  const modalTitle = document.getElementById('vs-update-modal-title');
+  const modalSubtitle = document.getElementById('vs-update-modal-subtitle');
+  const modalBody = document.getElementById('vs-update-modal-body');
+  const modalFooter = document.getElementById('vs-update-modal-footer');
+  const iconContainer = document.getElementById('vs-update-icon-container');
+
+  let downloadStarted = false;
+  let pollInterval = null;
+
+  const cleanupPoll = () => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  };
 
   let keyHandler = null;
   const handleLater = () => {
+    if (downloadStarted) return;
+    cleanupPoll();
     try {
       sessionStorage.setItem('vs_update_snooze_' + latestVer, 'true');
     } catch (_) {}
@@ -2898,67 +2915,230 @@ function showUpdateAvailableModal(res) {
   if (btnClose) btnClose.onclick = handleLater;
   if (btnLater) btnLater.onclick = handleLater;
 
-  if (btnNow) {
-    btnNow.onclick = async () => {
-      btnNow.disabled = true;
-      if (btnLater) btnLater.disabled = true;
-      btnNow.innerHTML = `
-        <svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px;margin-right:6px;stroke:currentColor;fill:none;animation:spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="32" stroke-linecap="round"></circle></svg>
-        <span>Downloading / Opening Installer...</span>
+  const renderDownloadError = (errText) => {
+    cleanupPoll();
+    downloadStarted = false;
+    if (modalTitle) modalTitle.textContent = 'Update Download Interrupted';
+    if (modalSubtitle) modalSubtitle.textContent = 'An error occurred while downloading the update package.';
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div class="vs-update-error-card">
+          <strong>Download Interrupted</strong>
+          <p>${escapeHtml(errText || 'Failed to download update package from server.')}</p>
+        </div>
       `;
+    }
+    if (modalFooter) {
+      modalFooter.style.display = 'flex';
+      modalFooter.innerHTML = `
+        <button type="button" id="btn-modal-update-retry" class="btn p vs-update-btn-primary">
+          <span>Retry Download</span>
+        </button>
+        <button type="button" id="btn-modal-update-close-err" class="btn vs-update-btn-secondary">
+          <span>Close</span>
+        </button>
+      `;
+      const retryBtn = document.getElementById('btn-modal-update-retry');
+      const closeErrBtn = document.getElementById('btn-modal-update-close-err');
+      if (retryBtn) retryBtn.onclick = () => startDownloadFlow();
+      if (closeErrBtn) closeErrBtn.onclick = () => {
+        dismissUpdateModal();
+      };
+    }
+    if (btnClose) btnClose.style.display = 'flex';
+  };
 
-      let isClient = false;
-      try {
-        if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
-          isClient = await window.TauriBridge.isClientMode();
-        } else if (window.__vsIsClientMode !== undefined) {
-          isClient = !!window.__vsIsClientMode;
-        }
-      } catch (_) {}
+  const renderRestartView = (prog) => {
+    cleanupPoll();
+    downloadStarted = false;
 
-      const rawDl = isClient
-        ? (res.client_download_url || res.lan_client_download_url || res.html_url)
-        : (res.host_download_url || res.lan_host_download_url || res.html_url);
-      const dlUrl = resolveDownloadUrl(rawDl);
+    // Header transformation with green success accent
+    if (iconContainer) {
+      iconContainer.className = 'vs-update-icon-glow vs-glow-success';
+      iconContainer.innerHTML = `
+        <svg viewBox="0 0 24 24" width="28" height="28" stroke="#10b981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      `;
+    }
+    if (modalTitle) modalTitle.textContent = '🎉 Update Download Complete!';
+    if (modalSubtitle) modalSubtitle.textContent = `VS Database v${escapeHtml(latestVer)} has finished downloading. A restart is required.`;
 
-      if (progArea) {
-        progArea.style.display = 'block';
-        progArea.innerHTML = `
-          <div class="vs-update-launch-card">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-              <span class="vs-pulse-dot"></span>
-              <strong style="color:#0f172a;font-size:13px;">Installer is downloading & launching...</strong>
-            </div>
-            <p style="margin:0 0 8px 0;font-size:12px;color:#475569;line-height:1.45;">
-              The installer package has been triggered. You can close VS Database at any time to proceed with the update installation.
-            </p>
-            <div style="font-size:11.5px;color:#64748b;">
-              If setup does not launch automatically, <a href="${escapeHtml(dlUrl)}" target="_blank" style="color:#4f46e5;font-weight:700;text-decoration:underline;">click here to download manually</a>.
+    // Modal Body transformation
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div class="vs-update-complete-card">
+          <div class="vs-update-complete-msg">
+            <strong>Update Ready to Install</strong>
+            <p>VS Database has finished downloading the update. A quick restart is required to install and apply the new version.</p>
+          </div>
+          <div class="vs-update-progress-bar-wrap">
+            <div class="vs-update-progress-track">
+              <div class="vs-update-progress-fill vs-fill-complete" style="width: 100%;"></div>
             </div>
           </div>
-        `;
-      }
+          <div class="vs-update-complete-badge-row">
+            <span class="vs-update-ready-pill">✅ Package Ready</span>
+            <span class="vs-update-version-target">Target: v${escapeHtml(latestVer)}</span>
+          </div>
+        </div>
+      `;
+    }
 
-      if (dlUrl) {
-        if (window.TauriBridge && typeof window.TauriBridge.openPath === 'function') {
+    // Modal Footer transformation - ONLY ONE BUTTON with "Yes" option
+    if (modalFooter) {
+      modalFooter.style.display = 'flex';
+      modalFooter.innerHTML = `
+        <button type="button" id="btn-modal-restart-now" class="btn p vs-update-btn-primary" style="width:100%;font-size:15px;padding:12px 24px;">
+          <span>🚀 Restart & Apply Update</span>
+        </button>
+      `;
+
+      const btnRestart = document.getElementById('btn-modal-restart-now');
+      if (btnRestart) {
+        btnRestart.onclick = async () => {
+          btnRestart.disabled = true;
+          btnRestart.innerHTML = `
+            <span class="vs-spinner" style="width:16px;height:16px;display:inline-block;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:vsSpin 0.8s linear infinite;margin-right:8px;vertical-align:middle;"></span>
+            <span>Restarting Application...</span>
+          `;
+
+          const installerPath = (prog && prog.installer_path) || res.installer_path || '';
           try {
-            await window.TauriBridge.openPath(dlUrl);
-          } catch (_) {
-            window.open(dlUrl, '_blank');
+            await api('/api/system/execute-update-restart', {
+              method: 'POST',
+              body: JSON.stringify({ installer_path: installerPath })
+            });
+          } catch (e) {
+            console.warn('[Execute Update Restart Error]:', e);
           }
-        } else {
-          window.open(dlUrl, '_blank');
-        }
-      }
 
-      if (btnLater) {
-        btnLater.disabled = false;
-        btnLater.textContent = 'Close Dialog';
-        btnLater.onclick = () => dismissUpdateModal();
+          if (window.TauriBridge && typeof window.TauriBridge.closeApp === 'function') {
+            await window.TauriBridge.closeApp();
+          } else {
+            try { window.close(); } catch (_) {}
+          }
+        };
       }
-      btnNow.disabled = false;
-      btnNow.innerHTML = `<span>Installer Launched</span>`;
-    };
+    }
+
+    // Ensure close button (X) is hidden in completed state
+    if (btnClose) btnClose.style.display = 'none';
+  };
+
+  const startDownloadFlow = async () => {
+    downloadStarted = true;
+    if (btnClose) btnClose.style.display = 'none';
+
+    // Hide footer buttons during download
+    if (modalFooter) modalFooter.style.display = 'none';
+
+    // Update Header
+    if (modalTitle) modalTitle.textContent = 'Downloading Update...';
+    if (modalSubtitle) modalSubtitle.textContent = 'Please keep VS Database open while the update package is retrieved.';
+
+    // Switch to Real-Time Progress View
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div class="vs-update-progress-view">
+          <div class="vs-update-progress-status-badge">
+            <span class="vs-update-pulse-ring"></span>
+            <span id="vs-update-status-indicator">Downloading VS Database v${escapeHtml(latestVer)} package...</span>
+          </div>
+          <div class="vs-update-progress-bar-wrap">
+            <div class="vs-update-progress-track">
+              <div class="vs-update-progress-fill" id="vs-update-progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+          <div class="vs-update-progress-info-row">
+            <div class="vs-update-percentage" id="vs-update-percentage-text">0%</div>
+            <div class="vs-update-stats-label" id="vs-update-stats-text">Downloaded: 0 MB / -- MB (0 KB/s)</div>
+          </div>
+          <p class="vs-update-progress-hint">Downloading package directly to cache. Once downloaded, you will be prompted to restart.</p>
+          <div id="vs-update-progress-area" style="display:none;"></div>
+        </div>
+      `;
+    }
+
+    let isClient = false;
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+        isClient = await window.TauriBridge.isClientMode();
+      } else if (window.__vsIsClientMode !== undefined) {
+        isClient = !!window.__vsIsClientMode;
+      }
+    } catch (_) {}
+
+    try {
+      await api('/api/system/start-update-download', {
+        method: 'POST',
+        body: JSON.stringify({
+          version: latestVer,
+          product: isClient ? 'client' : 'host'
+        })
+      });
+    } catch (startErr) {
+      console.error('[Start Update Download Error]:', startErr);
+      renderDownloadError(startErr.message || 'Could not initiate download from server.');
+      return;
+    }
+
+    // Start polling every 300ms
+    cleanupPoll();
+    pollInterval = setInterval(async () => {
+      try {
+        const prog = await api('/api/system/update-progress');
+        if (!prog) return;
+
+        if (prog.status === 'error') {
+          renderDownloadError(prog.error || 'Server reported download failure.');
+          return;
+        }
+
+        const pct = Math.min(100, Math.max(0, typeof prog.percentage === 'number' ? prog.percentage : parseFloat(prog.percentage) || 0));
+        const fillEl = document.getElementById('vs-update-progress-fill');
+        const pctEl = document.getElementById('vs-update-percentage-text');
+        const statsEl = document.getElementById('vs-update-stats-text');
+
+        if (fillEl) fillEl.style.width = pct + '%';
+        if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+        if (statsEl) {
+          let dlStr = '0 MB';
+          let totStr = '-- MB';
+          if (prog.downloaded_mb !== undefined && prog.total_mb !== undefined) {
+            dlStr = `${prog.downloaded_mb} MB`;
+            totStr = `${prog.total_mb} MB`;
+          } else if (prog.downloaded_bytes !== undefined && prog.total_bytes !== undefined) {
+            dlStr = `${(prog.downloaded_bytes / (1024 * 1024)).toFixed(1)} MB`;
+            totStr = `${(prog.total_bytes / (1024 * 1024)).toFixed(1)} MB`;
+          }
+          let speed = prog.speed_str;
+          if (!speed && prog.speed_kbps !== undefined) {
+            speed = prog.speed_kbps > 1024
+              ? `${(prog.speed_kbps / 1024).toFixed(1)} MB/s`
+              : `${Math.round(prog.speed_kbps)} KB/s`;
+          }
+          if (!speed) speed = '0 KB/s';
+          statsEl.textContent = `Downloaded: ${dlStr} / ${totStr} (${speed})`;
+        }
+
+        if (prog.status === 'complete' || pct >= 100) {
+          if (fillEl) {
+            fillEl.style.width = '100%';
+            fillEl.classList.add('vs-fill-complete');
+          }
+          if (pctEl) pctEl.textContent = '100%';
+          renderRestartView(prog);
+        }
+      } catch (pollErr) {
+        console.warn('[Update Progress Poll Warning]:', pollErr);
+      }
+    }, 300);
+  };
+
+  if (btnNow) {
+    btnNow.onclick = () => startDownloadFlow();
   }
 }
 
@@ -2967,7 +3147,7 @@ function showUpdateAvailableModal(res) {
  * @param {boolean} isManual - true if initiated by the user in Settings
  */
 async function checkForAppUpdates(isManual = false) {
-  const curVer = window.APP_VERSION || '2.2.1';
+  const curVer = window.APP_VERSION || '2.2.2';
   try {
     const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
     window.__vsUpdateData = res;
@@ -3019,6 +3199,9 @@ async function load() {
       } else {
         showAuthModal(authStatus.initialized ? 'host-login' : 'host-setup');
       }
+      setTimeout(() => {
+        checkForAppUpdates(false);
+      }, 1500);
       return;
     }
     if (authStatus.session_token || authStatus.token) {
@@ -3089,7 +3272,7 @@ async function load() {
     // Check for updates automatically when app initializes / loads dashboard (non-blocking)
     setTimeout(() => {
       checkForAppUpdates(false);
-    }, 2000);
+    }, 1500);
   } catch (e) {
     console.error('[Load Error]:', e);
     window.__vsDashboardRendered = false;
@@ -3331,8 +3514,8 @@ function setup() {
             </label>
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span style="font-size:13px;color:#475569;">Release Channel:</span>
-              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.2 (Production)</span>
-              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.2]</span>
+              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.3 (Production)</span>
+              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.3]</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -3557,7 +3740,7 @@ function setup() {
       updateMsg.style.display = 'block';
       updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest release...</span>';
       try {
-        const curVer = window.APP_VERSION || '2.2.1';
+        const curVer = window.APP_VERSION || '2.2.3';
         const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
         window.__vsUpdateData = res;
         if (res.current_version) commitBadge.textContent = `[v${res.current_version}]`;
@@ -3595,51 +3778,9 @@ function setup() {
   }
 
   if (btnApplyUpdate) {
-    btnApplyUpdate.onclick = async () => {
-      btnApplyUpdate.disabled = true;
-      if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = true;
-      btnApplyUpdate.textContent = 'Preparing Installer...';
-      const uData = window.__vsUpdateData || {};
-      let isClient = false;
-      try {
-        if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
-          isClient = await window.TauriBridge.isClientMode();
-        } else if (window.__vsIsClientMode !== undefined) {
-          isClient = !!window.__vsIsClientMode;
-        }
-      } catch (_) {}
-
-      const rawDl = isClient ? (uData.client_download_url || uData.lan_client_download_url || uData.html_url) : (uData.host_download_url || uData.lan_host_download_url || uData.html_url);
-      const dlUrl = resolveDownloadUrl(rawDl);
-      if (dlUrl) {
-        updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">Downloading & launching installer... <a href="${dlUrl}" target="_blank" style="color:var(--pc);text-decoration:underline;">Click here to download manually if it does not start automatically</a>. You may close VS Database to proceed with installation.</span>`;
-        if (window.TauriBridge && typeof window.TauriBridge.openPath === 'function') {
-          try { await window.TauriBridge.openPath(dlUrl); } catch (_) { window.open(dlUrl, '_blank'); }
-        } else {
-          window.open(dlUrl, '_blank');
-        }
-        btnApplyUpdate.disabled = false;
-        if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = false;
-        btnApplyUpdate.textContent = 'Update Now';
-        return;
-      }
-
-      updateMsg.innerHTML = '<span style="color:#64748b;">Applying update from repository...</span>';
-      try {
-        const res = await api('/api/system/apply-update', { method: 'POST', body: '{}' });
-        if (res.ok) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>Update successful! Reloading application...</span>`;
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(res.error || 'Unknown error')}</span>`;
-          btnApplyUpdate.disabled = false;
-          if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = false;
-        }
-      } catch (err) {
-        updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(err.message)}</span>`;
-        btnApplyUpdate.disabled = false;
-        if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = false;
-      }
+    btnApplyUpdate.onclick = () => {
+      const uData = window.__vsUpdateData || { update_available: true };
+      showUpdateAvailableModal(uData);
     };
   }
 

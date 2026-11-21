@@ -89,9 +89,9 @@ def test_license_file():
     print(f"Line 3: {line_3}")
     print(f"Line 4: {line_4}")
     
-    assert "Software:         VS Database, Version 2.2.2" in lines[2], f"Line 3 does not match expected version 2.2.2: '{lines[2]}'"
+    assert "Software:         VS Database, Version 2.2.3" in lines[2], f"Line 3 does not match expected version 2.2.3: '{lines[2]}'"
     assert "2026" in line_4 and "Copyright" in line_4, f"Line 4 does not state Copyright 2026: '{line_4}'"
-    print("✓ PASS: License file correctly states 'Software: VS Database, Version 2.2.2', Copyright 2026.")
+    print("✓ PASS: License file correctly states 'Software: VS Database, Version 2.2.3', Copyright 2026.")
 
 if __name__ == "__main__":
     test_backend_direct_calls()

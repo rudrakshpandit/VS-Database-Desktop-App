@@ -23,6 +23,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -5009,7 +5010,7 @@ def get_github_auth_token():
 
 def check_for_system_updates(client_ver=None):
     """Checks whether a new version is available on GitHub."""
-    current_version = client_ver if client_ver else "2.2.2"
+    current_version = client_ver if client_ver else "2.2.3"
     repo = "rudrakshpandit/VS-Database-Host-and-Client"
     try:
         url = f"https://api.github.com/repos/{repo}/releases/latest"
@@ -5080,6 +5081,211 @@ def apply_system_update():
         return {"ok": True, "message": f"Successfully updated to {new_sha}!", "commit": new_sha}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+_update_download_lock = threading.Lock()
+_update_download_state = {
+    "status": "idle",       # "idle", "downloading", "complete", "error"
+    "percentage": 0,
+    "downloaded_bytes": 0,
+    "total_bytes": 0,
+    "speed_kbps": 0.0,
+    "target_version": "",
+    "installer_path": "",
+    "error": None
+}
+
+
+def get_update_download_state():
+    """Returns a snapshot of the current update download progress state."""
+    with _update_download_lock:
+        return dict(_update_download_state)
+
+
+def start_background_update_download(target_ver=None, product="host"):
+    """Downloads the target update package asynchronously in chunks with progress tracking."""
+    prod = "client" if str(product).strip().lower() == "client" else "host"
+    target_word = "Client" if prod == "client" else "Host"
+    target_ver_str = str(target_ver).strip() if target_ver else ""
+
+    with _update_download_lock:
+        if _update_download_state["status"] == "downloading":
+            return {"ok": True, "status": "downloading", "message": "Download already in progress"}
+        _update_download_state.update({
+            "status": "downloading",
+            "percentage": 0,
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "speed_kbps": 0.0,
+            "target_version": target_ver_str,
+            "installer_path": "",
+            "error": None
+        })
+
+    def _worker():
+        try:
+            temp_dir = Path(tempfile.gettempdir())
+            ver_label = target_ver_str or "latest"
+            dest_file = temp_dir / f"VS_Database_{prod}_{ver_label}_setup.exe"
+
+            app_root = Path(__file__).resolve().parent
+            local_candidates = [
+                app_root / "Build_Latest" / f"VS.Database.{target_word}.Setup.exe",
+                app_root / "Build_Latest" / f"VS Database {target_word} Setup.exe",
+                app_root / f"VS.Database.{target_word}.Setup.exe",
+                app_root / f"VS Database {target_word} Setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS.Database.{target_word}.Setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {target_word} Setup.exe",
+            ]
+            if target_ver_str:
+                clean_v = target_ver_str.lstrip("v")
+                local_candidates.append(app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {target_word}_{clean_v}_x64-setup.exe")
+                local_candidates.append(app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS.Database.{target_word}_{clean_v}_x64-setup.exe")
+
+            src_stream = None
+            total_size = 0
+            is_local = False
+
+            # 1. Check GitHub Release asset
+            try:
+                repo = "rudrakshpandit/VS-Database-Host-and-Client"
+                gh_token = get_github_auth_token()
+                tag = f"v{target_ver_str.lstrip('v')}" if target_ver_str else None
+                rel_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}" if tag else f"https://api.github.com/repos/{repo}/releases/latest"
+                rel_headers = {"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"}
+                if gh_token:
+                    rel_headers["Authorization"] = f"token {gh_token}"
+                req = urllib.request.Request(rel_url, headers=rel_headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    rel_data = json.loads(resp.read().decode())
+
+                assets = rel_data.get("assets", [])
+                asset = next((a for a in assets if target_word.lower() in a.get("name", "").lower() and a.get("name", "").endswith(".exe")), None)
+                if asset:
+                    dl_headers = {"User-Agent": "VS-Database-App"}
+                    target_url = asset.get("browser_download_url") or asset.get("url")
+                    if gh_token and "api.github.com" in target_url:
+                        dl_headers["Accept"] = "application/octet-stream"
+                        dl_headers["Authorization"] = f"token {gh_token}"
+                    dl_req = urllib.request.Request(target_url, headers=dl_headers)
+                    src_stream = urllib.request.urlopen(dl_req, timeout=30)
+                    cl = src_stream.headers.get("Content-Length")
+                    if cl and cl.isdigit():
+                        total_size = int(cl)
+                    else:
+                        total_size = int(asset.get("size", 0))
+            except Exception as net_exc:
+                logging.info(f"[Update Engine] Remote release lookup note: {net_exc}")
+                src_stream = None
+
+            # 2. Fallback to local build candidate if remote not available or offline
+            if src_stream is None:
+                local_path = next((p for p in local_candidates if p.is_file()), None)
+                if local_path:
+                    total_size = local_path.stat().st_size
+                    src_stream = open(str(local_path), "rb")
+                    is_local = True
+                else:
+                    raise FileNotFoundError(f"Update installer for {target_word} not found on GitHub or in local build directories.")
+
+            # 3. Stream chunks and track progress
+            chunk_size = 128 * 1024  # 128KB chunks
+            downloaded = 0
+            start_time = time.time()
+            last_speed_time = start_time
+            last_downloaded = 0
+            current_speed = 0.0
+
+            try:
+                with open(str(dest_file), "wb") as out_f:
+                    while True:
+                        chunk = src_stream.read(chunk_size)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        downloaded += len(chunk)
+
+                        now_t = time.time()
+                        dt = now_t - last_speed_time
+                        if dt >= 0.15:
+                            current_speed = ((downloaded - last_downloaded) / 1024.0) / max(dt, 0.001)
+                            last_speed_time = now_t
+                            last_downloaded = downloaded
+
+                        pct = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                        pct = min(100, max(0, pct))
+
+                        with _update_download_lock:
+                            _update_download_state["percentage"] = pct
+                            _update_download_state["downloaded_bytes"] = downloaded
+                            _update_download_state["total_bytes"] = total_size or downloaded
+                            _update_download_state["speed_kbps"] = round(current_speed, 1)
+
+                        if is_local:
+                            time.sleep(0.001)  # tiny yield for realistic UI progression
+            finally:
+                if hasattr(src_stream, "close"):
+                    src_stream.close()
+
+            with _update_download_lock:
+                _update_download_state["status"] = "complete"
+                _update_download_state["percentage"] = 100
+                _update_download_state["downloaded_bytes"] = downloaded
+                _update_download_state["total_bytes"] = total_size or downloaded
+                _update_download_state["speed_kbps"] = 0.0
+                _update_download_state["installer_path"] = str(dest_file)
+                _update_download_state["error"] = None
+
+        except Exception as exc:
+            logging.exception(f"[Update Engine] Download failed: {exc}")
+            with _update_download_lock:
+                _update_download_state["status"] = "error"
+                _update_download_state["error"] = str(exc)
+                _update_download_state["speed_kbps"] = 0.0
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return {"ok": True, "status": "downloading"}
+
+
+def execute_restart_update(installer_path=None):
+    """Executes the downloaded installer detached and gracefully restarts application."""
+    if not installer_path:
+        with _update_download_lock:
+            installer_path = _update_download_state.get("installer_path")
+
+    if not installer_path or not os.path.isfile(installer_path):
+        raise FileNotFoundError(f"Update installer not found at '{installer_path}'")
+
+    inst_path = os.path.abspath(installer_path)
+    temp_dir = Path(tempfile.gettempdir())
+    runner_bat = temp_dir / f"vs_update_restart_{int(time.time())}.bat"
+
+    bat_content = f"""@echo off
+timeout /t 2 /nobreak >nul
+start "" "{inst_path}"
+"""
+    runner_bat.write_text(bat_content, encoding="utf-8")
+
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(runner_bat)],
+        creationflags=creationflags,
+        close_fds=True,
+        shell=False
+    )
+
+    def _terminate():
+        if os.environ.get("VS_TEST_NO_EXIT") == "1":
+            return
+        time.sleep(1.0)
+        os._exit(0)
+
+    threading.Thread(target=_terminate, daemon=True).start()
+    return {"ok": True, "message": "Restarting application...", "installer_path": inst_path}
 
 
 # ==============================================================================
@@ -7340,6 +7546,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/auth/extension-direct-connect",
             "/api/system/check-updates",
             "/api/system/download-update",
+            "/api/system/start-update-download",
+            "/api/system/update-progress",
+            "/api/system/execute-update-restart",
             "/api/system/browse-folder",
             "/api/clients/sample-template",
             "/api/google/callback",
@@ -7888,14 +8097,22 @@ class Handler(BaseHTTPRequestHandler):
             c_ver = query_params.get("version", [None])[0]
             return self.send_json(check_for_system_updates(client_ver=c_ver))
 
+        if path == "/api/system/update-progress":
+            return self.send_json(get_update_download_state())
+
         if path == "/api/system/download-update":
             query_params = parse_qs(urlparse(self.path).query)
             prod = query_params.get("product", ["client"])[0].lower()
             fname = "VS Database Client Setup.exe" if prod == "client" else "VS Database Host Setup.exe"
+            dot_fname = f"VS.Database.{'Client' if prod == 'client' else 'Host'}.Setup.exe"
             app_root = Path(__file__).resolve().parent
             candidates = [
+                app_root / "Build_Latest" / fname,
+                app_root / "Build_Latest" / dot_fname,
                 app_root / fname,
+                app_root / dot_fname,
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / dot_fname,
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.2_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.1_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.0_x64-setup.exe",
@@ -7908,6 +8125,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
                 self.send_header("Content-Length", str(fsize))
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                self.send_cors_headers()
                 self.end_headers()
                 with open(str(fpath), "rb") as f:
                     try:
@@ -7941,6 +8160,8 @@ class Handler(BaseHTTPRequestHandler):
                         cl = dl_resp.headers.get("Content-Length")
                         if cl:
                             self.send_header("Content-Length", cl)
+                        self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                        self.send_cors_headers()
                         self.end_headers()
                         shutil.copyfileobj(dl_resp, self.wfile)
                     return
@@ -9701,6 +9922,20 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/system/apply-update":
                 return self.send_json(apply_system_update())
+
+            if path == "/api/system/start-update-download":
+                target_ver = payload.get("version")
+                product = payload.get("product", "host")
+                res = start_background_update_download(target_ver=target_ver, product=product)
+                return self.send_json(res)
+
+            if path == "/api/system/execute-update-restart":
+                installer_path = payload.get("installer_path")
+                try:
+                    res = execute_restart_update(installer_path=installer_path)
+                    return self.send_json(res)
+                except Exception as exc:
+                    return self.send_json({"ok": False, "error": str(exc)}, 400)
 
             if path == "/api/system/autostart":
                 app_autostart = bool(payload.get("app_autostart", False))
