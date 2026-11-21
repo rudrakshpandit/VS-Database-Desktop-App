@@ -94,6 +94,43 @@
         visibility: hidden;
         pointer-events: none;
       }
+      @keyframes vs-skeleton-shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
+      .vs-skeleton {
+        background: linear-gradient(90deg, rgba(226, 232, 240, 0.5) 20%, rgba(255, 255, 255, 0.9) 50%, rgba(226, 232, 240, 0.5) 80%);
+        background-size: 200% 100%;
+        animation: vs-skeleton-shimmer 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        border-radius: 8px;
+        display: inline-block;
+        vertical-align: middle;
+      }
+      .vs-skeleton-card {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(14px) saturate(140%);
+        -webkit-backdrop-filter: blur(14px) saturate(140%);
+        border: 1px solid rgba(255, 255, 255, 0.85);
+        border-radius: 22px;
+        padding: 20px 22px;
+        box-shadow: 0 4px 16px rgba(90, 70, 160, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+      }
+      .vs-skeleton-stat {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px) saturate(130%);
+        -webkit-backdrop-filter: blur(12px) saturate(130%);
+        border: 1px solid rgba(255, 255, 255, 0.85);
+        height: 82px;
+        border-radius: 16px;
+        padding: 16px;
+        box-sizing: border-box;
+        box-shadow: 0 4px 16px rgba(90, 70, 160, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+      }
+      .vs-dashboard-skeleton {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
     </style>
 
     <!-- Design Tokens & Local Stylesheets (Prioritized before external network fonts) -->
@@ -265,7 +302,7 @@
             <button data-page="users" id="nav-users"><svg class="i" aria-hidden="true"><use href="#users"/></svg><span>Users & Devices</span></button>
         </nav>
 
-        <footer class="side-foot">v2.2.3 · Designed by Rudraksh Sikhwal</footer>
+        <footer class="side-foot">v2.2.4 · Designed by Rudraksh Sikhwal</footer>
     </aside>
 
     <!-- Main Workspace Container -->
@@ -296,8 +333,128 @@
             </div>
         </header>
 
-        <!-- Dynamic Content View -->
-        <main class="view" id="content"></main>
+        <!-- Dynamic Content View (Pre-populated with Glassmorphic Skeleton Shimmer) -->
+        <main class="view" id="content">
+            <div class="vs-dashboard-skeleton" style="display:flex;flex-direction:column;gap:16px;animation:fadeIn 0.25s ease;">
+                <!-- Skeleton Search Bar -->
+                <div class="vs-skeleton" style="width:100%;height:46px;border-radius:14px;"></div>
+
+                <!-- Skeleton 5 Stats Grid -->
+                <div class="grid5">
+                    <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+                        <div class="vs-skeleton" style="width:50%;height:12px;border-radius:6px;"></div>
+                        <div class="vs-skeleton" style="width:40%;height:26px;border-radius:8px;"></div>
+                    </div>
+                    <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+                        <div class="vs-skeleton" style="width:52%;height:12px;border-radius:6px;"></div>
+                        <div class="vs-skeleton" style="width:38%;height:26px;border-radius:8px;"></div>
+                    </div>
+                    <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+                        <div class="vs-skeleton" style="width:45%;height:12px;border-radius:6px;"></div>
+                        <div class="vs-skeleton" style="width:42%;height:26px;border-radius:8px;"></div>
+                    </div>
+                    <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+                        <div class="vs-skeleton" style="width:60%;height:12px;border-radius:6px;"></div>
+                        <div class="vs-skeleton" style="width:36%;height:26px;border-radius:8px;"></div>
+                    </div>
+                    <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+                        <div class="vs-skeleton" style="width:55%;height:12px;border-radius:6px;"></div>
+                        <div class="vs-skeleton" style="width:32%;height:26px;border-radius:8px;"></div>
+                    </div>
+                </div>
+
+                <!-- Skeleton Quick Actions Row (Default Host: 6 Actions) -->
+                <div class="row vs-skeleton-actions" style="flex-wrap:wrap;gap:8px;">
+                    <div class="vs-skeleton" style="width:115px;height:38px;border-radius:10px;"></div>
+                    <div class="vs-skeleton" style="width:105px;height:38px;border-radius:10px;"></div>
+                    <div class="vs-skeleton vs-skeleton-btn-primary" style="width:170px;height:38px;border-radius:10px;border:1.5px solid var(--pc, #4f46e5);box-sizing:border-box;"></div>
+                    <div class="vs-skeleton" style="width:130px;height:38px;border-radius:10px;"></div>
+                    <div class="vs-skeleton" style="width:145px;height:38px;border-radius:10px;"></div>
+                    <div class="vs-skeleton" style="width:95px;height:38px;border-radius:10px;"></div>
+                </div>
+
+                <!-- Skeleton 2-Column: Activity & Storage -->
+                <div class="two">
+                    <!-- Column 1: Recent Activity Card -->
+                    <section class="glass card vs-skeleton-card" style="display:flex;flex-direction:column;margin-bottom:0;">
+                        <div class="row" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <div class="vs-skeleton vs-skeleton-circle" style="width:20px;height:20px;border-radius:50%;"></div>
+                                <div class="vs-skeleton" style="width:130px;height:18px;border-radius:6px;"></div>
+                            </div>
+                            <div class="vs-skeleton" style="width:75px;height:28px;border-radius:8px;"></div>
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+                            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+                                <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+                                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                                    <div class="vs-skeleton" style="width:65%;height:13px;border-radius:6px;"></div>
+                                    <div class="vs-skeleton" style="width:38%;height:10px;border-radius:5px;"></div>
+                                </div>
+                                <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+                                <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+                                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                                    <div class="vs-skeleton" style="width:70%;height:13px;border-radius:6px;"></div>
+                                    <div class="vs-skeleton" style="width:45%;height:10px;border-radius:5px;"></div>
+                                </div>
+                                <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+                                <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+                                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                                    <div class="vs-skeleton" style="width:58%;height:13px;border-radius:6px;"></div>
+                                    <div class="vs-skeleton" style="width:32%;height:10px;border-radius:5px;"></div>
+                                </div>
+                                <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
+                                <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+                                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                                    <div class="vs-skeleton" style="width:62%;height:13px;border-radius:6px;"></div>
+                                    <div class="vs-skeleton" style="width:40%;height:10px;border-radius:5px;"></div>
+                                </div>
+                                <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Column 2: Storage Card -->
+                    <section class="glass card vs-skeleton-card" style="display:flex;flex-direction:column;margin-bottom:0;">
+                        <div class="row" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <div class="vs-skeleton vs-skeleton-circle" style="width:20px;height:20px;border-radius:50%;"></div>
+                                <div class="vs-skeleton" style="width:80px;height:18px;border-radius:6px;"></div>
+                            </div>
+                            <div class="vs-skeleton vs-skeleton-pill" style="width:110px;height:22px;border-radius:999px;"></div>
+                        </div>
+
+                        <!-- Local disk section -->
+                        <div style="margin-bottom:14px;">
+                            <div class="row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <div class="vs-skeleton" style="width:75px;height:14px;border-radius:6px;"></div>
+                                <div class="vs-skeleton vs-skeleton-pill" style="width:58px;height:20px;border-radius:999px;"></div>
+                            </div>
+                            <div class="vs-skeleton vs-skeleton-pill" style="width:100%;height:10px;border-radius:999px;margin-bottom:10px;"></div>
+                            <div class="vs-skeleton" style="width:85%;height:11px;border-radius:5px;margin-bottom:4px;"></div>
+                            <div class="vs-skeleton" style="width:65%;height:11px;border-radius:5px;"></div>
+                        </div>
+
+                        <!-- Google Drive section -->
+                        <div style="border-top:1px solid rgba(226,232,240,0.5);padding-top:14px;">
+                            <div class="row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <div class="vs-skeleton" style="width:90px;height:14px;border-radius:6px;"></div>
+                                <div class="vs-skeleton vs-skeleton-pill" style="width:70px;height:20px;border-radius:999px;"></div>
+                            </div>
+                            <div class="vs-skeleton vs-skeleton-pill" style="width:100%;height:10px;border-radius:999px;margin-bottom:10px;"></div>
+                            <div class="vs-skeleton" style="width:75%;height:11px;border-radius:5px;margin-bottom:4px;"></div>
+                            <div class="vs-skeleton" style="width:55%;height:11px;border-radius:5px;"></div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </main>
     </div>
 </div>
 

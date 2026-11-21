@@ -1,5 +1,5 @@
 
-window.APP_VERSION = '2.2.3';
+window.APP_VERSION = '2.2.4';
 
 // ==============================================================================
 // PHASE 16: REAL-TIME SYNC, RBAC, GLASS OTP & SETTINGS LOCK HELPERS
@@ -573,6 +573,10 @@ const VSOfflineManager = {
       this.currentState = this.STATE_CHECKING;
       this.lockdownMutations();
       this.showCheckingBanner();
+      const contentEl = document.querySelector('#content');
+      if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+        renderSkeletonLoader(true);
+      }
     }
     this.startHeartbeat(isClient);
     console.log('[OfflineManager] Initialized. Monitoring Host reachability...');
@@ -599,6 +603,13 @@ const VSOfflineManager = {
   async checkHeartbeat() {
     if (this.currentState === this.STATE_REVOKED || this.heartbeatInFlight) return;
     this.heartbeatInFlight = true;
+
+    if (this.currentState === this.STATE_CHECKING) {
+      const contentEl = document.querySelector('#content');
+      if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+        renderSkeletonLoader(true);
+      }
+    }
 
     const healthUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
       ? window.TauriBridge.resolveApiUrl('/api/health')
@@ -931,6 +942,21 @@ const VSOfflineManager = {
     });
   },
 
+  setHostChecking(isChecking) {
+    if (isChecking) {
+      this.currentState = this.STATE_CHECKING;
+      this.lockdownMutations();
+      this.showCheckingBanner();
+      const contentEl = document.querySelector('#content');
+      if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+        renderSkeletonLoader(true);
+      }
+    } else {
+      this.hideBanners();
+      this.unlockMutations();
+    }
+  },
+
   showCheckingBanner() {
     let banner = document.getElementById('vs-offline-banner');
     if (!banner) {
@@ -949,6 +975,11 @@ const VSOfflineManager = {
     banner.style.top = '38px';
     banner.style.zIndex = '99990';
     banner.style.display = 'block';
+
+    const contentEl = document.querySelector('#content');
+    if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+      renderSkeletonLoader(true);
+    }
   },
 
   showOfflineBanner() {
@@ -2683,43 +2714,48 @@ async function waitForBackend(maxWaitMs = 15000, intervalMs = 350) {
   return false;
 }
 
-function renderSkeletonLoader() {
-  const contentEl = document.querySelector('#content');
-  if (!contentEl) return;
-  contentEl.innerHTML = `
-    <div class="vs-dashboard-skeleton" style="padding:4px 0;animation:fadeIn 0.25s ease;">
+function getSkeletonHtml(isClientMode) {
+  let isClient = false;
+  if (typeof isClientMode === 'boolean') {
+    isClient = isClientMode;
+  } else if (typeof window !== 'undefined' && window.__vsIsClientMode === true) {
+    isClient = true;
+  }
+
+  return `
+    <div class="vs-dashboard-skeleton" style="display:flex;flex-direction:column;gap:16px;animation:fadeIn 0.25s ease;">
       <!-- Skeleton Search Bar -->
-      <div class="vs-skeleton" style="width:100%;height:46px;border-radius:14px;margin-bottom:16px;"></div>
+      <div class="vs-skeleton" style="width:100%;height:46px;border-radius:14px;"></div>
 
       <!-- Skeleton 5 Stats Grid -->
-      <div class="grid5" style="margin-bottom:16px;">
-        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+      <div class="grid5">
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
           <div class="vs-skeleton" style="width:50%;height:12px;border-radius:6px;"></div>
-          <div class="vs-skeleton" style="width:40%;height:28px;border-radius:8px;"></div>
+          <div class="vs-skeleton" style="width:40%;height:26px;border-radius:8px;"></div>
         </div>
-        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
-          <div class="vs-skeleton" style="width:50%;height:12px;border-radius:6px;"></div>
-          <div class="vs-skeleton" style="width:40%;height:28px;border-radius:8px;"></div>
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:52%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:38%;height:26px;border-radius:8px;"></div>
         </div>
-        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
           <div class="vs-skeleton" style="width:45%;height:12px;border-radius:6px;"></div>
-          <div class="vs-skeleton" style="width:50%;height:28px;border-radius:8px;"></div>
+          <div class="vs-skeleton" style="width:42%;height:26px;border-radius:8px;"></div>
         </div>
-        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
           <div class="vs-skeleton" style="width:60%;height:12px;border-radius:6px;"></div>
-          <div class="vs-skeleton" style="width:40%;height:28px;border-radius:8px;"></div>
+          <div class="vs-skeleton" style="width:36%;height:26px;border-radius:8px;"></div>
         </div>
-        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
-          <div class="vs-skeleton" style="width:65%;height:12px;border-radius:6px;"></div>
-          <div class="vs-skeleton" style="width:30%;height:28px;border-radius:8px;"></div>
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:55%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:32%;height:26px;border-radius:8px;"></div>
         </div>
       </div>
 
       <!-- Skeleton Quick Actions Row -->
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
+      <div class="row vs-skeleton-actions" style="flex-wrap:wrap;gap:8px;">
         <div class="vs-skeleton" style="width:115px;height:38px;border-radius:10px;"></div>
         <div class="vs-skeleton" style="width:105px;height:38px;border-radius:10px;"></div>
-        <div class="vs-skeleton" style="width:170px;height:38px;border-radius:10px;"></div>
+        ${!isClient ? '<div class="vs-skeleton vs-skeleton-btn-primary" style="width:170px;height:38px;border-radius:10px;border:1.5px solid var(--pc, #4f46e5);box-sizing:border-box;"></div>' : ''}
         <div class="vs-skeleton" style="width:130px;height:38px;border-radius:10px;"></div>
         <div class="vs-skeleton" style="width:145px;height:38px;border-radius:10px;"></div>
         <div class="vs-skeleton" style="width:95px;height:38px;border-radius:10px;"></div>
@@ -2727,35 +2763,121 @@ function renderSkeletonLoader() {
 
       <!-- Skeleton 2-Column: Activity & Storage -->
       <div class="two">
-        <div class="vs-skeleton-card" style="min-height:300px;display:flex;flex-direction:column;gap:14px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div class="vs-skeleton" style="width:35%;height:20px;border-radius:8px;"></div>
-            <div class="vs-skeleton" style="width:65px;height:24px;border-radius:6px;"></div>
+        <!-- Column 1: Recent Activity Card -->
+        <section class="glass card vs-skeleton-card" style="display:flex;flex-direction:column;margin-bottom:0;">
+          <div class="row" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:20px;height:20px;border-radius:50%;"></div>
+              <div class="vs-skeleton" style="width:130px;height:18px;border-radius:6px;"></div>
+            </div>
+            <div class="vs-skeleton" style="width:75px;height:28px;border-radius:8px;"></div>
           </div>
-          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;margin-top:4px;"></div>
-          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;"></div>
-          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;"></div>
-          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;"></div>
-        </div>
-        <div class="vs-skeleton-card" style="min-height:300px;display:flex;flex-direction:column;gap:16px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div class="vs-skeleton" style="width:30%;height:20px;border-radius:8px;"></div>
-            <div class="vs-skeleton" style="width:100px;height:24px;border-radius:999px;"></div>
+          <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:65%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:38%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:70%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:45%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:58%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:32%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:62%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:40%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
           </div>
-          <div>
-            <div class="vs-skeleton" style="width:40%;height:14px;border-radius:6px;margin-bottom:8px;"></div>
-            <div class="vs-skeleton" style="width:100%;height:10px;border-radius:999px;margin-bottom:8px;"></div>
-            <div class="vs-skeleton" style="width:70%;height:12px;border-radius:6px;"></div>
+        </section>
+
+        <!-- Column 2: Storage Card -->
+        <section class="glass card vs-skeleton-card" style="display:flex;flex-direction:column;margin-bottom:0;">
+          <div class="row" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:20px;height:20px;border-radius:50%;"></div>
+              <div class="vs-skeleton" style="width:80px;height:18px;border-radius:6px;"></div>
+            </div>
+            <div class="vs-skeleton vs-skeleton-pill" style="width:110px;height:22px;border-radius:999px;"></div>
           </div>
-          <div style="border-top:1px solid rgba(226,232,240,0.6);padding-top:14px;">
-            <div class="vs-skeleton" style="width:45%;height:14px;border-radius:6px;margin-bottom:8px;"></div>
-            <div class="vs-skeleton" style="width:100%;height:10px;border-radius:999px;margin-bottom:8px;"></div>
-            <div class="vs-skeleton" style="width:60%;height:12px;border-radius:6px;"></div>
+
+          <!-- Local disk section -->
+          <div style="margin-bottom:14px;">
+            <div class="row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div class="vs-skeleton" style="width:75px;height:14px;border-radius:6px;"></div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:58px;height:20px;border-radius:999px;"></div>
+            </div>
+            <div class="vs-skeleton vs-skeleton-pill" style="width:100%;height:10px;border-radius:999px;margin-bottom:10px;"></div>
+            <div class="vs-skeleton" style="width:85%;height:11px;border-radius:5px;margin-bottom:4px;"></div>
+            <div class="vs-skeleton" style="width:65%;height:11px;border-radius:5px;"></div>
           </div>
-        </div>
+
+          <!-- Google Drive section -->
+          <div style="border-top:1px solid rgba(226,232,240,0.5);padding-top:14px;">
+            <div class="row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div class="vs-skeleton" style="width:90px;height:14px;border-radius:6px;"></div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:70px;height:20px;border-radius:999px;"></div>
+            </div>
+            <div class="vs-skeleton vs-skeleton-pill" style="width:100%;height:10px;border-radius:999px;margin-bottom:10px;"></div>
+            <div class="vs-skeleton" style="width:75%;height:11px;border-radius:5px;margin-bottom:4px;"></div>
+            <div class="vs-skeleton" style="width:55%;height:11px;border-radius:5px;"></div>
+          </div>
+        </section>
       </div>
     </div>
   `;
+}
+
+function renderSkeletonLoader(isClientMode) {
+  const contentEl = document.querySelector('#content');
+  if (!contentEl) return;
+  let isClient = false;
+  if (typeof isClientMode === 'boolean') {
+    isClient = isClientMode;
+  } else if (typeof window !== 'undefined' && window.__vsIsClientMode === true) {
+    isClient = true;
+  }
+  contentEl.innerHTML = getSkeletonHtml(isClient);
+}
+
+function setHostChecking(isChecking) {
+  window.__vsHostChecking = !!isChecking;
+  if (isChecking) {
+    if (typeof VSOfflineManager !== 'undefined' && typeof VSOfflineManager.showCheckingBanner === 'function') {
+      VSOfflineManager.showCheckingBanner();
+    }
+    const contentEl = document.querySelector('#content');
+    if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+      renderSkeletonLoader(true);
+    }
+  } else {
+    if (typeof VSOfflineManager !== 'undefined' && typeof VSOfflineManager.hideBanners === 'function') {
+      VSOfflineManager.hideBanners();
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.renderSkeletonLoader = renderSkeletonLoader;
+  window.getSkeletonHtml = getSkeletonHtml;
+  window.setHostChecking = setHostChecking;
 }
 
 // ==============================================================================
@@ -2796,8 +2918,8 @@ function showUpdateAvailableModal(res) {
   const existing = document.getElementById('vs-update-modal-overlay');
   if (existing) existing.remove();
 
-  const curVer = res.current_version || window.APP_VERSION || '2.2.2';
-  const latestVer = res.latest_version || '2.2.3';
+  const curVer = res.current_version || window.APP_VERSION || '2.2.4';
+  const latestVer = res.latest_version || '2.2.4';
 
   let notesHtml = '';
   if (res.release_notes && typeof res.release_notes === 'string' && res.release_notes.trim()) {
@@ -3147,7 +3269,7 @@ function showUpdateAvailableModal(res) {
  * @param {boolean} isManual - true if initiated by the user in Settings
  */
 async function checkForAppUpdates(isManual = false) {
-  const curVer = window.APP_VERSION || '2.2.2';
+  const curVer = window.APP_VERSION || '2.2.4';
   try {
     const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
     window.__vsUpdateData = res;
@@ -3182,6 +3304,9 @@ async function load() {
     }
   } catch (_) {}
   window.__vsIsClientMode = isClient;
+
+  // Immediately render pixel-perfect skeleton screen matching detected mode (Host vs Client)
+  renderSkeletonLoader(isClient);
 
   // If in Host mode, wait for backend to be ready (prevents startup race condition)
   if (!isClient) {
@@ -3235,7 +3360,7 @@ async function load() {
       navUsersBtn.style.display = (!isClient && currentUser?.role === 'host') ? 'flex' : 'none';
     }
 
-    renderSkeletonLoader();
+    renderSkeletonLoader(isClient);
 
     try { settings = await api('/api/settings'); } catch (_) { settings = {}; }
     try { clients = await api('/api/clients'); } catch (_) { clients = []; }
@@ -3514,8 +3639,8 @@ function setup() {
             </label>
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span style="font-size:13px;color:#475569;">Release Channel:</span>
-              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.3 (Production)</span>
-              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.3]</span>
+              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.4 (Production)</span>
+              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.4]</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -3740,7 +3865,7 @@ function setup() {
       updateMsg.style.display = 'block';
       updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest release...</span>';
       try {
-        const curVer = window.APP_VERSION || '2.2.3';
+        const curVer = window.APP_VERSION || '2.2.4';
         const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
         window.__vsUpdateData = res;
         if (res.current_version) commitBadge.textContent = `[v${res.current_version}]`;
@@ -7855,6 +7980,7 @@ var escapeHtml = window.escapeHtml || (value => String(value || '').replace(/[&<
    ========================================================================== */
 
 async function dashboard() {
+  const hadSkeleton = !!document.querySelector('.vs-dashboard-skeleton');
   content.innerHTML = `
     <!-- Prominent Global Search Bar -->
     <label class="field" style="margin-bottom:16px;">
@@ -7960,6 +8086,12 @@ async function dashboard() {
       </section>
     </div>
   `;
+
+  if (hadSkeleton && content) {
+    content.classList.remove('tab-enter');
+    void content.offsetWidth;
+    content.classList.add('tab-enter');
+  }
 
   attachDashboardEvents();
   loadDashboardData();
