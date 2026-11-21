@@ -31,6 +31,9 @@
                      window.location.hash === '#save' ||
                      window.location.hash === '#save-files';
           document.documentElement.classList.add(skip ? 'vs-boot-skip' : 'vs-booting');
+          if (localStorage.getItem('vs_sidebar_collapsed') === 'true') {
+            document.documentElement.classList.add('vs-sidebar-collapsed');
+          }
         } catch (e) {
           document.documentElement.classList.add('vs-booting');
         }
@@ -236,27 +239,40 @@
 <!-- Main Application Shell -->
 <div class="app">
     <!-- Left Glass Sidebar -->
-    <aside class="glass side">
-        <div class="brand">
-            <img src="logo.png" alt="VS Database" class="vs-logo-img">
+    <aside class="glass side" id="app-sidebar">
+        <div class="side-header">
+            <div class="brand">
+                <img src="logo.png" alt="VS Database" class="vs-logo-img vs-logo-full">
+                <img src="logo Monogram.png" alt="VS Database" class="vs-logo-img vs-logo-monogram">
+            </div>
+            <button id="sidebar-toggle-btn" class="sidebar-toggle-btn" title="Collapse sidebar (Ctrl+B)" aria-label="Toggle sidebar" aria-expanded="true">
+                <svg class="sidebar-toggle-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                    <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                    <path d="M9 3v18"></path>
+                    <path class="sidebar-toggle-arrow" d="M16 15l-3-3 3-3"></path>
+                </svg>
+            </button>
         </div>
         
         <nav id="main-nav" aria-label="Main">
-            <button class="active" data-page="dashboard"><svg class="i" aria-hidden="true"><use href="#dashboard"/></svg><span>Dashboard</span></button>
-            <button data-page="clients"><svg class="i" aria-hidden="true"><use href="#clients"/></svg><span>Clients</span></button>
-            <button data-page="folders"><svg class="i" aria-hidden="true"><use href="#folder"/></svg><span>Folder Structure</span></button>
-            <button data-page="save"><svg class="i" aria-hidden="true"><use href="#upload"/></svg><span>Save Files</span></button>
-            <button data-page="pdf-studio" id="nav-pdf-studio" class="btn-studio" title="Studio"><svg class="i" aria-hidden="true"><use href="#studio"/></svg><span>Studio</span></button>
-            <button data-page="vs-ai" id="nav-vs-ai" class="btn-vs-ai" title="VS AI"><svg class="i" aria-hidden="true"><use href="#ai"/></svg><span>VS AI</span></button>
-            <button data-page="drive"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Drive Sharing</span></button>
-            <button data-page="backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg><span>Backup & Restore</span></button>
-            <button data-page="automation" id="nav-automation" class="btn-automation" title="Automation"><svg class="i" aria-hidden="true"><use href="#automation"/></svg><span>Automation</span></button>
-            <button data-page="activity"><svg class="i" aria-hidden="true"><use href="#activity"/></svg><span>Activity</span></button>
-            <button data-page="setup"><svg class="i" aria-hidden="true"><use href="#setup"/></svg><span>Setup</span></button>
-            <button data-page="users" id="nav-users" style="display:none"><svg class="i" aria-hidden="true"><use href="#users"/></svg><span>Users & Devices</span></button>
+            <button class="active" data-page="dashboard" title="Dashboard" data-t="Dashboard"><svg class="i" aria-hidden="true"><use href="#dashboard"/></svg><span>Dashboard</span></button>
+            <button data-page="clients" title="Clients" data-t="Clients"><svg class="i" aria-hidden="true"><use href="#clients"/></svg><span>Clients</span></button>
+            <button data-page="folders" title="Folder Structure" data-t="Folder Structure"><svg class="i" aria-hidden="true"><use href="#folder"/></svg><span>Folder Structure</span></button>
+            <button data-page="save" title="Save Files" data-t="Save Files"><svg class="i" aria-hidden="true"><use href="#upload"/></svg><span>Save Files</span></button>
+            <button data-page="pdf-studio" id="nav-pdf-studio" class="btn-studio" title="Studio" data-t="Studio"><svg class="i" aria-hidden="true"><use href="#studio"/></svg><span>Studio</span></button>
+            <button data-page="vs-ai" id="nav-vs-ai" class="btn-vs-ai" title="VS AI" data-t="VS AI"><svg class="i" aria-hidden="true"><use href="#ai"/></svg><span>VS AI</span></button>
+            <button data-page="drive" title="Drive Sharing" data-t="Drive Sharing"><svg class="i" aria-hidden="true"><use href="#drive"/></svg><span>Drive Sharing</span></button>
+            <button data-page="backup" title="Backup & Restore" data-t="Backup & Restore"><svg class="i" aria-hidden="true"><use href="#backup"/></svg><span>Backup & Restore</span></button>
+            <button data-page="automation" id="nav-automation" class="btn-automation" title="Automation" data-t="Automation"><svg class="i" aria-hidden="true"><use href="#automation"/></svg><span>Automation</span></button>
+            <button data-page="activity" title="Activity" data-t="Activity"><svg class="i" aria-hidden="true"><use href="#activity"/></svg><span>Activity</span></button>
+            <button data-page="setup" title="Setup" data-t="Setup"><svg class="i" aria-hidden="true"><use href="#setup"/></svg><span>Setup</span></button>
+            <button data-page="users" id="nav-users" title="Users & Devices" data-t="Users & Devices" style="display:none"><svg class="i" aria-hidden="true"><use href="#users"/></svg><span>Users & Devices</span></button>
         </nav>
 
-        <footer class="side-foot">v1.0.1 · Designed by Rudraksh Sikhwal</footer>
+        <footer class="side-foot">
+            <span class="side-foot-full">v2.2.5 · Designed by Rudraksh Sikhwal</span>
+            <span class="side-foot-collapsed" title="v2.2.5 · Designed by Rudraksh Sikhwal">v2.2</span>
+        </footer>
     </aside>
 
     <!-- Main Workspace Container -->

@@ -1041,6 +1041,92 @@ function initDesktopWindowControls() {
   initExitModal();
 }
 
+function initSidebarCollapse() {
+  const toggleBtn = document.getElementById('sidebar-toggle-btn');
+  const app = document.querySelector('.app');
+  const monogram = document.querySelector('.vs-logo-monogram');
+
+  function applyState(collapsed, save = true) {
+    const targetApp = document.querySelector('.app');
+    if (targetApp) {
+      targetApp.classList.toggle('sidebar-collapsed', collapsed);
+    }
+    document.documentElement.classList.toggle('vs-sidebar-collapsed', collapsed);
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
+
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      toggleBtn.title = collapsed ? 'Expand sidebar (Ctrl+B)' : 'Collapse sidebar (Ctrl+B)';
+      toggleBtn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    }
+
+    if (save) {
+      try {
+        localStorage.setItem('vs_sidebar_collapsed', collapsed ? 'true' : 'false');
+      } catch (err) {}
+    }
+
+    // Trigger window resize event so responsive cards and sub-engines fluidly adapt
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 250);
+  }
+
+  // Restore state from localStorage ('vs_sidebar_collapsed')
+  let isCollapsed = false;
+  try {
+    isCollapsed = localStorage.getItem('vs_sidebar_collapsed') === 'true';
+  } catch (err) {}
+
+  if (isCollapsed) {
+    applyState(true, false);
+  }
+
+  if (toggleBtn) {
+    toggleBtn.onclick = (e) => {
+      e.stopPropagation();
+      const current = document.querySelector('.app')?.classList.contains('sidebar-collapsed') || false;
+      applyState(!current, true);
+    };
+  }
+
+  if (monogram) {
+    monogram.style.cursor = 'pointer';
+    monogram.setAttribute('title', 'Expand sidebar');
+    monogram.onclick = (e) => {
+      e.stopPropagation();
+      const current = document.querySelector('.app')?.classList.contains('sidebar-collapsed') || false;
+      if (current) {
+        applyState(false, true);
+      }
+    };
+  }
+
+  window.toggleSidebar = (force) => {
+    const current = document.querySelector('.app')?.classList.contains('sidebar-collapsed') || false;
+    const next = typeof force === 'boolean' ? force : !current;
+    applyState(next, true);
+  };
+
+  // Keyboard shortcut Ctrl+B / Cmd+B
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+      const active = document.activeElement;
+      const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+      if (!isInput || active.readOnly) {
+        e.preventDefault();
+        window.toggleSidebar();
+      }
+    }
+  });
+}
+
+if (document.readyState !== 'loading') {
+  initSidebarCollapse();
+} else {
+  document.addEventListener('DOMContentLoaded', initSidebarCollapse);
+}
+
 window.addEventListener('pywebviewready', () => {
   if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
     window.pywebview.api.is_maximized().then(res => {
@@ -1053,6 +1139,7 @@ window.addEventListener('pywebviewready', () => {
 
 async function load() {
   initDesktopWindowControls();
+  initSidebarCollapse();
   initDailyStartupVideo();
   try {
     const authStatus = await api('/api/auth/status');

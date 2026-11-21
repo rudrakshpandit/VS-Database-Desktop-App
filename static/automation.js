@@ -81,7 +81,9 @@
     }
     const askTag = document.querySelector('#auto-ask-tally-tag');
     if (askTag) {
-      askTag.textContent = tallyStatus.tally_port_open ? '● Connector Online' : '○ Requires Tally XML Port 9000';
+      askTag.innerHTML = tallyStatus.tally_port_open 
+        ? '<span style="display:inline-flex;align-items:center;gap:5px;"><span class="auto-status-dot"></span> Connector Online</span>' 
+        : '<span style="display:inline-flex;align-items:center;gap:5px;"><span class="auto-status-dot offline"></span> Requires Tally XML Port 9000</span>';
     }
 
     const launchBtn = document.querySelector('#auto-btn-launch-tally');
@@ -139,7 +141,7 @@
             compSelect.value = activeCompany;
           }
           if (compNotice) {
-            compNotice.innerHTML = `<span style="color:var(--pos, #10b981);font-weight:500;">✓ Detected ${availableCompanies.length} open company in TallyPrime.</span>`;
+            compNotice.innerHTML = `<span style="color:var(--pos, #15803d);font-weight:500;display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>Detected ${availableCompanies.length} open company in TallyPrime.</span>`;
           }
           await refreshBankAccountsDropdown(document.querySelector('#auto-workspace-body'), activeCompany);
           showNativeToast(`Detected ${availableCompanies.length} open company in TallyPrime!`, 'success');
@@ -201,16 +203,16 @@
             </div>
           </div>
           <div style="display:flex;gap:10px;align-items:center;">
-            <button type="button" class="btn primary" id="auto-btn-launch-tally" style="display:${(tallyStatus.tally_installed && !tallyStatus.tally_port_open) ? 'inline-flex' : 'none'};font-size:12.5px;padding:6px 12px;align-items:center;gap:5px;">
-              🚀 Open TallyPrime
+            <button type="button" class="btn primary" id="auto-btn-launch-tally" style="display:${(tallyStatus.tally_installed && !tallyStatus.tally_port_open) ? 'inline-flex' : 'none'};font-size:12.5px;padding:6px 12px;align-items:center;gap:6px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open TallyPrime
             </button>
             ${currentSubTab !== 'landing' ? `
-              <button type="button" class="btn secondary" id="auto-btn-back-landing">
-                ← Back to Automation
+              <button type="button" class="btn secondary" id="auto-btn-back-landing" style="font-size:12.5px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Back to Automation
               </button>
             ` : ''}
-            <button type="button" class="btn secondary" id="auto-btn-refresh-conn">
-              <svg class="i" style="width:14px;height:14px;"><use href="#refresh"/></svg> Refresh Status
+            <button type="button" class="btn secondary" id="auto-btn-refresh-conn" style="font-size:12.5px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>Refresh Status
             </button>
           </div>
         </div>
@@ -259,24 +261,29 @@
         <div class="auto-feature-card">
           <div>
             <div class="auto-feature-top">
-              <div class="auto-feature-icon">🏦</div>
+              <div class="auto-feature-icon">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;">
+                  <path d="M3 21h18M3 10h18M5 10v11M9 10v11M15 10v11M19 10v11M12 3l9 7H3z"/>
+                </svg>
+              </div>
               <div class="auto-feature-meta">
                 <h3>Bank Statement to ${tallyLogo()}</h3>
                 <p>Convert PDF, Excel (.xlsx/.xls), CSV, or XML statements into validated Tally vouchers. Search, filter, bulk assign ledgers, and post directly to TallyPrime.</p>
               </div>
             </div>
-            <div style="font-size:12px;color:var(--tx2);display:flex;flex-direction:column;gap:4px;margin-bottom:16px;">
-              <span>• Decimal precision & deterministic reconciliation balance check</span>
-              <span>• Reusable company-specific mapping rules & continuous learning</span>
-              <span>• VS AI multi-tier ledger suggestions with toggle approval</span>
+            <div style="font-size:12px;color:var(--tx2);display:flex;flex-direction:column;gap:5px;margin-bottom:16px;">
+              <span>Decimal precision and deterministic reconciliation balance check</span>
+              <span>Reusable company-specific mapping rules with continuous learning</span>
+              <span>VS AI multi-tier ledger suggestions with toggle approval</span>
             </div>
           </div>
           <div class="auto-feature-action">
-            <span style="font-size:12px;font-weight:600;color:${currentSessionId ? '#2563eb' : 'var(--tx2)'};">
-              ${currentSessionId ? '● In-progress import active' : 'Ready to import'}
+            <span style="font-size:12px;font-weight:500;color:${currentSessionId ? 'var(--tx)' : 'var(--tx2)'};">
+              ${currentSessionId ? 'In-progress import active' : 'Ready to import'}
             </span>
-            <button type="button" class="btn primary" id="auto-btn-start-import">
-              ${currentSessionId ? 'Resume Import' : 'Get Started'} →
+            <button type="button" class="btn primary" id="auto-btn-start-import" style="display:inline-flex;align-items:center;gap:6px;">
+              ${currentSessionId ? 'Resume Import' : 'Get Started'}
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
           </div>
         </div>
@@ -285,24 +292,29 @@
         <div class="auto-feature-card ask-tally">
           <div>
             <div class="auto-feature-top">
-              <div class="auto-feature-icon">💬</div>
+              <div class="auto-feature-icon">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+              </div>
               <div class="auto-feature-meta">
                 <h3>Ask ${tallyLogo()}</h3>
                 <p>Natural language accounting intelligence grounded entirely in live Tally data. Inspect Trial Balance, Ledger Balances, P&L, and Outstandings without hallucination.</p>
               </div>
             </div>
-            <div style="font-size:12px;color:var(--tx2);display:flex;flex-direction:column;gap:4px;margin-bottom:16px;">
-              <span>• Read-only safety guardrails (No unconfirmed writes)</span>
-              <span>• Reuses configured VS AI engine & credentials</span>
-              <span>• Direct tabular & breakdown financial presentation</span>
+            <div style="font-size:12px;color:var(--tx2);display:flex;flex-direction:column;gap:5px;margin-bottom:16px;">
+              <span>Read-only safety guardrails (No unconfirmed writes)</span>
+              <span>Reuses configured VS AI engine and credentials</span>
+              <span>Direct tabular and breakdown financial presentation</span>
             </div>
           </div>
           <div class="auto-feature-action">
-            <span style="font-size:12px;font-weight:600;color:var(--tx2);" id="auto-ask-tally-tag">
-              ${tallyStatus.tally_port_open ? '● Connector Online' : '○ Requires Tally XML Port 9000'}
+            <span style="font-size:12px;font-weight:500;color:var(--tx2);" id="auto-ask-tally-tag">
+              ${tallyStatus.tally_port_open ? '<span style="display:inline-flex;align-items:center;gap:5px;"><span class="auto-status-dot"></span> Connector Online</span>' : '<span style="display:inline-flex;align-items:center;gap:5px;"><span class="auto-status-dot offline"></span> Requires Tally XML Port 9000</span>'}
             </span>
-            <button type="button" class="btn primary" id="auto-btn-open-ask-tally">
-              Open Ask Tally →
+            <button type="button" class="btn primary" id="auto-btn-open-ask-tally" style="display:inline-flex;align-items:center;gap:6px;">
+              Open Ask Tally
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
           </div>
         </div>
@@ -440,6 +452,12 @@
       selectedBankLedger = 'Bank Account';
       if (hintEl) hintEl.textContent = `Could not query Tally bank accounts: ${e.message}`;
     }
+
+    if (selectEl._glassDropdown) {
+      selectEl._glassDropdown.rebuild();
+    } else if (window.GlassUI && window.GlassUI.createDropdown) {
+      window.GlassUI.createDropdown(selectEl);
+    }
   }
 
   // STEP 1: Select Company & Bank Ledger
@@ -460,10 +478,10 @@
               <label style="font-weight:600;margin:0;">Tally Company *</label>
               <div style="display:flex;gap:6px;align-items:center;">
                 <button type="button" class="btn secondary" id="auto-step1-btn-launch-tally" style="font-size:11.5px;padding:3px 8px;display:${(tallyStatus.tally_installed && !tallyStatus.tally_port_open) ? 'inline-flex' : 'none'};align-items:center;gap:4px;">
-                  🚀 Open Tally
+                  <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;margin-right:2px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Tally
                 </button>
                 <button type="button" class="btn secondary" id="auto-step1-btn-refresh-companies" style="font-size:11.5px;padding:3px 8px;display:inline-flex;align-items:center;gap:4px;">
-                  <svg class="i" style="width:12px;height:12px;"><use href="#refresh"/></svg> Refresh
+                  <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg> Refresh
                 </button>
               </div>
             </div>
@@ -475,10 +493,10 @@
             </select>
             <div id="auto-company-detect-notice" style="font-size:11.5px;margin-top:4px;">
               ${availableCompanies.length 
-                ? `<span style="color:var(--pos, #10b981);font-weight:500;">✓ Detected ${availableCompanies.length} open company in TallyPrime.</span>` 
+                ? `<span style="color:var(--pos, #15803d);font-weight:500;display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>Detected ${availableCompanies.length} open company in TallyPrime.</span>` 
                 : (tallyStatus.tally_port_open 
-                  ? `<span style="color:var(--warn, #f59e0b);">Tally XML server is running, but no company is currently open. Please open your company in TallyPrime and click Refresh.</span>` 
-                  : `<span style="color:var(--neg, #ef4444);">Tally XML server is offline (Port 9000). Start TallyPrime and ensure XML server is enabled.</span>`)}
+                  ? `<span style="color:var(--warn, #b45309);">Tally XML server is running, but no company is currently open. Please open your company in TallyPrime and click Refresh.</span>` 
+                  : `<span style="color:var(--neg, #b91c1c);">Tally XML server is offline (Port 9000). Start TallyPrime and ensure XML server is enabled.</span>`)}
             </div>
           </div>
           <div class="auto-form-group" style="flex:1;">
@@ -507,8 +525,9 @@
         </div>
 
         <div style="display:flex;justify-content:flex-end;margin-top:10px;">
-          <button type="button" class="btn primary" id="auto-step1-next">
-            Continue to Upload Statement →
+          <button type="button" class="btn primary" id="auto-step1-next" style="display:inline-flex;align-items:center;gap:6px;">
+            Continue to Upload Statement
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
         </div>
       </div>
@@ -574,28 +593,39 @@
       importStep = 2;
       renderAutomationWorkspace();
     });
+
+    if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+      window.GlassUI.enhanceAllSelects(container);
+    }
   }
 
   // STEP 2: Upload Bank Statement
   function renderStep2(container) {
     container.innerHTML = `
       <div class="auto-panel-card">
-        <h3 style="margin:0;font-size:17px;font-weight:700;">Step 2: Upload Bank Statement File</h3>
+        <h3 style="margin:0;font-size:16px;font-weight:600;">Step 2: Upload Bank Statement File</h3>
         <p style="margin:0;font-size:13px;color:var(--tx2);">Supported formats: PDF, Excel (.xlsx/.xls), CSV, XML</p>
 
         <div class="auto-dropzone" id="auto-statement-dropzone">
-          <div style="font-size:38px;">📥</div>
-          <div style="font-weight:700;font-size:15px;color:var(--tx);">Drag & Drop your bank statement here</div>
+          <div style="margin-bottom:8px;">
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px;">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+          </div>
+          <div style="font-weight:600;font-size:14px;color:var(--tx);">Drag & drop your bank statement here</div>
           <div style="font-size:12.5px;color:var(--tx2);">or click to browse files from your computer</div>
           <input type="file" id="auto-statement-file-input" accept=".pdf,.xlsx,.xls,.csv,.xml" style="display:none;">
         </div>
 
-        <div id="auto-upload-progress" style="display:none;font-size:13px;color:#2563eb;font-weight:600;text-align:center;">
+        <div id="auto-upload-progress" style="display:none;font-size:13px;color:var(--tx);font-weight:500;text-align:center;">
           Parsing statement and extracting transactions...
         </div>
 
         <div style="display:flex;justify-content:space-between;margin-top:10px;">
-          <button type="button" class="btn secondary" id="auto-step2-back">← Back</button>
+          <button type="button" class="btn secondary" id="auto-step2-back" style="display:inline-flex;align-items:center;gap:6px;">
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Back
+          </button>
         </div>
       </div>
     `;
@@ -710,48 +740,48 @@
     container.innerHTML = `
       <div class="auto-panel-card" style="padding:18px;">
         <!-- Statement Health Banner -->
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;background:rgba(255,255,255,0.7);padding:10px 16px;border-radius:var(--r-md);border:1px solid var(--bd);">
-          <div style="display:flex;gap:16px;font-size:12.5px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;background:#f8fafc;padding:10px 16px;border-radius:8px;border:1px solid rgba(15,23,42,0.08);">
+          <div style="display:flex;gap:16px;font-size:12.5px;flex-wrap:wrap;font-variant-numeric:tabular-nums;font-feature-settings:'tnum';">
             <span>Transactions: <b>${sessionTransactions.length}</b></span>
             <span>Debits (Payments): <b>₹${formatCurrency(currentSessionData?.total_debits)}</b></span>
             <span>Credits (Receipts): <b>₹${formatCurrency(currentSessionData?.total_credits)}</b></span>
-            <span>Assigned: <b style="color:#047857;">${assignedCount}</b></span>
-            <span>AI Assigned: <b style="color:#4338ca;">${aiAssignedCount}</b></span>
-            <span>Unassigned: <b style="color:${unassignedCount > 0 ? '#b91c1c' : '#047857'};">${unassignedCount}</b></span>
+            <span>Assigned: <b style="color:#15803d;">${assignedCount}</b></span>
+            <span>AI Assigned: <b style="color:var(--tx);">${aiAssignedCount}</b></span>
+            <span>Unassigned: <b style="color:${unassignedCount > 0 ? '#b91c1c' : '#15803d'};">${unassignedCount}</b></span>
           </div>
-          <div style="font-size:12px;font-weight:600;">
-            Reconciliation: <span class="auto-badge ${currentSessionData?.reconciliation_status === 'verified' ? 'high' : 'medium'}">${currentSessionData?.reconciliation_status === 'verified' ? '✓ Reconciled (0 Diff)' : 'Difference: ₹' + formatCurrency(diff)}</span>
+          <div style="font-size:12px;font-weight:500;">
+            Reconciliation: <span class="auto-badge ${currentSessionData?.reconciliation_status === 'verified' ? 'high' : 'medium'}">${currentSessionData?.reconciliation_status === 'verified' ? '<span style="display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><polyline points="20 6 9 17 4 12"/></svg>Reconciled (0 Diff)</span>' : 'Difference: ₹' + formatCurrency(diff)}</span>
           </div>
         </div>
 
         <!-- Review Toolbar -->
         <div class="auto-toolbar">
           <div class="auto-search-wrap">
-            <svg class="i" style="width:14px;height:14px;"><use href="#search"/></svg>
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" id="auto-tx-search" placeholder="Search narration, ref, or ledger..." value="${escapeHtml(currentSearchQuery)}">
           </div>
 
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <select id="auto-filter-dir" style="padding:6px 10px;border-radius:var(--r-sm);border:1px solid var(--line);font-size:12.5px;">
+            <select id="auto-filter-dir" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(15,23,42,0.12);font-size:12.5px;">
               <option value="" ${currentDirectionFilter === '' ? 'selected' : ''}>All Directions</option>
               <option value="DEBIT" ${currentDirectionFilter === 'DEBIT' ? 'selected' : ''}>Debits Only (Payments)</option>
               <option value="CREDIT" ${currentDirectionFilter === 'CREDIT' ? 'selected' : ''}>Credits Only (Receipts)</option>
             </select>
 
-            <select id="auto-filter-status" style="padding:6px 10px;border-radius:var(--r-sm);border:1px solid var(--line);font-size:12.5px;">
+            <select id="auto-filter-status" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(15,23,42,0.12);font-size:12.5px;">
               <option value="" ${currentStatusFilter === '' ? 'selected' : ''}>All Statuses (${sessionTransactions.length})</option>
               <option value="unassigned" ${currentStatusFilter === 'unassigned' ? 'selected' : ''}>Unassigned (${unassignedCount})</option>
               <option value="assigned" ${currentStatusFilter === 'assigned' ? 'selected' : ''}>Assigned (${assignedCount})</option>
               <option value="ai_assigned" ${currentStatusFilter === 'ai_assigned' ? 'selected' : ''}>AI Assigned (${aiAssignedCount})</option>
             </select>
 
-            <button type="button" class="btn secondary" id="auto-btn-ai-suggest" title="Suggest ledgers using VS AI">
-              ✨ VS AI Suggest
+            <button type="button" class="btn secondary" id="auto-btn-ai-suggest" title="Suggest ledgers using VS AI" style="display:inline-flex;align-items:center;gap:6px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>VS AI Suggest
             </button>
 
             ${suggestedPendingCount > 0 ? `
-              <button type="button" class="btn secondary" id="auto-btn-accept-all" style="color:#4f46e5;border-color:#c7d2fe;background:#eef2ff;font-weight:600;" title="Accept all VS AI recommendations">
-                ✓ Accept All Suggestions (${suggestedPendingCount})
+              <button type="button" class="btn secondary" id="auto-btn-accept-all" style="color:var(--tx);border-color:rgba(15,23,42,0.12);background:#f8fafc;font-weight:500;display:inline-flex;align-items:center;gap:5px;" title="Accept all VS AI recommendations">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>Accept All Suggestions (${suggestedPendingCount})
               </button>
             ` : ''}
           </div>
@@ -759,13 +789,13 @@
 
         <!-- Bulk Selection Action Bar -->
         <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 2px;flex-wrap:wrap;gap:8px;">
-          <div style="font-size:13px;font-weight:600;color:var(--tx2);">
+          <div style="font-size:13px;font-weight:500;color:var(--tx2);">
             <span id="auto-selected-count">${selectedTxnIds.size}</span> selected of ${sessionTransactions.length}
           </div>
           <div class="auto-bulk-actions">
             ${selectedTxnIds.size > 0 ? `
-              <button type="button" class="btn secondary" id="auto-btn-accept-selected" style="color:#4f46e5;border-color:#c7d2fe;background:#eef2ff;font-weight:600;">
-                ✓ Accept Selected Suggestions
+              <button type="button" class="btn secondary" id="auto-btn-accept-selected" style="color:var(--tx);border-color:rgba(15,23,42,0.12);background:#f8fafc;font-weight:500;display:inline-flex;align-items:center;gap:5px;">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>Accept Selected Suggestions
               </button>
             ` : ''}
             <button type="button" class="btn primary" id="auto-btn-bulk-assign">
@@ -821,8 +851,8 @@
                               </span>
                             </span>
                           </label>
-                          <span style="font-size:12px;font-weight:600;color:#4338ca;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Suggested Head: ${escapeHtml(t.suggested_ledger)} (${escapeHtml(t.suggestion_reason || '')})">
-                            💡 ${escapeHtml(t.suggested_ledger)}
+                          <span style="display:inline-flex;align-items:center;font-size:12px;font-weight:500;color:var(--tx);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Suggested Head: ${escapeHtml(t.suggested_ledger)} (${escapeHtml(t.suggestion_reason || '')})">
+                            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex-shrink:0;margin-right:4px;"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg> ${escapeHtml(t.suggested_ledger)}
                           </span>
                         </div>
                       ` : `
@@ -832,15 +862,15 @@
                     <td>
                       ${t.assigned_ledger ? `
                         <div style="display:inline-flex;align-items:center;gap:6px;">
-                          <span style="display:inline-flex;align-items:center;gap:4px;font-weight:600;color:#047857;background:#ecfdf5;padding:3px 8px;border-radius:6px;border:1px solid #a7f3d0;" title="Assigned ledger">
-                            ✓ ${escapeHtml(t.assigned_ledger)}
+                          <span style="display:inline-flex;align-items:center;gap:4px;font-weight:500;color:#15803d;background:rgba(21,128,61,0.08);padding:3px 8px;border-radius:6px;border:1px solid rgba(21,128,61,0.18);" title="Assigned ledger">
+                            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;margin-right:2px;vertical-align:-1px;display:inline-block;"><polyline points="20 6 9 17 4 12"/></svg>${escapeHtml(t.assigned_ledger)}
                           </span>
                           ${t.is_ai_assigned ? `<span class="auto-badge ai-assigned" style="font-size:10px;padding:2px 6px;">AI Assigned</span>` : ''}
-                          <button type="button" class="btn secondary auto-btn-assign-single" data-id="${t.transaction_id}" style="padding:2px 6px;font-size:11px;" title="Change Ledger">✎</button>
+                          <button type="button" class="btn secondary auto-btn-assign-single" data-id="${t.transaction_id}" style="padding:2px 6px;font-size:11px;display:inline-flex;align-items:center;" title="Change Ledger"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
                         </div>
                       ` : `
                         <div style="display:inline-flex;align-items:center;gap:6px;">
-                          <span style="font-weight:600;color:#ef4444;background:#fef2f2;padding:3px 8px;border-radius:6px;border:1px solid #fecaca;font-size:11.5px;">
+                          <span style="font-weight:500;color:#b91c1c;background:rgba(185,28,28,0.08);padding:3px 8px;border-radius:6px;border:1px solid rgba(185,28,28,0.18);font-size:11.5px;">
                             Unassigned
                           </span>
                           <button type="button" class="btn secondary auto-btn-assign-single" data-id="${t.transaction_id}" style="padding:2px 8px;font-size:11px;" title="Assign Ledger">Assign</button>
@@ -858,9 +888,10 @@
 
         <!-- Step Navigation Buttons -->
         <div style="display:flex;justify-content:space-between;margin-top:14px;">
-          <button type="button" class="btn secondary" id="auto-step3-back">← Back to Upload</button>
-          <button type="button" class="btn primary" id="auto-step3-next">
-            Continue to Approval & Post →
+          <button type="button" class="btn secondary" id="auto-step3-back" style="display:inline-flex;align-items:center;gap:6px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Back to Upload</button>
+          <button type="button" class="btn primary" id="auto-step3-next" style="display:inline-flex;align-items:center;gap:6px;">
+            Continue to Approval & Post
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
         </div>
       </div>
@@ -1058,6 +1089,10 @@
       importStep = 4;
       renderAutomationWorkspace();
     });
+
+    if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+      window.GlassUI.enhanceAllSelects(container);
+    }
   }
 
   function updateSelectionState(container) {
@@ -1129,6 +1164,10 @@
     `;
     document.body.appendChild(overlay);
 
+    if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+      window.GlassUI.enhanceAllSelects(overlay);
+    }
+
     const selectEl = overlay.querySelector('#auto-modal-ledger-select');
     const inputEl = overlay.querySelector('#auto-modal-ledger-input');
 
@@ -1187,11 +1226,11 @@
         <!-- Header -->
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
-            <h3 style="margin:0;font-size:17px;font-weight:700;color:var(--tx);">Step 4: Pre-Import Review & Approval</h3>
+            <h3 style="margin:0;font-size:16px;font-weight:600;color:var(--tx);">Step 4: Pre-Import Review & Approval</h3>
             <p style="margin:0;font-size:12.5px;color:var(--tx2);">Inspect final voucher details below before creating verified accounting entries in TallyPrime.</p>
           </div>
           <span class="auto-badge ${val.is_ready_for_posting ? 'high' : 'low'}" style="font-size:12px;padding:4px 10px;">
-            ${val.is_ready_for_posting ? '✓ Ready for Live Posting' : '⚠️ Action Required'}
+            ${val.is_ready_for_posting ? '<span style="display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>Ready for Live Posting</span>' : '<span style="display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Action Required</span>'}
           </span>
         </div>
 
@@ -1199,19 +1238,19 @@
         <div class="auto-step4-kpi-grid">
           <div class="auto-step4-kpi-card">
             <span class="auto-step4-kpi-label">Target Company</span>
-            <span class="auto-step4-kpi-val" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.company_name || activeCompany)}">
-              🏢 ${escapeHtml(val.company_name || activeCompany || 'Default')}
+            <span class="auto-step4-kpi-val" style="display:inline-flex;align-items:center;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.company_name || activeCompany)}">
+              <svg style="width:14px;height:14px;flex-shrink:0;margin-right:5px;stroke:currentColor;fill:none;" viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg> ${escapeHtml(val.company_name || activeCompany || 'Default')}
             </span>
           </div>
           <div class="auto-step4-kpi-card">
             <span class="auto-step4-kpi-label">Bank Account</span>
-            <span class="auto-step4-kpi-val" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.bank_account_ledger || '')}">
-              🏦 ${escapeHtml(val.bank_account_ledger || 'Not Set')}
+            <span class="auto-step4-kpi-val" style="display:inline-flex;align-items:center;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.bank_account_ledger || '')}">
+              <svg style="width:14px;height:14px;flex-shrink:0;margin-right:5px;stroke:currentColor;fill:none;" viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M3 10h18M5 10v11M9 10v11M15 10v11M19 10v11M12 3L2 10h20L12 3z"/></svg> ${escapeHtml(val.bank_account_ledger || 'Not Set')}
             </span>
           </div>
           <div class="auto-step4-kpi-card">
             <span class="auto-step4-kpi-label">Approved Vouchers</span>
-            <span class="auto-step4-kpi-val" style="color:#047857;">
+            <span class="auto-step4-kpi-val" style="color:#15803d;">
               ${val.assigned_count || 0} / ${val.total_transactions || 0}
             </span>
           </div>
@@ -1223,7 +1262,7 @@
           </div>
           <div class="auto-step4-kpi-card">
             <span class="auto-step4-kpi-label">Total Credits (₹)</span>
-            <span class="auto-step4-kpi-val" style="color:#047857;">
+            <span class="auto-step4-kpi-val" style="color:#15803d;">
               ₹${formatCurrency(val.total_credits || 0)}
             </span>
           </div>
@@ -1232,8 +1271,9 @@
         <!-- Validation warnings if any -->
         ${val.has_edu_date_conflicts ? `
           <div class="notice warning" style="margin:0;padding:12px 16px;font-size:12.5px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;">
-            <div style="font-weight:700;color:#92400e;display:flex;align-items:center;gap:6px;">
-              ⚠️ Tally Educational Mode Date Conflict (${val.edu_conflicting_count} transactions)
+            <div style="font-weight:600;color:#92400e;display:flex;align-items:center;gap:6px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              Tally Educational Mode Date Conflict (${val.edu_conflicting_count} transactions)
             </div>
             <div style="color:#b45309;margin-top:4px;line-height:1.4;">
               Dates outside the 1st, 2nd, and 31st (such as ${escapeHtml(val.edu_conflicting_dates.slice(0, 3).join(', '))}) will be rejected by Tally Educational Mode.
@@ -1294,17 +1334,17 @@
                       ${v.voucher_type}
                     </span>
                   </td>
-                  <td style="font-weight:600;color:var(--tx);">
-                    <span style="display:inline-flex;align-items:center;gap:4px;color:#047857;background:#ecfdf5;padding:2px 6px;border-radius:4px;border:1px solid #a7f3d0;">
-                      ✓ ${escapeHtml(v.assigned_ledger)}
+                  <td style="font-weight:500;color:var(--tx);">
+                    <span style="display:inline-flex;align-items:center;gap:4px;color:#15803d;background:rgba(21,128,61,0.08);padding:2px 6px;border-radius:4px;border:1px solid rgba(21,128,61,0.18);">
+                      <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;margin-right:2px;vertical-align:-1px;display:inline-block;"><polyline points="20 6 9 17 4 12"/></svg>${escapeHtml(v.assigned_ledger)}
                     </span>
                     ${v.is_ai_assigned ? `<span class="auto-badge ai-assigned" style="font-size:9.5px;padding:1px 5px;margin-left:4px;">AI</span>` : ''}
                   </td>
-                  <td style="color:var(--tx2);font-weight:500;">${escapeHtml(v.bank_account_ledger)}</td>
+                  <td style="color:var(--tx2);font-weight:400;">${escapeHtml(v.bank_account_ledger)}</td>
                   <td style="font-weight:600;color:${v.debit_amount > 0 ? '#b91c1c' : 'inherit'};">
                     ${v.debit_amount > 0 ? formatCurrency(v.debit_amount) : '-'}
                   </td>
-                  <td style="font-weight:600;color:${v.credit_amount > 0 ? '#047857' : 'inherit'};">
+                  <td style="font-weight:600;color:${v.credit_amount > 0 ? '#15803d' : 'inherit'};">
                     ${v.credit_amount > 0 ? formatCurrency(v.credit_amount) : '-'}
                   </td>
                   <td style="font-family:monospace;font-size:11px;color:var(--tx2);">${escapeHtml(v.ref_number || '-')}</td>
@@ -1319,13 +1359,13 @@
 
         <!-- Sticky Footer Action Bar -->
         <div class="auto-step4-footer-actions">
-          <button type="button" class="btn secondary" id="auto-step4-back">← Back to Review Table</button>
+          <button type="button" class="btn secondary" id="auto-step4-back" style="display:inline-flex;align-items:center;gap:6px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Back to Review Table</button>
           <div style="display:flex;align-items:center;gap:12px;">
             <div style="font-size:12px;color:var(--tx2);display:flex;align-items:center;gap:4px;">
-              Tally XML Port 9000: <b style="color:${tallyStatus.tally_port_open ? '#10b981' : '#ef4444'}">${tallyStatus.tally_port_open ? 'ONLINE' : 'OFFLINE'}</b>
+              Tally XML Port 9000: <b style="color:${tallyStatus.tally_port_open ? '#15803d' : '#b91c1c'};font-variant-numeric:tabular-nums;font-feature-settings:'tnum';">${tallyStatus.tally_port_open ? 'Online' : 'Offline'}</b>
             </div>
-            <button type="button" class="btn primary" id="auto-step4-confirm-post" ${!val.is_ready_for_posting && !val.has_edu_date_conflicts ? 'disabled' : ''}>
-              Approve & Post ${val.assigned_count || 0} Vouchers to TallyPrime 🚀
+            <button type="button" class="btn primary" id="auto-step4-confirm-post" ${!val.is_ready_for_posting && !val.has_edu_date_conflicts ? 'disabled' : ''} style="display:inline-flex;align-items:center;gap:6px;">
+              Approve & Post ${val.assigned_count || 0} Vouchers to TallyPrime <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>
             </button>
           </div>
         </div>
@@ -1455,23 +1495,24 @@
   function renderFailureView(container, res, companyName) {
     const failedTxns = res?.failed_transactions || [];
     container.innerHTML = `
-      <div class="auto-recon-card" style="border:1px solid #fecaca;background:#fff5f5;">
+      <div class="auto-recon-card" style="border:1px solid rgba(185,28,28,0.2);background:#fff5f5;">
         <div class="auto-recon-header">
           <div>
-            <h3 style="margin:0;font-size:18px;font-weight:700;color:#b91c1c;">
-              ❌ Voucher Posting Failed
-            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:#b91c1c;"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <h3 style="margin:0;font-size:16px;font-weight:600;color:#b91c1c;">Voucher Posting Failed</h3>
+            </div>
             <p style="margin:4px 0 0 0;font-size:13px;color:var(--tx2);">
               No vouchers were posted to company <b>${escapeHtml(companyName)}</b>. Tally rejected the batch.
             </p>
           </div>
-          <span class="auto-badge low" style="font-size:13px;padding:6px 14px;">
+          <span class="auto-badge low" style="font-size:12px;padding:4px 10px;">
             0 Posted
           </span>
         </div>
 
         <div style="margin-top:16px;">
-          <h4 style="margin:0 0 8px 0;font-size:13.5px;color:var(--tx);">Rejection Details:</h4>
+          <h4 style="margin:0 0 8px 0;font-size:13px;font-weight:600;color:var(--tx);">Rejection Details:</h4>
           <div class="auto-step4-table-wrap" style="max-height:260px;">
             <table class="auto-step4-table">
               <thead>
@@ -1487,13 +1528,13 @@
               <tbody>
                 ${failedTxns.map(t => `
                   <tr>
-                    <td style="font-weight:600;color:var(--tx2);">${t.row_index}</td>
-                    <td style="white-space:nowrap;font-weight:600;">${t.txn_date}</td>
+                    <td style="font-weight:500;color:var(--tx2);">${t.row_index}</td>
+                    <td style="white-space:nowrap;font-weight:500;">${t.txn_date}</td>
                     <td>${escapeHtml(t.assigned_ledger || '-')}</td>
                     <td style="color:${t.debit_amount > 0 ? '#b91c1c' : 'inherit'};font-weight:600;">
                       ${t.debit_amount > 0 ? formatCurrency(t.debit_amount) : '-'}
                     </td>
-                    <td style="color:${t.credit_amount > 0 ? '#047857' : 'inherit'};font-weight:600;">
+                    <td style="color:${t.credit_amount > 0 ? '#15803d' : 'inherit'};font-weight:600;">
                       ${t.credit_amount > 0 ? formatCurrency(t.credit_amount) : '-'}
                     </td>
                     <td style="color:#b91c1c;font-size:12px;font-weight:500;">
@@ -1507,8 +1548,9 @@
         </div>
 
         <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:18px;">
-          <button type="button" class="btn primary" id="auto-btn-failure-back">
-            ← Return to Review & Fix
+          <button type="button" class="btn primary" id="auto-btn-failure-back" style="display:inline-flex;align-items:center;gap:6px;">
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Return to Review & Fix
           </button>
         </div>
       </div>
@@ -1527,17 +1569,18 @@
 
     container.innerHTML = `
       <div class="auto-recon-card">
-        <div class="auto-recon-header" style="border-bottom:1px solid #fed7aa;padding-bottom:14px;">
+        <div class="auto-recon-header" style="border-bottom:1px solid rgba(180,83,9,0.18);padding-bottom:14px;">
           <div>
-            <h3 style="margin:0;font-size:18px;font-weight:700;color:#c2410c;">
-              ⚠️ Partial Posting Completed: ${verifiedCount} Posted, ${failedCount} Failed
-            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:#b45309;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <h3 style="margin:0;font-size:16px;font-weight:600;color:#b45309;">Partial Posting Completed: ${verifiedCount} Posted, ${failedCount} Failed</h3>
+            </div>
             <p style="margin:4px 0 0 0;font-size:13px;color:var(--tx2);">
               Target Company: <b>${escapeHtml(companyName)}</b> · Verified: <b>${verifiedCount}</b> · Failed: <b>${failedCount}</b>
             </p>
           </div>
-          <span class="auto-badge medium" style="font-size:13px;padding:6px 14px;">
-            ⚠️ Partial (${verifiedCount}/${verifiedCount + failedCount})
+          <span class="auto-badge medium" style="font-size:12px;padding:4px 10px;">
+            <span style="display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Partial (${verifiedCount}/${verifiedCount + failedCount})</span>
           </span>
         </div>
 
@@ -1607,8 +1650,9 @@
         ` : ''}
 
         <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px;">
-          <button type="button" class="btn secondary" id="auto-btn-partial-retry">
-            ← Return to Review Table
+          <button type="button" class="btn secondary" id="auto-btn-partial-retry" style="display:inline-flex;align-items:center;gap:6px;">
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Return to Review Table
           </button>
           <button type="button" class="btn primary" id="auto-btn-recon-done">
             Done & Return to Automation
@@ -1635,24 +1679,24 @@
     const diff = rec ? rec.difference : 0;
 
     container.innerHTML = `
-      <div class="auto-recon-card" style="${!isReconciled ? 'border:1px solid #fecaca;' : ''}">
+      <div class="auto-recon-card" style="${!isReconciled ? 'border:1px solid rgba(185,28,28,0.2);' : ''}">
         <div class="auto-recon-header">
           <div>
-            <h3 style="margin:0;font-size:18px;font-weight:700;color:${isReconciled ? 'var(--tx)' : '#c2410c'};">
-              ${isReconciled ? '🎉 Vouchers Posted to TallyPrime Successfully!' : '⚠️ Posting Completed — Reconciliation Required'}
+            <h3 style="margin:0;font-size:16px;font-weight:600;color:${isReconciled ? 'var(--tx)' : '#b45309'};">
+              ${isReconciled ? '<span style="display:inline-flex;align-items:center;gap:6px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:#15803d;"><polyline points="20 6 9 17 4 12"/></svg>Vouchers Posted to TallyPrime Successfully</span>' : '<span style="display:inline-flex;align-items:center;gap:6px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:#b45309;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Posting Completed — Reconciliation Required</span>'}
             </h3>
             <p style="margin:4px 0 0 0;font-size:13px;color:var(--tx2);">
               Target Company: <b>${escapeHtml(companyName)}</b> · Total Verified Vouchers: <b>${postedCount}</b>
-              ${!isReconciled ? ` · <span style="color:#b91c1c;font-weight:600;">Discrepancy: ₹${formatCurrency(diff)}</span>` : ''}
+              ${!isReconciled ? ` · <span style="color:#b91c1c;font-weight:500;">Discrepancy: ₹${formatCurrency(diff)}</span>` : ''}
             </p>
           </div>
-          <span class="auto-badge ${isReconciled ? 'high' : 'low'}" style="font-size:13px;padding:6px 14px;${!isReconciled ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;' : ''}">
-            ${isReconciled ? '✓ Reconciled (0 Diff)' : 'Reconciliation Required (₹' + formatCurrency(diff) + ' Diff)'}
+          <span class="auto-badge ${isReconciled ? 'high' : 'low'}" style="font-size:12px;padding:4px 10px;${!isReconciled ? 'background:rgba(185,28,28,0.08);color:#b91c1c;border:1px solid rgba(185,28,28,0.2);' : ''}">
+            ${isReconciled ? '<span style="display:inline-flex;align-items:center;gap:4px;"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><polyline points="20 6 9 17 4 12"/></svg>Reconciled (0 Diff)</span>' : 'Reconciliation Required (₹' + formatCurrency(diff) + ' Diff)'}
           </span>
         </div>
 
         ${!isReconciled ? `
-          <div style="margin:16px 0 0 0;padding:12px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:13px;color:#991b1b;line-height:1.5;">
+          <div style="margin:16px 0 0 0;padding:12px 16px;background:#fef2f2;border:1px solid rgba(185,28,28,0.2);border-radius:8px;font-size:13px;color:#991c1c;line-height:1.5;">
             <strong>Audit Discrepancy Notice:</strong> The live Tally closing balance (₹${formatCurrency(rec ? rec.actual_tally_balance : 0)}) differs from the expected closing balance (₹${formatCurrency(rec ? rec.expected_closing_balance : 0)}) by <strong>₹${formatCurrency(diff)}</strong>. All ${postedCount} vouchers were processed, but the live Tally ledger balance does not reconcile with the bank statement. Please verify unposted transactions or opening balances.
           </div>
         ` : ''}
@@ -1669,7 +1713,7 @@
             </div>
             <div class="auto-recon-item">
               <span class="auto-recon-label">Total Posted Credits</span>
-              <span class="auto-recon-val" style="color:#047857;">₹${formatCurrency(rec.total_posted_credits)}</span>
+              <span class="auto-recon-val" style="color:#15803d;">₹${formatCurrency(rec.total_posted_credits)}</span>
             </div>
             <div class="auto-recon-item">
               <span class="auto-recon-label">Expected Closing Balance</span>
@@ -1677,11 +1721,11 @@
             </div>
             <div class="auto-recon-item">
               <span class="auto-recon-label">Live Tally Closing Balance</span>
-              <span class="auto-recon-val" style="color:#047857;">₹${formatCurrency(rec.actual_tally_balance)}</span>
+              <span class="auto-recon-val" style="color:#15803d;">₹${formatCurrency(rec.actual_tally_balance)}</span>
             </div>
             <div class="auto-recon-item">
               <span class="auto-recon-label">Audit Difference</span>
-              <span class="auto-recon-val" style="color:${isReconciled ? '#047857' : '#b91c1c'};font-weight:700;">₹${formatCurrency(diff)}</span>
+              <span class="auto-recon-val" style="color:${isReconciled ? '#15803d' : '#b91c1c'};font-weight:600;">₹${formatCurrency(diff)}</span>
             </div>
           </div>
         ` : `
@@ -1692,12 +1736,14 @@
 
         <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px;">
           ${!isReconciled ? `
-            <button type="button" class="btn secondary" id="auto-btn-recon-review">
-              ← Return to Review Table
+            <button type="button" class="btn secondary" id="auto-btn-recon-review" style="display:inline-flex;align-items:center;gap:6px;">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+              Return to Review Table
             </button>
           ` : ''}
-          <button type="button" class="btn secondary" id="auto-btn-recon-ask-tally">
-            Ask Tally About This Company →
+          <button type="button" class="btn secondary" id="auto-btn-recon-ask-tally" style="display:inline-flex;align-items:center;gap:6px;">
+            Ask Tally About This Company
+            <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
           <button type="button" class="btn primary" id="auto-btn-recon-done">
             Done & Return to Automation
@@ -1737,9 +1783,11 @@
         <!-- Chat Header -->
         <div class="auto-chat-header">
           <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:20px;">💬</span>
+            <span style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;background:#f1f5f9;color:var(--tx);border:1px solid rgba(15,23,42,0.08);">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </span>
             <div>
-              <div style="font-weight:700;font-size:14px;color:var(--tx);display:flex;align-items:center;gap:4px;">Ask ${tallyLogo()} · Read-Only Copilot</div>
+              <div style="font-weight:600;font-size:14px;color:var(--tx);display:flex;align-items:center;gap:4px;">Ask ${tallyLogo()} · Read-Only Copilot</div>
               <div style="font-size:11.5px;color:var(--tx2);" id="auto-chat-company-title">Company: <b>${activeCompany || 'Default Company'}</b></div>
             </div>
           </div>
@@ -1754,8 +1802,10 @@
         <div class="auto-chat-messages" id="auto-chat-msg-list">
           ${askTallyMessages.length === 0 ? `
             <div style="text-align:center;padding:40px 20px;color:var(--tx2);">
-              <div style="font-size:36px;margin-bottom:8px;">📊</div>
-              <h4 style="margin:0 0 6px 0;color:var(--tx);display:flex;align-items:center;justify-content:center;gap:4px;">Ask questions about your accounts in Tally</h4>
+              <div style="display:flex;align-items:center;justify-content:center;margin-bottom:12px;color:var(--tx2);">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px;"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              </div>
+              <h4 style="margin:0 0 6px 0;color:var(--tx);font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:center;gap:4px;">Ask questions about your accounts in Tally</h4>
               <p style="margin:0;font-size:12.5px;max-width:380px;margin:0 auto;">Ask questions like <i>"Show me the Trial Balance"</i>, <i>"What are our total receivables?"</i>, or <i>"How much is the balance in HDFC Bank A/c?"</i></p>
             </div>
           ` : askTallyMessages.map(m => `
@@ -1768,7 +1818,7 @@
         <!-- Chat Input Bar -->
         <div class="auto-chat-input-bar">
           <input type="text" id="auto-chat-input" placeholder="Ask a question about ${activeCompany || 'accounts'}..." autofocus>
-          <button type="button" class="btn primary" id="auto-chat-send" style="border-radius:var(--r-full);padding:8px 18px;">
+          <button type="button" class="btn primary" id="auto-chat-send" style="border-radius:8px;padding:8px 18px;">
             Send
           </button>
         </div>
@@ -1788,7 +1838,7 @@
       renderChatMessages(msgList);
 
       // Loading bubble
-      askTallyMessages.push({ sender: 'assistant', content: '⏳ Retrieving live data from TallyPrime and preparing answer...' });
+      askTallyMessages.push({ sender: 'assistant', content: '<span class="auto-chat-loading"><svg class="i auto-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;margin-right:6px;vertical-align:-2px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>Retrieving live data from TallyPrime...</span>' });
       renderChatMessages(msgList);
 
       try {
@@ -1805,11 +1855,11 @@
         if (res.ok) {
           askTallyMessages.push({ sender: 'assistant', content: res.response_markdown || 'No data found.' });
         } else {
-          askTallyMessages.push({ sender: 'assistant', content: `⚠️ Error: ${res.error}` });
+          askTallyMessages.push({ sender: 'assistant', content: `<span style="display:inline-flex;align-items:center;gap:6px;color:var(--er);"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Error: ${res.error}</span>` });
         }
       } catch (e) {
         askTallyMessages.pop();
-        askTallyMessages.push({ sender: 'assistant', content: `⚠️ Request error: ${e.message}` });
+        askTallyMessages.push({ sender: 'assistant', content: `<span style="display:inline-flex;align-items:center;gap:6px;color:var(--er);"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Request error: ${e.message}</span>` });
       }
 
       renderChatMessages(msgList);

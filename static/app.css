@@ -55,7 +55,13 @@ body {
 .orbs i:nth-child(2) { width: 460px; height: 460px; background: var(--bgB); right: -120px; top: 20%; }
 .orbs i:nth-child(3) { width: 420px; height: 420px; background: var(--bgC); bottom: -160px; left: 35%; }
 
-/* Shell Layout */
+/* Shell Layout & Sidebar Dynamics */
+:root {
+  --sidebar-w-expanded: 240px;
+  --sidebar-w-collapsed: 68px;
+  --sidebar-width: var(--sidebar-w-expanded);
+}
+
 .app {
   position: relative;
   z-index: 1;
@@ -63,9 +69,17 @@ body {
   height: calc(100% - 38px);
   min-height: 0;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  gap: 20px;
-  padding: 12px 20px max(20px, env(safe-area-inset-bottom));
+  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+  transition: grid-template-columns 0.24s cubic-bezier(0.2, 0, 0, 1);
+  will-change: grid-template-columns;
+}
+
+.app.sidebar-collapsed,
+html.vs-sidebar-collapsed .app,
+body.sidebar-collapsed .app {
+  --sidebar-width: var(--sidebar-w-collapsed);
 }
 
 /* Flicker-free startup intro: prevent dashboard flash before initial DOM render completes */
@@ -113,61 +127,398 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .side {
   display: flex;
   flex-direction: column;
-  padding: 18px 14px;
+  padding: 16px 12px;
   min-height: 0;
+  width: var(--sidebar-width, 240px);
+  min-width: var(--sidebar-width, 240px);
+  max-width: var(--sidebar-width, 240px);
+  transition: width 0.24s cubic-bezier(0.2, 0, 0, 1),
+              min-width 0.24s cubic-bezier(0.2, 0, 0, 1),
+              max-width 0.24s cubic-bezier(0.2, 0, 0, 1),
+              padding 0.24s cubic-bezier(0.2, 0, 0, 1);
+  will-change: width, padding;
+  overflow: hidden;
+  box-sizing: border-box;
 }
-.brand {
+
+.side-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 4px 6px 18px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 16px;
+  min-height: 44px;
+  height: 44px;
+  box-sizing: border-box;
+  position: relative;
+  transition: padding 0.24s cubic-bezier(0.2, 0, 0, 1);
 }
+
+.brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  flex: 1;
+  height: 38px;
+  overflow: visible;
+}
+
 .brand img, .vs-logo-img {
-  width: 100%;
-  max-width: 200px;
-  height: 52px;
-  object-fit: contain;
   display: block;
 }
+
+.vs-logo-full {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%) scale(1);
+  transform-origin: left center;
+  opacity: 1;
+  pointer-events: auto;
+  max-width: 148px;
+  height: 38px;
+  object-fit: contain;
+  transition: opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+              transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+  will-change: opacity, transform;
+}
+
+.vs-logo-monogram {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.85);
+  transform-origin: center center;
+  opacity: 0;
+  pointer-events: none;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 8px;
+  transition: opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+              transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+  will-change: opacity, transform;
+}
+
+/* Sidebar Toggle Button */
+.sidebar-toggle-btn {
+  position: absolute;
+  right: 4px;
+  top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1px solid var(--card-border, #e5e7eb);
+  background: var(--card-bg, #ffffff);
+  color: var(--tx2);
+  cursor: pointer;
+  padding: 0;
+  outline: none;
+  box-shadow: var(--shadow-sm);
+  transition: right 0.24s cubic-bezier(0.2, 0, 0, 1),
+              top 0.24s cubic-bezier(0.2, 0, 0, 1),
+              width 0.24s cubic-bezier(0.2, 0, 0, 1),
+              height 0.24s cubic-bezier(0.2, 0, 0, 1),
+              border-radius 0.24s cubic-bezier(0.2, 0, 0, 1),
+              background 0.16s ease,
+              color 0.16s ease,
+              border-color 0.16s ease,
+              box-shadow 0.16s ease,
+              transform 0.16s ease;
+  will-change: right, top, width, height, transform;
+  z-index: 10;
+}
+
+.sidebar-toggle-btn:hover {
+  background: #ffffff;
+  color: var(--tx);
+  border-color: #cbd5e1;
+  box-shadow: var(--shadow-md);
+}
+
+.sidebar-toggle-btn:active {
+  transform: scale(0.94);
+}
+
+.sidebar-toggle-icon {
+  display: block;
+}
+
+.sidebar-toggle-arrow {
+  transition: transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Navigation items */
 nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
+  padding: 2px 0;
 }
+
 nav button {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 42px;
+  min-height: 40px;
+  height: 40px;
   padding: 0 12px;
   border: 0;
-  border-radius: 13px;
+  border-radius: 10px;
   background: none;
   color: var(--tx2);
   font-weight: 600;
   font-size: 13.5px;
   cursor: pointer;
   text-align: left;
-  transition: background .15s, color .15s;
+  transition: background 0.15s ease,
+              color 0.15s ease,
+              box-shadow 0.15s ease,
+              gap 0.22s cubic-bezier(0.2, 0, 0, 1),
+              padding 0.24s cubic-bezier(0.2, 0, 0, 1),
+              width 0.24s cubic-bezier(0.2, 0, 0, 1);
   width: 100%;
+  box-sizing: border-box;
+  white-space: nowrap;
+  will-change: width, padding;
 }
+
+nav button svg.i {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  flex-shrink: 0;
+  display: block;
+  margin: 0;
+  transition: transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+
+nav button span {
+  display: inline-block;
+  opacity: 1;
+  max-width: 160px;
+  transform: translateX(0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: auto;
+  transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1),
+              max-width 0.22s cubic-bezier(0.2, 0, 0, 1),
+              transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  will-change: opacity, max-width, transform;
+}
+
 nav button:hover {
   background: var(--glass2);
   color: var(--tx);
 }
+
+/* Unslop active nav button: calm crisp dark slate, no neon purple bloom */
 nav button.active, nav button[aria-current=page] {
-  background: var(--pri);
-  color: #fff;
-  box-shadow: 0 8px 22px rgba(99, 102, 241, 0.4);
+  background: #0f172a;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
 }
+
+nav button.active:hover, nav button[aria-current=page]:hover {
+  background: #1e293b;
+  color: #ffffff;
+}
+
 .side footer, .side-foot {
+  position: relative;
   font-size: 11.5px;
   color: var(--tx2);
-  padding: 12px 8px 0;
+  padding: 12px 6px 0;
   border-top: 1px solid var(--line);
   margin-top: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 32px;
+  box-sizing: border-box;
+  transition: padding 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.side-foot-full {
+  display: block;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1),
+              transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  will-change: opacity, transform;
+}
+
+.side-foot-collapsed {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--tx2);
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+  transition: opacity 0.18s cubic-bezier(0.2, 0, 0, 1),
+              transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+  will-change: opacity, transform;
+}
+
+/* ==========================================================================
+   COLLAPSED / RETRACTED SIDEBAR STATE (~68px)
+   ========================================================================== */
+.app.sidebar-collapsed .side,
+html.vs-sidebar-collapsed .app .side,
+body.sidebar-collapsed .app .side {
+  padding: 16px 12px;
+  align-items: center;
+}
+
+.app.sidebar-collapsed .side-header,
+html.vs-sidebar-collapsed .app .side-header,
+body.sidebar-collapsed .app .side-header {
+  padding: 2px 0 16px;
+  justify-content: center;
+  width: 100%;
+}
+
+.app.sidebar-collapsed .brand,
+html.vs-sidebar-collapsed .app .brand,
+body.sidebar-collapsed .app .brand {
+  justify-content: center;
+  flex: none;
+  width: 100%;
+}
+
+.app.sidebar-collapsed .vs-logo-full,
+html.vs-sidebar-collapsed .app .vs-logo-full,
+body.sidebar-collapsed .app .vs-logo-full {
+  opacity: 0;
+  transform: translateY(-50%) scale(0.85);
+  pointer-events: none;
+}
+
+.app.sidebar-collapsed .vs-logo-monogram,
+html.vs-sidebar-collapsed .app .vs-logo-monogram,
+body.sidebar-collapsed .app .vs-logo-monogram {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.app.sidebar-collapsed .sidebar-toggle-btn,
+html.vs-sidebar-collapsed .app .sidebar-toggle-btn,
+body.sidebar-collapsed .app .sidebar-toggle-btn {
+  right: -4px;
+  top: -6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+
+.app.sidebar-collapsed .sidebar-toggle-arrow,
+html.vs-sidebar-collapsed .app .sidebar-toggle-arrow,
+body.sidebar-collapsed .app .sidebar-toggle-arrow {
+  transform: rotate(180deg);
+}
+
+/* Center icons smoothly without jumping */
+.app.sidebar-collapsed nav button,
+html.vs-sidebar-collapsed .app nav button,
+body.sidebar-collapsed .app nav button {
+  justify-content: center;
+  padding: 0 12px;
+  width: 44px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+  gap: 0;
+}
+
+.app.sidebar-collapsed nav button span,
+html.vs-sidebar-collapsed .app nav button span,
+body.sidebar-collapsed .app nav button span {
+  opacity: 0;
+  max-width: 0;
+  transform: translateX(-6px);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app.sidebar-collapsed nav button svg.i,
+html.vs-sidebar-collapsed .app nav button svg.i,
+body.sidebar-collapsed .app nav button svg.i {
+  margin: 0;
+  width: 20px;
+  height: 20px;
+}
+
+/* Footer in collapsed state */
+.app.sidebar-collapsed .side-foot-full,
+html.vs-sidebar-collapsed .app .side-foot-full,
+body.sidebar-collapsed .app .side-foot-full {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+}
+
+.app.sidebar-collapsed .side-foot-collapsed,
+html.vs-sidebar-collapsed .app .side-foot-collapsed,
+body.sidebar-collapsed .app .side-foot-collapsed {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.app.sidebar-collapsed .side footer,
+.app.sidebar-collapsed .side-foot,
+html.vs-sidebar-collapsed .app .side footer,
+html.vs-sidebar-collapsed .app .side-foot,
+body.sidebar-collapsed .app .side footer,
+body.sidebar-collapsed .app .side-foot {
+  padding: 12px 0 0;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app,
+  .side,
+  .side-header,
+  .sidebar-toggle-btn,
+  .sidebar-toggle-arrow,
+  .brand img,
+  .vs-logo-full,
+  .vs-logo-monogram,
+  nav button,
+  nav button span,
+  nav button svg.i,
+  .side footer,
+  .side-foot,
+  .side-foot-full,
+  .side-foot-collapsed {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 /* Main Area & Header */
@@ -3288,21 +3639,21 @@ body.page-vs-ai-active .vs-ai-container {
 }
 
 /* ==========================================================================
-   Desktop Custom Title Bar & Window Controls (Theme-Merged Glass)
+   Desktop Custom Title Bar & Window Controls (Clean Neutral Palette)
    ========================================================================== */
 .app-titlebar {
   position: relative;
-  z-index: 1000;
+  z-index: 10000 !important;
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 38px;
   padding: 0 12px 0 16px;
-  background: rgba(238, 242, 255, 0.72);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border-bottom: 1px solid rgba(226, 232, 240, 0.65);
-  box-shadow: 0 1px 3px rgba(49, 46, 129, 0.03);
+  background: #ffffff;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
@@ -3337,22 +3688,25 @@ body.page-vs-ai-active .vs-ai-container {
 }
 
 .titlebar-badge {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 10.5px;
+  font-weight: 500;
   padding: 1.5px 7px;
-  border-radius: 999px;
-  background: rgba(99, 102, 241, 0.08);
-  color: #4f46e5;
-  border: 1px solid rgba(99, 102, 241, 0.16);
-  letter-spacing: 0.02em;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  letter-spacing: 0.01em;
 }
 
 .titlebar-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
+  position: relative;
+  z-index: 10001 !important;
+  pointer-events: auto !important;
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
 }
 
 .titlebar-btn {
@@ -3361,37 +3715,142 @@ body.page-vs-ai-active .vs-ai-container {
   justify-content: center;
   width: 28px;
   height: 26px;
-  border-radius: 8px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--tx2);
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
   cursor: pointer;
-  transition: all 0.16s var(--ease);
+  transition: all 0.15s ease;
   outline: none;
 }
 
 .titlebar-btn:hover {
-  background: rgba(255, 255, 255, 0.95);
-  border-color: rgba(99, 102, 241, 0.3);
-  color: #4338ca;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.12);
-  transform: translateY(-0.5px);
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  transform: none;
 }
 
 .titlebar-btn:active {
-  transform: scale(0.92);
+  background: #e2e8f0;
+  transform: scale(0.96);
 }
 
 .titlebar-btn-close:hover {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.35);
+  background: #fee2e2;
+  border-color: #fca5a5;
   color: #dc2626;
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
+  box-shadow: 0 1px 2px rgba(220, 38, 38, 0.1);
+  transform: none;
 }
 
 .titlebar-btn-close:active {
-  background: rgba(239, 68, 68, 0.2);
+  background: #fecaca;
   color: #b91c1c;
+}
+
+/* Guard: banners and overlays must never obscure the title bar or window control buttons */
+.banner,
+.connection-banner,
+.network-banner,
+.offline-banner,
+.stg-banner-returned,
+.ai-rename-mismatch-banner,
+.auto-status-card {
+  position: relative;
+  z-index: 100;
+  max-width: 100%;
+}
+
+#vs-offline-banner,
+.vs-network-banner,
+.connection-banner {
+  position: fixed !important;
+  top: 38px !important; /* Positioned directly underneath the 38px titlebar */
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 99990 !important;
+  padding: 8px 16px !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  text-align: center !important;
+  box-shadow: var(--shadow-sm) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  transition: all 0.25s ease !important;
+}
+
+.vs-banner-offline {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+.vs-banner-offline .vs-banner-title {
+  color: #f87171 !important;
+}
+
+.vs-banner-reconnecting {
+  background: #1e293b !important;
+  color: #f8fafc !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+.vs-banner-reconnecting .vs-banner-title {
+  color: #fbbf24 !important;
+}
+
+.vs-banner-checking {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+.vs-banner-checking .vs-banner-title {
+  color: #60a5fa !important;
+}
+
+.vs-banner-content {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+}
+
+.vs-banner-title {
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+}
+
+.vs-banner-desc {
+  color: #94a3b8 !important;
+  font-size: 12px !important;
+}
+
+.vs-banner-stale-tag {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fbbf24 !important;
+  padding: 2px 8px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+  border: 1px solid rgba(251, 191, 36, 0.3) !important;
+}
+
+.vs-offline-badge {
+  display: inline-block !important;
+  background: #fef2f2 !important;
+  color: #b91c1c !important;
+  border: 1px solid #fecaca !important;
+  padding: 2px 8px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  margin-left: 8px !important;
 }
 
 /* ==========================================================================

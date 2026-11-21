@@ -4789,7 +4789,7 @@ def check_for_system_updates():
         app_dir = Path(__file__).resolve().parent
         local_p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=5)
         local_sha = local_p.stdout.strip()
-        local_short = local_sha[:7] if local_sha else "v1.0.1"
+        local_short = local_sha[:7] if local_sha else "v2.2.5"
 
         remote_p = subprocess.run(["git", "ls-remote", "origin", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=8)
         remote_out = remote_p.stdout.strip()
