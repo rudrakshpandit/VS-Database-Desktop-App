@@ -16,7 +16,7 @@
   --ok: #047857;
   --okb: rgba(16, 185, 129, 0.15);
   --wn: #92400e;
-  --wnb: rgba(245, 158, 11, 0.2);
+  --wnb: rgba(245, 158, 11, 0.20);
   --er: #b91c1c;
   --erb: rgba(239, 68, 68, 0.13);
   --sh: 0 10px 40px rgba(49, 46, 129, 0.14);
@@ -24,6 +24,8 @@
   --bgB: #e9d5ff;
   --bgC: #bae6fd;
   --bgD: #eef2ff;
+  --bg: var(--bgD);
+  --radius: 20px;
 
   /* Backward Compatibility Aliases */
   --primary: #2563eb;
@@ -35,10 +37,10 @@
   --warning: var(--wn);
   --danger: var(--er);
 
-  /* Shared Card Design Tokens (STEP 3) */
-  --card-bg: var(--glass2);
+  /* Shared Card Design Tokens */
+  --card-bg: var(--glass);
   --card-border: var(--bd);
-  --card-radius: 14px;
+  --card-radius: 20px;
   --shadow-sm: 0 4px 16px rgba(49, 46, 129, 0.08);
   --shadow-md: 0 10px 30px rgba(49, 46, 129, 0.14);
   --warn: #f59e0b;

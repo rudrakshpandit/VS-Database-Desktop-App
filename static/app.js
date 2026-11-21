@@ -1,3 +1,256 @@
+
+window.APP_VERSION = '2.3.0';
+
+// ==============================================================================
+// PHASE 16: REAL-TIME SYNC, RBAC, GLASS OTP & SETTINGS LOCK HELPERS
+// ==============================================================================
+let currentDataVersion = 0;
+let syncPollerActive = false;
+
+function startRealtimeSync() {
+  if (syncPollerActive) return;
+  syncPollerActive = true;
+  setInterval(async () => {
+    if (window.__isSavingDocument || (typeof VSOfflineManager !== 'undefined' && VSOfflineManager.isOffline())) return;
+    try {
+      const res = await api('/api/sync/version', { timeout: 2000 });
+      if (res && res.version) {
+        if (currentDataVersion === 0) {
+          currentDataVersion = res.version;
+          return;
+        }
+        if (res.version > currentDataVersion) {
+          currentDataVersion = res.version;
+          console.log('[RealtimeSync] Remote data version updated:', res.version, 'refreshing active views...');
+
+          // Keep global clients cache fresh across all tabs and views
+          try {
+            const cl = await api('/api/clients');
+            if (Array.isArray(cl)) {
+              clients = cl;
+              if (current === 'clients' && typeof renderClients === 'function') {
+                renderClients();
+              }
+            }
+          } catch (_) {}
+
+          if (current === 'dashboard' && typeof dashboardPage === 'function') {
+            if (typeof loadStats === 'function') loadStats().catch(() => {});
+            if (typeof loadActivity === 'function') loadActivity().catch(() => {});
+          } else if (current === 'users' && typeof usersPage === 'function') {
+            usersPage().catch(() => {});
+          }
+          // Only re-sync permissions if needed
+          if (current === 'setup' || current === 'users') {
+            api('/api/auth/status').then(st => {
+              if (st && st.user) {
+                currentUser = st.user;
+                localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+                applyUserPermissions();
+              }
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (_) {}
+  }, 1500);
+}
+
+function applyUserPermissions() {
+  if (!currentUser) return;
+  const perms = currentUser.permissions || {};
+  const isHost = currentUser.role === 'host';
+
+  const toggleNav = (page, allowed) => {
+    const btn = document.querySelector(`nav button[data-page="${page}"]`);
+    if (btn) btn.style.display = allowed ? 'flex' : 'none';
+  };
+
+  toggleNav('clients', isHost || perms.can_access_clients !== false);
+  toggleNav('automation', isHost || perms.can_access_automation !== false);
+  toggleNav('vs-ai', isHost || perms.can_access_vs_ai !== false);
+  toggleNav('backup', isHost || perms.can_access_backup !== false);
+  toggleNav('setup', isHost || perms.can_access_setup !== false);
+  toggleNav('pdf-studio', isHost || perms.can_access_pdf_studio !== false);
+  toggleNav('drive', isHost || perms.can_access_drive !== false);
+  toggleNav('users', isHost);
+
+  // If currently active page is now forbidden, safely redirect to dashboard
+  if (!isHost) {
+    if (current === 'automation' && perms.can_access_automation === false) { current = 'dashboard'; render(); }
+    if (current === 'vs-ai' && perms.can_access_vs_ai === false) { current = 'dashboard'; render(); }
+    if (current === 'backup' && perms.can_access_backup === false) { current = 'dashboard'; render(); }
+    if (current === 'setup' && perms.can_access_setup === false) { current = 'dashboard'; render(); }
+    if (current === 'users') { current = 'dashboard'; render(); }
+  }
+}
+
+function showHostApprovalPinModal(pin, userName, seconds = 600) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:999999;';
+  modal.innerHTML = `
+    <div class="glass card" style="max-width:440px;width:92%;padding:28px 24px;text-align:center;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);">
+      <div style="display:flex;justify-content:center;margin-bottom:12px;"><svg class="i" style="width:36px;height:36px;stroke:#2563eb;" aria-hidden="true"><use href="#zap"/></svg></div>
+      <h2 style="font-size:20px;margin:0 0 6px;">Workstation Access Approved!</h2>
+      <p class="muted" style="font-size:13px;line-height:1.4;margin:0 0 16px;">
+        Workstation approved for <b>${escapeHtml(userName)}</b>.<br>
+        Staff member must enter this 6-digit PIN on their PC:
+      </p>
+      <div style="display:flex;justify-content:center;gap:8px;margin:18px 0;">
+        ${pin.split('').map(d => `<span style="display:inline-flex;width:44px;height:56px;align-items:center;justify-content:center;background:#fff;border:2.5px solid #2563eb;border-radius:12px;font-size:28px;font-weight:800;color:#1e40af;box-shadow:0 4px 12px rgba(37,99,235,0.2);">${d}</span>`).join('')}
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px;">
+        PIN expires in: <b id="host-approve-timer">10:00</b>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button class="btn secondary" id="btn-copy-approve-pin"><svg class="i" style="width:14px;height:14px;margin-right:4px;" aria-hidden="true"><use href="#copy"/></svg>Copy PIN</button>
+        <button class="btn p" id="btn-close-approve-modal">Done</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  let rem = seconds;
+  const tId = setInterval(() => {
+    rem--;
+    const el = modal.querySelector('#host-approve-timer');
+    if (!el || rem <= 0) {
+      clearInterval(tId);
+      if (el) el.textContent = 'Expired';
+    } else {
+      const m = Math.floor(rem / 60);
+      const s = rem % 60;
+      el.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+  }, 1000);
+
+  modal.querySelector('#btn-copy-approve-pin').onclick = () => {
+    navigator.clipboard.writeText(pin);
+    alert(`PIN ${pin} copied to clipboard!`);
+  };
+  modal.querySelector('#btn-close-approve-modal').onclick = () => {
+    clearInterval(tId);
+    modal.remove();
+  };
+}
+
+function openUserPermissionsModal(userId, fullName, currentPerms = {}) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:999999;';
+  
+  const p = currentPerms || {};
+  const isChecked = (key, def = true) => (p[key] !== undefined ? p[key] : def) ? 'checked' : '';
+  const restrictedList = (p.restricted_clients || []).join(', ');
+
+  modal.innerHTML = `
+    <div class="glass card" style="max-width:560px;width:94%;padding:26px 24px;text-align:left;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h2 style="font-size:18px;margin:0;display:flex;align-items:center;gap:8px;"><svg class="i" style="width:18px;height:18px;stroke:var(--pri);" aria-hidden="true"><use href="#key"/></svg>User Permissions & Access Control</h2>
+        <button class="btn ib tip" id="btn-close-perms-x" data-t="Close" aria-label="Close dialog" style="font-size:16px;"><svg class="i" style="width:14px;height:14px;"><use href="#close"/></svg></button>
+      </div>
+      <p class="muted" style="font-size:13px;margin:0 0 16px;">
+        Configure granular powers and access restrictions for <b>${escapeHtml(fullName || userId)}</b> (<code>${escapeHtml(userId)}</code>):
+      </p>
+
+      <div class="vs-perm-grid">
+        <div class="vs-perm-item">
+          <label for="p-clients">Access Clients (View & Search)</label>
+          <input type="checkbox" id="p-clients" ${isChecked('can_access_clients', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-del-clients">Allow Deleting Clients</label>
+          <input type="checkbox" id="p-del-clients" ${isChecked('can_delete_clients', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-del-files">Allow Deleting Files</label>
+          <input type="checkbox" id="p-del-files" ${isChecked('can_delete_files', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-automation">Access Automation Tab</label>
+          <input type="checkbox" id="p-automation" ${isChecked('can_access_automation', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-vs-ai">Access VS AI Assistant Tab</label>
+          <input type="checkbox" id="p-vs-ai" ${isChecked('can_access_vs_ai', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-drive">Access Google Drive Tab</label>
+          <input type="checkbox" id="p-drive" ${isChecked('can_access_drive', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-backup">Access Backup & Restore Tab</label>
+          <input type="checkbox" id="p-backup" ${isChecked('can_access_backup', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-pdf">Access PDF Studio Tab</label>
+          <input type="checkbox" id="p-pdf" ${isChecked('can_access_pdf_studio', true)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-setup">Access Setup Tab</label>
+          <input type="checkbox" id="p-setup" ${isChecked('can_access_setup', false)}>
+        </div>
+        <div class="vs-perm-item">
+          <label for="p-settings">Direct Settings Modification</label>
+          <input type="checkbox" id="p-settings" ${isChecked('can_edit_settings', false)}>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;">
+        <label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:4px;color:#334155;">
+          Restricted Client File Numbers (Comma-separated)
+        </label>
+        <p class="muted" style="font-size:11.5px;margin:0 0 6px;">
+          These specific clients will be completely hidden from this staff member.
+        </p>
+        <input id="p-restricted-clients" value="${escapeHtml(restrictedList)}" placeholder="e.g. VS001, VS008, VS015" style="width:100%;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;">
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px;">
+        <button class="btn secondary" id="btn-cancel-perms">Cancel</button>
+        <button class="btn p" id="btn-save-perms">Save Permissions</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#btn-close-perms-x').onclick = () => modal.remove();
+  modal.querySelector('#btn-cancel-perms').onclick = () => modal.remove();
+
+  modal.querySelector('#btn-save-perms').onclick = async () => {
+    const rawRestricted = modal.querySelector('#p-restricted-clients').value.trim();
+    const restricted_clients = rawRestricted ? rawRestricted.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [];
+
+    const newPerms = {
+      can_access_clients: modal.querySelector('#p-clients').checked,
+      can_delete_clients: modal.querySelector('#p-del-clients').checked,
+      can_delete_files: modal.querySelector('#p-del-files').checked,
+      can_access_automation: modal.querySelector('#p-automation').checked,
+      can_access_vs_ai: modal.querySelector('#p-vs-ai').checked,
+      can_access_drive: modal.querySelector('#p-drive').checked,
+      can_access_backup: modal.querySelector('#p-backup').checked,
+      can_access_pdf_studio: modal.querySelector('#p-pdf').checked,
+      can_access_setup: modal.querySelector('#p-setup').checked,
+      can_edit_settings: modal.querySelector('#p-settings').checked,
+      restricted_clients
+    };
+
+    try {
+      await api('/api/admin/users/permissions', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, permissions: newPerms })
+      });
+      alert(`Permissions updated successfully for ${fullName || userId}!`);
+      modal.remove();
+      if (typeof usersPage === 'function') await usersPage();
+    } catch (e) {
+      alert(`Failed to save permissions: ${e.message}`);
+    }
+  };
+}
+
+
 // =========================================================================
 // NATIVE WINDOWS DESKTOP SHELL HARDENING
 // =========================================================================
@@ -276,8 +529,689 @@ const getDeviceId = () => {
 };
 const getDeviceName = () => localStorage.getItem('vs-device-name') || '';
 const setDeviceName = (name) => localStorage.setItem('vs-device-name', name);
+const getSessionToken = () => localStorage.getItem('vs-session-token') || sessionStorage.getItem('vs-session-token') || '';
+const setSessionToken = (token) => {
+  if (token) {
+    localStorage.setItem('vs-session-token', token);
+    sessionStorage.setItem('vs-session-token', token);
+  }
+};
+const clearSessionToken = () => {
+  localStorage.removeItem('vs-session-token');
+  sessionStorage.removeItem('vs-session-token');
+};
 
-const api = (path, options = {}) => {
+// ADR-015: Centralized Host-Client Architecture with Offline Read-Only Mode
+const VSOfflineManager = {
+  STATE_CHECKING: 'CHECKING',
+  STATE_ONLINE: 'ONLINE',
+  STATE_OFFLINE: 'OFFLINE',
+  STATE_RECONNECTING: 'RECONNECTING',
+  STATE_REVOKED: 'REVOKED',
+
+  currentState: 'ONLINE',
+  consecutiveFailures: 0,
+  heartbeatInterval: null,
+  heartbeatInFlight: false,
+  cachedClientsKey: 'vs_cached_clients_ro',
+  lastOnlineTimestamp: Date.now(),
+  initialized: false,
+
+  async init() {
+    if (this.initialized) return;
+    this.initialized = true;
+    this.injectStyles();
+
+    let isClient = false;
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+        isClient = await window.TauriBridge.isClientMode();
+      }
+    } catch (_) {}
+
+    if (isClient) {
+      this.currentState = this.STATE_CHECKING;
+      this.lockdownMutations();
+      this.showCheckingBanner();
+      const contentEl = document.querySelector('#content');
+      if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+        renderSkeletonLoader(true);
+      }
+    }
+    this.startHeartbeat(isClient);
+    console.log('[OfflineManager] Initialized. Monitoring Host reachability...');
+  },
+
+  getState() {
+    return this.currentState;
+  },
+
+  isOffline() {
+    return this.currentState === this.STATE_OFFLINE;
+  },
+
+  isRevoked() {
+    return this.currentState === this.STATE_REVOKED;
+  },
+
+  startHeartbeat(checkImmediately = false) {
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    if (checkImmediately) this.checkHeartbeat();
+    this.heartbeatInterval = setInterval(() => this.checkHeartbeat(), 8000);
+  },
+
+  async checkHeartbeat() {
+    if (this.currentState === this.STATE_REVOKED || this.heartbeatInFlight) return;
+    this.heartbeatInFlight = true;
+
+    if (this.currentState === this.STATE_CHECKING) {
+      const contentEl = document.querySelector('#content');
+      if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+        renderSkeletonLoader(true);
+      }
+    }
+
+    const healthUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+      ? window.TauriBridge.resolveApiUrl('/api/health')
+      : '/api/health';
+
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timeoutId = null;
+    if (controller) {
+      timeoutId = setTimeout(() => controller.abort(), 4500);
+    }
+
+    try {
+      const resp = await fetch(healthUrl, {
+        method: 'GET',
+        signal: controller ? controller.signal : undefined,
+        headers: { 'X-VS-Device-Id': getDeviceId() }
+      });
+
+      if (resp.ok) {
+        if (this.consecutiveFailures > 0 || this.currentState === this.STATE_OFFLINE) {
+          console.log('[OfflineManager] Host response detected! Initiating session revalidation...');
+          await this.handleReconnection();
+        } else {
+          const wasChecking = this.currentState === this.STATE_CHECKING;
+          this.consecutiveFailures = 0;
+          this.currentState = this.STATE_ONLINE;
+          this.lastOnlineTimestamp = Date.now();
+          if (wasChecking) {
+            this.hideBanners();
+            this.unlockMutations();
+            window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_ONLINE } }));
+          }
+        }
+      } else {
+        this.handleFailure();
+      }
+    } catch (e) {
+      this.handleFailure();
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      this.heartbeatInFlight = false;
+    }
+  },
+
+  handleFailure() {
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures >= 3 && this.currentState !== this.STATE_OFFLINE) {
+      this.transitionToOffline();
+    }
+  },
+
+  transitionToOffline() {
+    this.currentState = this.STATE_OFFLINE;
+    console.warn('[OfflineManager] Host server disconnected! Transitioned to OFFLINE READ-ONLY MODE.');
+    this.showOfflineBanner();
+    this.lockdownMutations();
+    window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_OFFLINE } }));
+  },
+
+  async handleReconnection() {
+    this.currentState = this.STATE_RECONNECTING;
+    this.showReconnectingBanner();
+
+    try {
+      const validateUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+        ? window.TauriBridge.resolveApiUrl('/api/auth/validate-session')
+        : '/api/auth/validate-session';
+
+      const resp = await fetch(validateUrl, {
+        method: 'GET',
+        headers: {
+          'X-VS-Device-Id': getDeviceId(),
+          ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {})
+        },
+        credentials: 'include'
+      });
+
+      if (resp.status === 403) {
+        const body = await resp.json().catch(() => ({}));
+        if (body.error && body.error.toLowerCase().includes('revoked')) {
+          this.transitionToRevoked();
+          return;
+        }
+      }
+
+      this.consecutiveFailures = 0;
+      this.currentState = this.STATE_ONLINE;
+      this.lastOnlineTimestamp = Date.now();
+      console.log('[OfflineManager] Reconnected to Host! Restored ONLINE mode.');
+      this.hideBanners();
+      this.unlockMutations();
+      window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_ONLINE } }));
+
+      // Refresh records from authoritative host
+      if (typeof clientsPage === 'function' && current === 'clients') {
+        api('/api/clients').then(cl => {
+          if (Array.isArray(cl)) {
+            clients = cl;
+            if (typeof renderClients === 'function') renderClients();
+          }
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[OfflineManager] Reconnection validation failed, remaining offline:', e);
+      this.transitionToOffline();
+    }
+  },
+
+  transitionToRevoked() {
+    this.currentState = this.STATE_REVOKED;
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    this.clearCache();
+    console.error('[OfflineManager] DEVICE REVOKED by host administrator.');
+    this.showRevokedOverlay();
+    window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_REVOKED } }));
+  },
+
+  clearCache() {
+    this._memoryCache = null;
+    try {
+      sessionStorage.removeItem(this.cachedClientsKey);
+      localStorage.removeItem(this.cachedClientsKey);
+    } catch (e) {}
+  },
+
+  _bufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return (typeof btoa === 'function') ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+  },
+
+  _base64ToBuffer(base64) {
+    const binary = (typeof atob === 'function') ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
+  },
+
+  async _deriveEncryptionKey(saltBytes) {
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto : globalThis.crypto;
+    if (!cryptoObj || !cryptoObj.subtle) return null;
+    const deviceId = getDeviceId() || 'dev-default-unbound';
+    const sessionToken = (typeof getSessionToken === 'function' ? getSessionToken() : '') || 'vs-ro-token-salt';
+    const secret = `${deviceId}:${sessionToken}`;
+    const enc = new TextEncoder();
+    const keyMaterial = await cryptoObj.subtle.importKey(
+      'raw',
+      enc.encode(secret),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+    return await cryptoObj.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: saltBytes,
+        iterations: 10000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  },
+
+  async encryptPayload(plaintextObj) {
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto : globalThis.crypto;
+    if (!cryptoObj || !cryptoObj.subtle) {
+      return { v: 0, raw: plaintextObj };
+    }
+    const salt = cryptoObj.getRandomValues(new Uint8Array(16));
+    const iv = cryptoObj.getRandomValues(new Uint8Array(12));
+    const key = await this._deriveEncryptionKey(salt);
+    const enc = new TextEncoder();
+    const encodedData = enc.encode(JSON.stringify(plaintextObj));
+    const ciphertextBuffer = await cryptoObj.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encodedData
+    );
+    return {
+      v: 1,
+      algo: 'AES-GCM-256',
+      kdf: 'PBKDF2-SHA256-100K',
+      salt: this._bufferToBase64(salt),
+      iv: this._bufferToBase64(iv),
+      ciphertext: this._bufferToBase64(ciphertextBuffer),
+      deviceId: getDeviceId(),
+      cachedAt: plaintextObj.timestamp,
+      expiresAt: plaintextObj.expiresAt
+    };
+  },
+
+  async decryptRecord(record) {
+    if (!record) return null;
+    if (record.v === 0 && record.raw) return record.raw;
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto : globalThis.crypto;
+    if (!cryptoObj || !cryptoObj.subtle) return null;
+
+    // Device binding check
+    if (record.deviceId && record.deviceId !== getDeviceId()) {
+      console.warn('[OfflineManager] Cache device binding mismatch. Refusing decryption.');
+      return null;
+    }
+
+    // Expiry check (12-hour TTL)
+    if (record.expiresAt && Date.now() > new Date(record.expiresAt).getTime()) {
+      console.warn('[OfflineManager] Cache expired. Purging.');
+      this.clearCache();
+      return null;
+    }
+
+    try {
+      const salt = new Uint8Array(this._base64ToBuffer(record.salt));
+      const iv = new Uint8Array(this._base64ToBuffer(record.iv));
+      const ciphertext = this._base64ToBuffer(record.ciphertext);
+      const key = await this._deriveEncryptionKey(salt);
+      const decryptedBuffer = await cryptoObj.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        ciphertext
+      );
+      const dec = new TextDecoder();
+      return JSON.parse(dec.decode(decryptedBuffer));
+    } catch (e) {
+      console.warn('[OfflineManager] Decryption failed or tampered cache:', e);
+      return null;
+    }
+  },
+
+  cacheClients(clientList) {
+    if (!Array.isArray(clientList)) return;
+    const now = new Date();
+    const expires = new Date(now.getTime() + 12 * 60 * 60 * 1000); // 12-hour TTL
+    const payload = {
+      timestamp: now.toISOString(),
+      expiresAt: expires.toISOString(),
+      deviceId: getDeviceId(),
+      clients: clientList
+    };
+    this._memoryCache = payload;
+    this.encryptPayload(payload).then(encryptedRecord => {
+      try {
+        sessionStorage.setItem(this.cachedClientsKey, JSON.stringify(encryptedRecord));
+      } catch (e) {
+        console.warn('[OfflineManager] Failed to persist encrypted cache:', e);
+      }
+    }).catch(err => {
+      console.warn('[OfflineManager] Encryption error:', err);
+    });
+  },
+
+  getCachedClients() {
+    if (this._memoryCache && (!this._memoryCache.expiresAt || Date.now() <= new Date(this._memoryCache.expiresAt).getTime())) {
+      return this._memoryCache;
+    }
+    try {
+      const raw = sessionStorage.getItem(this.cachedClientsKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed.clients && parsed.timestamp) return parsed;
+      return null;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  async getCachedClientsAsync() {
+    if (this._memoryCache && (!this._memoryCache.expiresAt || Date.now() <= new Date(this._memoryCache.expiresAt).getTime())) {
+      return this._memoryCache;
+    }
+    try {
+      const raw = sessionStorage.getItem(this.cachedClientsKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed.v === 1 && parsed.ciphertext) {
+        const decrypted = await this.decryptRecord(parsed);
+        if (decrypted) {
+          this._memoryCache = decrypted;
+          return decrypted;
+        }
+      } else if (parsed.clients && parsed.timestamp) {
+        this._memoryCache = parsed;
+        return parsed;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  lockdownMutations() {
+    document.body.classList.add('vs-offline-mode');
+    const mutationSelectors = [
+      '#btn-new-client',
+      '#btn-toggle-add-client',
+      '.btn-add-client',
+      '.btn-save',
+      '#btn-trigger-import',
+      '.btn-danger',
+      'button[type="submit"]',
+      '#btn-upload-doc',
+      '.btn-delete',
+      '#btn-edit-client',
+      '.btn-mutate'
+    ];
+    mutationSelectors.forEach(sel => {
+      document.querySelectorAll(sel).forEach(el => {
+        el.setAttribute('data-offline-disabled', 'true');
+        el.disabled = true;
+        el.style.opacity = '0.4';
+        el.style.cursor = 'not-allowed';
+      });
+    });
+  },
+
+  unlockMutations() {
+    document.body.classList.remove('vs-offline-mode');
+    document.querySelectorAll('[data-offline-disabled="true"]').forEach(el => {
+      el.removeAttribute('data-offline-disabled');
+      el.disabled = false;
+      el.style.opacity = '';
+      el.style.cursor = '';
+    });
+  },
+
+  setHostChecking(isChecking) {
+    if (isChecking) {
+      this.currentState = this.STATE_CHECKING;
+      this.lockdownMutations();
+      this.showCheckingBanner();
+      const contentEl = document.querySelector('#content');
+      if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+        renderSkeletonLoader(true);
+      }
+    } else {
+      this.hideBanners();
+      this.unlockMutations();
+    }
+  },
+
+  showCheckingBanner() {
+    let banner = document.getElementById('vs-offline-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'vs-offline-banner';
+      document.body.prepend(banner);
+    }
+    banner.className = 'vs-network-banner vs-banner-checking connection-banner';
+    banner.innerHTML = `
+      <div class="vs-banner-content">
+        <span class="vs-banner-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg></span>
+        <span class="vs-banner-title">Connecting to Central Host...</span>
+        <span class="vs-banner-desc">Edits are paused until Host availability is confirmed.</span>
+      </div>
+    `;
+    banner.style.top = '38px';
+    banner.style.zIndex = '99990';
+    banner.style.display = 'block';
+
+    const contentEl = document.querySelector('#content');
+    if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+      renderSkeletonLoader(true);
+    }
+  },
+
+  showOfflineBanner() {
+    let banner = document.getElementById('vs-offline-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'vs-offline-banner';
+      banner.className = 'vs-network-banner vs-banner-offline connection-banner';
+      document.body.prepend(banner);
+    }
+    banner.className = 'vs-network-banner vs-banner-offline connection-banner';
+    banner.style.top = '38px';
+    banner.style.zIndex = '99990';
+    const cachedData = this.getCachedClients();
+    const cachedTime = cachedData ? new Date(cachedData.timestamp).toLocaleTimeString() : 'N/A';
+    banner.innerHTML = `
+      <div class="vs-banner-content">
+        <span class="vs-banner-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+        <span class="vs-banner-title">Central Server Disconnected — Offline Read-Only Mode</span>
+        <span class="vs-banner-desc">Record modifications and uploads are disabled. Displaying cached records (${cachedTime}).</span>
+        <span class="vs-banner-stale-tag">Cached Data</span>
+      </div>
+    `;
+    banner.style.display = 'block';
+  },
+
+  showReconnectingBanner() {
+    let banner = document.getElementById('vs-offline-banner');
+    if (banner) {
+      banner.className = 'vs-network-banner vs-banner-reconnecting connection-banner';
+      banner.style.top = '38px';
+      banner.style.zIndex = '99990';
+      banner.innerHTML = `
+        <div class="vs-banner-content">
+          <span class="vs-banner-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg></span>
+          <span class="vs-banner-title">Reconnecting to Central Host...</span>
+          <span class="vs-banner-desc">Validating workstation authorization and fetching fresh records.</span>
+        </div>
+      `;
+    }
+  },
+
+  hideBanners() {
+    const banner = document.getElementById('vs-offline-banner');
+    if (banner) banner.style.display = 'none';
+  },
+
+  showRevokedOverlay() {
+    this.hideBanners();
+    let overlay = document.getElementById('vs-revoked-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'vs-revoked-overlay';
+      overlay.className = 'vs-modal-backdrop vs-revoked-backdrop';
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div class="vs-revoked-card">
+        <div class="vs-revoked-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+        <h2>Workstation Access Revoked</h2>
+        <p>This client device has been revoked by the Host Administrator (ADR-015 Central Authority).</p>
+        <p class="vs-revoked-sub">Local cached data has been purged for security. Please request a new pairing PIN from the administrator to re-pair this workstation.</p>
+        <div class="vs-revoked-actions">
+          <button class="btn btn-primary" onclick="location.reload()">Retry Connection</button>
+        </div>
+      </div>
+    `;
+    overlay.style.display = 'flex';
+  },
+
+  injectStyles() {
+    if (document.getElementById('vs-offline-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'vs-offline-styles';
+    style.textContent = `
+      .vs-network-banner {
+        position: fixed;
+        top: 38px; /* Positioned right below the 38px frameless titlebar so close/min/max buttons are never hidden */
+        left: 0;
+        right: 0;
+        z-index: 99990;
+        padding: 8px 16px;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        text-align: center;
+        box-shadow: var(--shadow-sm);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        transition: all 0.25s ease;
+      }
+      .vs-banner-offline {
+        background: #0f172a;
+        color: #f8fafc;
+        border-bottom: 1px solid #334155;
+      }
+      .vs-banner-offline .vs-banner-title {
+        color: #f87171;
+      }
+      .vs-banner-reconnecting {
+        background: #1e293b;
+        color: #f8fafc;
+        border-bottom: 1px solid #334155;
+      }
+      .vs-banner-reconnecting .vs-banner-title {
+        color: #fbbf24;
+      }
+      .vs-banner-checking {
+        background: #0f172a;
+        color: #f8fafc;
+        border-bottom: 1px solid #334155;
+      }
+      .vs-banner-checking .vs-banner-title {
+        color: #60a5fa;
+      }
+      .vs-banner-content {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .vs-banner-title {
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .vs-banner-desc {
+        color: #94a3b8;
+        font-size: 12px;
+      }
+      .vs-banner-stale-tag {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fbbf24;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        border: 1px solid rgba(251, 191, 36, 0.3);
+      }
+      .vs-offline-badge {
+        display: inline-block;
+        background: #fef2f2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+      }
+      .vs-revoked-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.7);
+        z-index: 100000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(12px);
+      }
+      .vs-revoked-card {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid var(--card-border, #e5e7eb);
+        border-radius: var(--card-radius, 14px);
+        padding: 32px;
+        max-width: 460px;
+        text-align: center;
+        color: var(--tx, #0f172a);
+        box-shadow: var(--shadow-md);
+      }
+      .vs-revoked-icon {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 16px;
+      }
+      .vs-revoked-card h2 {
+        color: #b91c1c;
+        margin-bottom: 10px;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .vs-revoked-sub {
+        font-size: 13px;
+        color: var(--tx2, #475569);
+        margin-top: 8px;
+        margin-bottom: 24px;
+        line-height: 1.5;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+};
+
+window.VSOfflineManager = VSOfflineManager;
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => VSOfflineManager.init());
+  } else {
+    VSOfflineManager.init();
+  }
+}
+
+const api = async (path, options = {}) => {
+  const method = (options.method || 'GET').toUpperCase();
+
+  // Keep mutations disabled until the Host health check confirms availability.
+  const isReadOnlyMethod = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+  if (VSOfflineManager.currentState === VSOfflineManager.STATE_CHECKING && !isReadOnlyMethod) {
+    return Promise.reject(new Error('Host connection is still being checked. Please retry when the connection status is confirmed.'));
+  }
+
+  // ADR-015: Offline Read-Only Mode enforcement
+  if (VSOfflineManager.isOffline()) {
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+      return Promise.reject(new Error('Offline Read-Only Mode: Central server is unreachable. Record modifications, deletions, and uploads are prohibited.'));
+    }
+    // For GET /api/clients when offline, serve from cache
+    if (path === '/api/clients' || path.startsWith('/api/clients?')) {
+      const cached = await VSOfflineManager.getCachedClientsAsync();
+      if (cached && cached.clients) {
+        console.log('[API Cache] Serving clients list from offline encrypted read-only cache');
+        const enriched = cached.clients.map(c => Object.assign({}, c, { _is_cached: true, _cached_at: cached.timestamp }));
+        return Promise.resolve(enriched);
+      }
+    }
+  }
+
+  const resolvedUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+    ? window.TauriBridge.resolveApiUrl(path)
+    : path;
   const t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
   const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const timeoutMs = options.timeout || (path.startsWith('/api/ai') ? 120000 : (path.startsWith('/api/pdf-studio') ? 60000 : 30000));
@@ -289,13 +1223,15 @@ const api = (path, options = {}) => {
     }, timeoutMs);
   }
 
-  return fetch(path, {
+  return fetch(resolvedUrl, {
     credentials: 'include',
     signal: options.signal || (controller ? controller.signal : undefined),
     ...options,
     headers: {
       'Content-Type': 'application/json',
       'X-VS-Device-Id': getDeviceId(),
+      'X-VS-App-Mode': (window.__vsIsClientMode === true) ? 'client' : 'host',
+      ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {}),
       ...(options.headers || {})
     }
   }).then(async r => {
@@ -304,6 +1240,12 @@ const api = (path, options = {}) => {
     if (elapsed > 1000) console.warn(`[API] SLOW RESPONSE: ${path} took ${elapsed}ms`);
     const x = await r.json();
     if (!r.ok) throw Error(x.error || 'Request failed');
+
+    // Auto-cache clients on successful fetch
+    if (path === '/api/clients' && Array.isArray(x)) {
+      VSOfflineManager.cacheClients(x);
+    }
+
     return x;
   }).catch(err => {
     if (timeoutId) clearTimeout(timeoutId);
@@ -314,12 +1256,29 @@ const api = (path, options = {}) => {
     throw err;
   });
 };
+window.api = api;
 
 async function fileToBase64(file) {
   if (!file) return '';
   if (file._b64) return file._b64;
   if (file.base64) return file.base64;
   if (file.file_base64) return file.file_base64;
+  if (typeof FileReader !== 'undefined' && file instanceof Blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = reader.result;
+        if (typeof res === 'string') {
+          const comma = res.indexOf(',');
+          resolve(comma !== -1 ? res.slice(comma + 1) : res);
+        } else {
+          resolve('');
+        }
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
   if (typeof file.arrayBuffer === 'function') {
     const bytes = new Uint8Array(await file.arrayBuffer());
     let binary = '';
@@ -433,171 +1392,843 @@ function dismissSplash() {
     splash.style.pointerEvents = 'none';
     setTimeout(() => { splash.style.display = 'none'; }, 250);
   }
+  const overlay = document.getElementById('vs-daily-startup-splash');
+  if (overlay) {
+    overlay.style.display = 'none';
+    overlay.style.opacity = '0';
+    overlay.style.visibility = 'hidden';
+    overlay.classList.remove('fade-out');
+  }
+  document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
   if (typeof dismissStartupAnimationImmediately === 'function') {
     dismissStartupAnimationImmediately();
   }
 }
 
-function showAuthModal(type = 'login') {
+function setupOtpBoxes(containerSelector, onComplete) {
+  const container = document.querySelector(containerSelector);
+  const hiddenInput = document.getElementById('otp-hidden-field');
+  const stage = document.getElementById('otp-flip-stage');
+  if (!container || !hiddenInput) return { getValue: () => '', clear: () => {}, setError: () => {}, triggerFlip: () => {} };
+
+  const slabs = Array.from(container.querySelectorAll('.vs-otp-box-3d'));
+
+  const updateDisplay = () => {
+    const raw = hiddenInput.value.replace(/[^0-9]/g, '').slice(0, 6);
+    hiddenInput.value = raw;
+    slabs.forEach((slab, idx) => {
+      const valEl = slab.querySelector('.otp-val');
+      const caret = slab.querySelector('.vs-otp-caret');
+      const digit = raw[idx] || '';
+      if (valEl) valEl.textContent = digit;
+      slab.classList.toggle('filled', !!digit);
+      slab.classList.toggle('active', idx === raw.length);
+      if (caret) caret.style.display = (idx === raw.length) ? 'inline-block' : 'none';
+    });
+
+    if (raw.length === 6 && typeof onComplete === 'function') {
+      onComplete(raw);
+    }
+  };
+
+  hiddenInput.addEventListener('input', updateDisplay);
+  hiddenInput.addEventListener('focus', () => {
+    const len = hiddenInput.value.length;
+    slabs.forEach((slab, idx) => slab.classList.toggle('active', idx === Math.min(len, 5)));
+  });
+  hiddenInput.addEventListener('blur', () => {
+    slabs.forEach(slab => slab.classList.remove('active'));
+  });
+
+  container.addEventListener('click', () => hiddenInput.focus());
+
+  return {
+    getValue: () => hiddenInput.value.trim(),
+    clear: () => {
+      hiddenInput.value = '';
+      slabs.forEach(s => {
+        s.style.setProperty('--ry', '0deg');
+        s.classList.remove('filled', 'active', 'good');
+        const v = s.querySelector('.otp-val');
+        if (v) v.textContent = '';
+      });
+      updateDisplay();
+    },
+    setError: (err) => {
+      if (stage) stage.classList.toggle('error', !!err);
+      if (err) setTimeout(() => stage && stage.classList.remove('error'), 500);
+    },
+    triggerFlip: () => {
+      slabs.forEach((b, i) => {
+        setTimeout(() => {
+          b.style.setProperty('--ry', '360deg');
+        }, 80 + i * 100);
+      });
+      setTimeout(() => {
+        slabs.forEach((b, i) => {
+          setTimeout(() => b.classList.add('good'), i * 50);
+        });
+      }, 1000);
+    },
+    focusFirst: () => hiddenInput.focus()
+  };
+}
+
+async function showAuthModal(type = 'otp') {
   dismissSplash();
+  document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
+
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+
+  if (!isClient) {
+    if (type !== 'host-login' && type !== 'host-setup') {
+      type = 'host-login';
+    }
+  } else {
+    if (type === 'host-login' || type === 'host-setup') {
+      type = 'otp';
+    }
+  }
+
+  const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
+    ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
+    : 'http://127.0.0.1:8768';
+
+  let title = 'Verify Workstation PIN';
+  let desc = 'Enter the 6-digit PIN generated by the Host PC to pair this workstation.';
+  let tabsHtml = '';
+
+  if (!isClient) {
+    title = type === 'host-setup' ? 'Master Administrator Setup' : 'Host Administrator Sign In';
+    desc = 'Authoritative Central Server & Master Database Vault';
+    tabsHtml = `
+      <button id="tab-host-login" class="${type === 'host-login' ? 'active' : ''}">Host Sign In</button>
+      <button id="tab-host-setup" class="${type === 'host-setup' ? 'active' : ''}">Master Setup / Reset</button>
+    `;
+  } else {
+    if (type === 'register') {
+      title = 'Request Workstation Access';
+      desc = 'Submit an access request to the Host PC to obtain your 6-digit pairing PIN.';
+    } else if (type === 'login') {
+      title = 'Sign In to VS Database';
+      desc = 'Enter your approved staff credentials to access VS Database.';
+    }
+    tabsHtml = `
+      <button id="tab-otp" class="${type === 'otp' ? 'active' : ''}">Pair (PIN)</button>
+      <button id="tab-register" class="${type === 'register' ? 'active' : ''}">Request Access</button>
+      <button id="tab-login" class="${type === 'login' ? 'active' : ''}">Sign In</button>
+    `;
+  }
+
   authRoot.innerHTML = `
     <div class="auth-overlay">
       <div class="auth-box">
-        <div style="text-align:center;margin-bottom:20px;">
-          <img src="logo.png" alt="VS Database" style="height:50px;object-fit:contain;">
-          <h2 style="margin:10px 0 4px;font-size:20px;">${type === 'setup-host' ? 'Host Admin Setup' : 'Database Access'}</h2>
-          <p class="muted" style="font-size:12px;">${type === 'setup-host' ? 'Create the master Host administrator account for this server.' : 'Sign in to access VS Database on this device.'}</p>
+        <div style="text-align:center;margin-bottom:18px;">
+          <img src="logo.png" alt="VS Database" style="height:48px;object-fit:contain;">
+          <h2 style="margin:10px 0 4px;font-size:20px;">${title}</h2>
+          <p class="muted" style="font-size:12px;margin:0;">${desc}</p>
         </div>
-        ${type !== 'setup-host' ? `
-          <div class="auth-tabs">
-            <button id="tab-login" class="${type === 'login' ? 'active' : ''}">Sign In</button>
-            <button id="tab-request" class="${type === 'request' ? 'active' : ''}">Request Device Access</button>
-          </div>
-        ` : ''}
+        <div class="auth-tabs">
+          ${tabsHtml}
+        </div>
         <div id="auth-form-body"></div>
       </div>
     </div>
   `;
 
-  if (type === 'setup-host') renderSetupHostForm();
-  else if (type === 'request') renderRequestAccessForm();
-  else renderLoginForm();
+  if (!isClient) {
+    document.querySelector('#tab-host-login')?.addEventListener('click', () => showAuthModal('host-login'));
+    document.querySelector('#tab-host-setup')?.addEventListener('click', () => showAuthModal('host-setup'));
+    if (type === 'host-setup') {
+      renderHostSetupForm();
+    } else {
+      renderHostLoginForm();
+    }
+  } else {
+    document.querySelector('#tab-otp')?.addEventListener('click', () => showAuthModal('otp'));
+    document.querySelector('#tab-register')?.addEventListener('click', () => showAuthModal('register'));
+    document.querySelector('#tab-login')?.addEventListener('click', () => showAuthModal('login'));
+    if (type === 'otp') {
+      renderOtpPairingForm();
+    } else if (type === 'register') {
+      renderRegisterForm();
+    } else {
+      renderLoginForm();
+    }
+  }
 }
 
-function renderSetupHostForm() {
+function renderHostLoginForm() {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
   form.innerHTML = `
-    <div><label>Host Admin User ID *</label><input id="host-user" placeholder="e.g. admin or vimal" autofocus></div>
-    <div style="margin-top:12px;"><label>Admin Password * (min 6 chars)</label><input id="host-pass" type="password" placeholder="••••••••"></div>
-    <div style="margin-top:12px;"><label>Host PC / Device Name</label><input id="host-device" value="${getDeviceName() || 'Main Server PC'}"></div>
-    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-submit-host" style="width:100%;">Create Host Account & Sign In</button></div>
+    <div style="background:rgba(238,242,255,0.7);border:1px solid #c7d2fe;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:#3730a3;">
+      <svg class="i" style="width:15px;height:15px;display:inline-block;vertical-align:middle;margin-right:4px;stroke:#2563eb;" aria-hidden="true"><use href="#shield"/></svg><strong>Host Server Console:</strong> Sign in with Master Administrator credentials to manage clients, folders, staff workstations, and database backups.
+    </div>
+    <div>
+      <label>Host Admin User ID</label>
+      <input id="host-login-user" value="Rudra_Dev" placeholder="e.g. Rudra_Dev" autofocus>
+    </div>
+    <div style="margin-top:12px;">
+      <label>Master Password</label>
+      <input id="host-login-pass" type="password" placeholder="••••••••">
+    </div>
+    <div class="actions" style="margin-top:20px;">
+      <button class="primary" id="btn-do-host-login" style="width:100%;font-weight:700;">Sign In as Host Administrator</button>
+    </div>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted);">
+      First time or forgot password? <a href="#" id="link-to-host-setup" style="color:var(--blue);font-weight:700;text-decoration:none;">Set / Reset Master Admin &rarr;</a>
+    </div>
     <div id="auth-result"></div>
   `;
-  document.querySelector('#btn-submit-host').onclick = async () => {
-    const user_id = document.querySelector('#host-user').value.trim();
-    const password = document.querySelector('#host-pass').value;
-    const device_name = document.querySelector('#host-device').value.trim() || 'Main Server PC';
+
+  document.querySelector('#link-to-host-setup')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('host-setup');
+  });
+
+  const doHostLogin = async () => {
+    const user_id = document.querySelector('#host-login-user')?.value.trim();
+    const password = document.querySelector('#host-login-pass')?.value;
     const result = document.querySelector('#auth-result');
-    if (!user_id || !password) { result.innerHTML = message('Please enter User ID and Password.', true); return; }
+    if (!user_id || !password) {
+      if (result) result.innerHTML = message('Please enter Master User ID and Password.', true);
+      return;
+    }
     try {
-      setDeviceName(device_name);
-      await api('/api/auth/setup-host', {
+      if (result) result.innerHTML = message('Authenticating Host Administrator...');
+      const res = await api('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ user_id, password, device_name, device_id: getDeviceId() })
+        body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
       });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
       authRoot.innerHTML = '';
       await load();
-    } catch (e) { result.innerHTML = message(e.message, true); }
+    } catch (e) {
+      if (result) result.innerHTML = message(e.message, true);
+    }
+  };
+
+  document.querySelector('#btn-do-host-login')?.addEventListener('click', doHostLogin);
+  document.querySelector('#host-login-pass')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doHostLogin();
+  });
+  document.querySelector('#host-login-user')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.querySelector('#host-login-pass')?.focus();
+  });
+}
+
+function renderHostSetupForm() {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  form.innerHTML = `
+    <div style="background:rgba(238,242,255,0.7);border:1px solid #c7d2fe;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:#3730a3;">
+      <svg class="i" style="width:15px;height:15px;display:inline-block;vertical-align:middle;margin-right:4px;stroke:#2563eb;" aria-hidden="true"><use href="#setup"/></svg><strong>Master Administrator Setup:</strong> Configure or reset the primary master credentials for this Host server.
+    </div>
+    <div>
+      <label>Host Administrator Name</label>
+      <input id="host-setup-fullname" value="Rudraksh Sikhwal" placeholder="e.g. Rudraksh Sikhwal">
+    </div>
+    <div style="margin-top:10px;">
+      <label>Host Admin User ID</label>
+      <input id="host-setup-user" value="Rudra_Dev" placeholder="e.g. Rudra_Dev">
+    </div>
+    <div style="margin-top:10px;">
+      <label>New Master Password (min 6 characters)</label>
+      <input id="host-setup-pass" type="password" placeholder="••••••••">
+    </div>
+    <div style="margin-top:10px;">
+      <label>Confirm Master Password</label>
+      <input id="host-setup-pass-confirm" type="password" placeholder="••••••••">
+    </div>
+    <div class="actions" style="margin-top:18px;">
+      <button class="primary" id="btn-submit-host-setup" style="width:100%;font-weight:700;">Save & Activate Host Administrator</button>
+    </div>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted);">
+      Already configured? <a href="#" id="link-to-host-login" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign In here &rarr;</a>
+    </div>
+    <div id="auth-result"></div>
+  `;
+
+  document.querySelector('#link-to-host-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('host-login');
+  });
+
+  document.querySelector('#btn-submit-host-setup')?.addEventListener('click', async () => {
+    const full_name = document.querySelector('#host-setup-fullname')?.value.trim() || 'Rudraksh Sikhwal';
+    const user_id = document.querySelector('#host-setup-user')?.value.trim() || 'Rudra_Dev';
+    const password = document.querySelector('#host-setup-pass')?.value;
+    const confirm = document.querySelector('#host-setup-pass-confirm')?.value;
+    const result = document.querySelector('#auth-result');
+
+    if (!user_id || !password) {
+      if (result) result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
+    if (password.length < 6) {
+      if (result) result.innerHTML = message('Password must be at least 6 characters.', true);
+      return;
+    }
+    if (confirm && password !== confirm) {
+      if (result) result.innerHTML = message('Passwords do not match.', true);
+      return;
+    }
+
+    try {
+      if (result) result.innerHTML = message('Saving Host Master Administrator credentials...');
+      const res = await api('/api/auth/setup-host', {
+        method: 'POST',
+        body: JSON.stringify({ user_id, password, full_name, device_id: getDeviceId(), device_name: 'Host PC' })
+      });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
+      if (result) result.innerHTML = message('Host Administrator activated successfully! Loading dashboard...', false);
+      setTimeout(async () => {
+        authRoot.innerHTML = '';
+        await load();
+      }, 500);
+    } catch (e) {
+      const errMsg = e.message || '';
+      if (errMsg.toLowerCase().includes('failed to fetch') || errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('abort')) {
+        if (result) result.innerHTML = message('Connecting to Central Server (port 8768)... Server is initializing, please wait 3 seconds and retry.', true);
+        if (typeof waitForBackend === 'function') {
+          await waitForBackend(6000, 400);
+        }
+      } else {
+        if (result) result.innerHTML = message(errMsg, true);
+      }
+    }
+  });
+}
+
+function wireHostConnectivityChecker(inputId, statusId, testBtnId) {
+  const checkStatus = async () => {
+    const hostStatusEl = document.querySelector(statusId);
+    const hostInput = document.querySelector(inputId);
+    if (!hostStatusEl || !hostInput) return;
+    let url = hostInput.value.trim();
+    if (!url) {
+      hostStatusEl.innerHTML = '<span style="color:var(--er);">Host IP required</span>';
+      return;
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'http://' + url;
+    while (url.endsWith('/')) url = url.slice(0, -1);
+    hostStatusEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">Connecting...</span>';
+    try {
+      const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const tid = controller ? setTimeout(() => controller.abort(), 2500) : null;
+      const r = await fetch(`${url}/api/health`, { method: 'GET', signal: controller?.signal });
+      if (tid) clearTimeout(tid);
+      if (r.ok) {
+        hostStatusEl.innerHTML = '<span style="color:#10b981;font-weight:600;font-size:11px;display:inline-flex;align-items:center;gap:5px;"><span style="width:6px;height:6px;border-radius:50%;background:#10b981;display:inline-block;"></span>Host Online</span>';
+        if (window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+          window.TauriBridge.setHostUrl(url);
+        }
+      } else {
+        hostStatusEl.innerHTML = `<span style="color:var(--wn);font-weight:600;font-size:11px;display:inline-flex;align-items:center;gap:5px;"><span style="width:6px;height:6px;border-radius:50%;background:#f59e0b;display:inline-block;"></span>HTTP ${r.status}</span>`;
+      }
+    } catch (_) {
+      hostStatusEl.innerHTML = '<span style="color:var(--er);font-weight:600;font-size:11px;display:inline-flex;align-items:center;gap:5px;"><span style="width:6px;height:6px;border-radius:50%;background:#ef4444;display:inline-block;"></span>Host Unreachable (Port 8768)</span>';
+    }
+  };
+
+  document.querySelector(testBtnId)?.addEventListener('click', (e) => {
+    e.preventDefault();
+    checkStatus();
+  });
+  document.querySelector(inputId)?.addEventListener('blur', checkStatus);
+  setTimeout(checkStatus, 150);
+}
+
+function renderOtpPairingForm() {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
+    ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
+    : 'http://127.0.0.1:8768';
+
+  form.innerHTML = `
+    <div class="vs-host-cfg-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <label style="margin:0;"><span>Host Server Address</span> <span class="muted" style="font-weight:normal;">Port 8768</span></label>
+        <span id="otp-host-live-status" style="font-size:11px;font-weight:600;color:var(--muted);">Checking status...</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="otp-host-url" value="${escapeHtml(currentHost)}" placeholder="e.g. 192.168.1.50:8768" style="flex:1;">
+        <button type="button" class="btn secondary btn-sm" id="btn-test-otp-host" style="padding:0 12px;font-size:12px;white-space:nowrap;">Test</button>
+      </div>
+    </div>
+    <div>
+      <label>Workstation Name</label>
+      <input id="otp-device-name" value="${escapeHtml(getDeviceName() || 'Office Workstation')}">
+    </div>
+    <div class="vs-otp-wrap">
+      <div class="vs-otp-header">
+        <div class="vs-otp-title">Let's verify your pairing PIN</div>
+        <p class="vs-otp-subtitle">Enter the 6-digit PIN approved by the Host PC.<br>It'll auto-verify with 3D glass flip once entered.</p>
+      </div>
+      <div class="vs-otp-flip-stage" id="otp-flip-stage">
+        <div class="vs-otp-flip-ring" id="otp-box-row">
+          <div class="vs-otp-box-3d" data-index="0" style="--x: -130px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="1" style="--x: -78px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="2" style="--x: -26px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="3" style="--x: 26px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="4" style="--x: 78px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+          <div class="vs-otp-box-3d" data-index="5" style="--x: 130px; --y: 0px; --ry: 0deg;"><div class="otp-in"><span class="otp-val"></span><i class="vs-otp-caret" style="display:none;"></i></div></div>
+        </div>
+        <input id="otp-hidden-field" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;z-index:5;">
+      </div>
+      <div class="vs-otp-footer">
+        Need PIN? Ask Host Admin in <b>Users & Devices</b> to approve request.
+      </div>
+    </div>
+    <div class="actions" style="margin-top:16px;">
+      <button class="primary" id="btn-submit-otp" style="width:100%;">Verify & Pair Workstation</button>
+    </div>
+    <div id="auth-result" style="margin-top:14px;"></div>
+  `;
+
+  wireHostConnectivityChecker('#otp-host-url', '#otp-host-live-status', '#btn-test-otp-host');
+
+  const doVerify = async (pin) => {
+    const result = document.querySelector('#auth-result');
+    const hostInput = document.querySelector('#otp-host-url');
+    const deviceNameInput = document.querySelector('#otp-device-name');
+    if (hostInput && hostInput.value.trim() && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+      window.TauriBridge.setHostUrl(hostInput.value.trim());
+    }
+    const device_name = (deviceNameInput?.value.trim()) || 'Office Workstation';
+    setDeviceName(device_name);
+
+    if (!pin || pin.length < 6) {
+      if (result) result.innerHTML = message('Please enter all 6 digits of the pairing PIN.', true);
+      otpHandler.setError(true);
+      return;
+    }
+
+    if (result) result.innerHTML = message('Verifying PIN with Host...');
+    try {
+      const res = await api('/api/host/pairing/claim-pin', {
+        method: 'POST',
+        body: JSON.stringify({ pin, device_id: getDeviceId(), device_name })
+      });
+
+      if (res && (res.ok || res.token)) {
+        otpHandler.triggerFlip();
+        if (result) result.innerHTML = message('✓ 6-Digit PIN Verified! Slabs Flipped & Paired Successfully!');
+        const token = res.session_token || res.token;
+        if (token) setSessionToken(token);
+        localStorage.setItem('vs-client-registered', 'true');
+        setTimeout(async () => {
+          authRoot.innerHTML = '';
+          await load();
+        }, 1600);
+      } else {
+        throw new Error(res.error || 'Pairing failed. Please verify PIN.');
+      }
+    } catch (err) {
+      otpHandler.setError(true);
+      if (result) result.innerHTML = message(err.message || 'Invalid or expired pairing PIN.', true);
+      setTimeout(() => {
+        otpHandler.clear();
+        otpHandler.focusFirst();
+      }, 900);
+    }
+  };
+
+  const otpHandler = setupOtpBoxes('#otp-box-row', (fullPin) => {
+    doVerify(fullPin);
+  });
+
+  document.querySelector('#btn-submit-otp').onclick = () => {
+    doVerify(otpHandler.getValue());
   };
 }
 
 function renderLoginForm() {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
+    ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
+    : 'http://127.0.0.1:8768';
+
   form.innerHTML = `
-    <div><label>User ID</label><input id="login-user" placeholder="Enter your User ID" autofocus></div>
+    <div class="vs-host-cfg-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <label style="margin:0;"><span>Host Server Address</span> <span class="muted" style="font-weight:normal;">Port 8768</span></label>
+        <span id="login-host-live-status" style="font-size:11px;font-weight:600;color:var(--muted);">Checking status...</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="login-host-url" value="${escapeHtml(currentHost)}" placeholder="e.g. 192.168.1.50:8768" style="flex:1;">
+        <button type="button" class="btn secondary btn-sm" id="btn-test-login-host" style="padding:0 12px;font-size:12px;white-space:nowrap;">Test</button>
+      </div>
+    </div>
+    <div style="margin-top:12px;"><label>User ID</label><input id="login-user" placeholder="Enter your User ID" autofocus></div>
     <div style="margin-top:12px;"><label>Password</label><input id="login-pass" type="password" placeholder="••••••••"></div>
     <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-do-login" style="width:100%;">Sign In</button></div>
+    <div style="text-align:center;margin-top:16px;font-size:12px;color:var(--text-muted);display:flex;justify-content:center;gap:14px;">
+      <a href="#" id="link-to-pair" style="color:var(--blue);font-weight:700;text-decoration:none;">Pair with PIN &rarr;</a>
+      <span style="color:var(--line);">|</span>
+      <a href="#" id="link-to-register" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign Up / Request &rarr;</a>
+    </div>
     <div id="auth-result"></div>
   `;
-  document.querySelector('#tab-login')?.classList.add('active');
-  document.querySelector('#tab-request')?.classList.remove('active');
-  document.querySelector('#tab-request')?.addEventListener('click', () => showAuthModal('request'));
 
-  document.querySelector('#btn-do-login').onclick = async () => {
-    const user_id = document.querySelector('#login-user').value.trim();
-    const password = document.querySelector('#login-pass').value;
+  wireHostConnectivityChecker('#login-host-url', '#login-host-live-status', '#btn-test-login-host');
+
+  document.querySelector('#link-to-pair')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('otp');
+  });
+
+  document.querySelector('#link-to-register')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('register');
+  });
+
+  const doLogin = async () => {
+    const hostInput = document.querySelector('#login-host-url');
+    if (hostInput && hostInput.value.trim() && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+      window.TauriBridge.setHostUrl(hostInput.value.trim());
+    }
+    const user_id = document.querySelector('#login-user')?.value.trim();
+    const password = document.querySelector('#login-pass')?.value;
     const result = document.querySelector('#auth-result');
-    if (!user_id || !password) { result.innerHTML = message('Please enter User ID and Password.', true); return; }
+    if (!user_id || !password) {
+      if (result) result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
     try {
-      await api('/api/auth/login', {
+      if (result) result.innerHTML = message('Signing in...');
+      const res = await api('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
       });
+      if (res && (res.session_token || res.token)) {
+        setSessionToken(res.session_token || res.token);
+      }
       authRoot.innerHTML = '';
       await load();
-    } catch (e) { result.innerHTML = message(e.message, true); }
+    } catch (e) {
+      if (result) result.innerHTML = message(e.message, true);
+    }
   };
+
+  document.querySelector('#btn-do-login')?.addEventListener('click', doLogin);
+  document.querySelector('#login-pass')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.querySelector('#login-user')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.querySelector('#login-pass')?.focus();
+  });
 }
 
-function renderRequestAccessForm() {
+function renderRegisterForm() {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  const currentHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
+    ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
+    : 'http://127.0.0.1:8768';
+
   form.innerHTML = `
-    <div><label>Desired User ID *</label><input id="req-user" placeholder="e.g. Rahul" autofocus></div>
-    <div style="margin-top:12px;"><label>Choose Password * (min 6 chars)</label><input id="req-pass" type="password" placeholder="••••••••"></div>
-    <div style="margin-top:12px;"><label>Device Name (e.g. Accounts-PC, Audit-Laptop)</label><input id="req-device" value="${getDeviceName() || 'Office PC'}"></div>
-    <div class="actions" style="margin-top:20px;"><button class="primary" id="btn-submit-req" style="width:100%;">Submit Access Request to Host</button></div>
+    <div class="vs-host-cfg-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <label style="margin:0;"><span>Host Server Address</span> <span class="muted" style="font-weight:normal;">Port 8768</span></label>
+        <span id="reg-host-live-status" style="font-size:11px;font-weight:600;color:var(--muted);">Checking status...</span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="reg-host-url" value="${escapeHtml(currentHost)}" placeholder="e.g. 192.168.1.50:8768" style="flex:1;">
+        <button type="button" class="btn secondary btn-sm" id="btn-test-reg-host" style="padding:0 12px;font-size:12px;white-space:nowrap;">Test</button>
+      </div>
+    </div>
+    <div><label>Staff Full Name *</label><input id="reg-fullname" placeholder="e.g. Rahul Sharma" autofocus></div>
+    <div style="margin-top:10px;"><label>User ID / Username *</label><input id="reg-user" placeholder="e.g. rahul_office"></div>
+    <div style="margin-top:10px;"><label>Password * (min 6 characters)</label><input id="reg-pass" type="password" placeholder="••••••••"></div>
+    <div style="margin-top:10px;"><label>Confirm Password *</label><input id="reg-pass-confirm" type="password" placeholder="••••••••"></div>
+    <div style="margin-top:10px;"><label>Device / Workstation Name</label><input id="reg-device" value="${escapeHtml(getDeviceName() || 'Office Workstation')}"></div>
+    <div class="actions" style="margin-top:18px;"><button class="primary" id="btn-submit-reg" style="width:100%;">Submit Workstation Access Request</button></div>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-muted);">
+      Already paired? <a href="#" id="link-to-login" style="color:var(--blue);font-weight:700;text-decoration:none;">Sign In here &rarr;</a>
+    </div>
     <div id="auth-result"></div>
   `;
-  document.querySelector('#tab-request')?.classList.add('active');
-  document.querySelector('#tab-login')?.classList.remove('active');
-  document.querySelector('#tab-login')?.addEventListener('click', () => showAuthModal('login'));
 
-  document.querySelector('#btn-submit-req').onclick = async () => {
-    const user_id = document.querySelector('#req-user').value.trim();
-    const password = document.querySelector('#req-pass').value;
-    const device_name = document.querySelector('#req-device').value.trim() || 'Office PC';
+  wireHostConnectivityChecker('#reg-host-url', '#reg-host-live-status', '#btn-test-reg-host');
+
+  document.querySelector('#link-to-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuthModal('login');
+  });
+
+  document.querySelector('#btn-submit-reg').onclick = async () => {
+    const hostInput = document.querySelector('#reg-host-url');
+    if (hostInput && hostInput.value.trim() && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+      window.TauriBridge.setHostUrl(hostInput.value.trim());
+    }
+    const full_name = document.querySelector('#reg-fullname').value.trim();
+    const user_id = document.querySelector('#reg-user').value.trim();
+    const password = document.querySelector('#reg-pass').value;
+    const confirm = document.querySelector('#reg-pass-confirm').value;
+    const device_name = document.querySelector('#reg-device').value.trim() || 'Office Workstation';
     const result = document.querySelector('#auth-result');
-    if (!user_id || !password) { result.innerHTML = message('Please enter User ID and Password.', true); return; }
+
+    if (!user_id || !password) {
+      result.innerHTML = message('Please enter User ID and Password.', true);
+      return;
+    }
+    if (password.length < 6) {
+      result.innerHTML = message('Password must be at least 6 characters.', true);
+      return;
+    }
+    if (confirm && password !== confirm) {
+      result.innerHTML = message('Passwords do not match.', true);
+      return;
+    }
+
     try {
       setDeviceName(device_name);
-      await api('/api/auth/request-access', {
+      result.innerHTML = message('Submitting access request to Host...');
+      const res = await api('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ user_id, password, device_name, device_id: getDeviceId() })
+        body: JSON.stringify({ user_id, password, full_name, device_name, device_id: getDeviceId() })
       });
-      renderWaitingApproval(user_id, password);
-    } catch (e) { result.innerHTML = message(e.message, true); }
+
+      if (res.status === 'approved' || ((res.session_token || res.token) && res.ok)) {
+        result.innerHTML = message('Registration successful! Signing in...');
+        setSessionToken(res.session_token || res.token);
+        localStorage.setItem('vs-client-registered', 'true');
+        authRoot.innerHTML = '';
+        await load();
+      } else {
+        renderWaitingApproval(user_id, password, full_name);
+      }
+    } catch (e) {
+      result.innerHTML = message(e.message, true);
+    }
   };
 }
 
-function renderWaitingApproval(user_id, password) {
+function renderWaitingApproval(user_id, password, full_name = '') {
   const form = document.querySelector('#auth-form-body');
+  if (!form) return;
   form.innerHTML = `
-    <div style="text-align:center;padding:10px 0;">
-      <div style="font-size:36px;margin-bottom:10px;">⏳</div>
-      <h3 style="margin:0 0 8px;">Access Request Submitted</h3>
+    <div style="text-align:center;padding:16px 8px;">
+      <div style="font-size:42px;margin-bottom:12px;animation:glassBlink 2s ease-in-out infinite;">⏳</div>
+      <h3 style="margin:0 0 8px;font-size:18px;">Workstation Request Sent</h3>
       <p class="muted" style="font-size:13px;line-height:1.5;">
-        User: <b>${user_id}</b><br>
-        Device: <b>${getDeviceName()}</b> (<code>${getDeviceId().substring(0, 12)}...</code>)<br><br>
-        Waiting for the Host Administrator to approve your device on the main office PC...
+        User: <b>${escapeHtml(full_name || user_id)}</b> (<code>${escapeHtml(user_id)}</code>)<br>
+        Device: <b>${escapeHtml(getDeviceName())}</b> (<code>${escapeHtml(getDeviceId().substring(0, 12))}...</code>)<br><br>
+        Waiting for Host Administrator to approve this request on the Host PC...
       </p>
-      <div class="actions" style="justify-content:center;margin-top:20px;">
-        <button class="secondary" id="btn-check-req">Check Status Now</button>
-        <button class="secondary" id="btn-cancel-req">Back to Login</button>
+      <div style="background:rgba(241,245,249,0.8);border-radius:10px;padding:12px;margin:16px 0;font-size:12px;color:#475569;">
+        Once approved by Host, this screen will automatically prompt for the 6-digit Activation PIN.
+      </div>
+      <div class="actions" style="justify-content:center;margin-top:16px;">
+        <button class="btn secondary" id="btn-check-req">Check Status Now</button>
+        <button class="btn" id="btn-cancel-req">Back to Sign In</button>
       </div>
       <div id="auth-result" style="margin-top:14px;"></div>
     </div>
   `;
   document.querySelector('#btn-cancel-req').onclick = () => showAuthModal('login');
 
+  let pollActive = true;
   const checkStatus = async () => {
-    const res = await api(`/api/auth/request-status?device_id=${encodeURIComponent(getDeviceId())}&user_id=${encodeURIComponent(user_id)}`);
-    const resEl = document.querySelector('#auth-result');
-    if (res.status === 'approved') {
-      if (resEl) resEl.innerHTML = message('Device approved! Logging in...');
-      try {
-        await api('/api/auth/login', {
-          method: 'POST',
-          body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
-        });
-        authRoot.innerHTML = '';
-        await load();
-      } catch (e) {
-        if (resEl) resEl.innerHTML = message('Device approved! Please enter password on Login tab.');
-        setTimeout(() => showAuthModal('login'), 1500);
+    if (!pollActive) return;
+    try {
+      const res = await api(`/api/auth/request-status?device_id=${encodeURIComponent(getDeviceId())}&user_id=${encodeURIComponent(user_id)}`);
+      const resEl = document.querySelector('#auth-result');
+      if (res.status === 'approved_pending_pin') {
+        pollActive = false;
+        renderGlassFlipOtp(user_id, res.full_name || full_name);
+      } else if (res.status === 'approved') {
+        pollActive = false;
+        if (resEl) resEl.innerHTML = message('Device approved! Signing in...');
+        try {
+          const loginRes = await api('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ user_id, password, device_id: getDeviceId() })
+          });
+          if (loginRes && (loginRes.session_token || loginRes.token)) {
+            setSessionToken(loginRes.session_token || loginRes.token);
+          }
+          authRoot.innerHTML = '';
+          await load();
+        } catch (_) {
+          renderGlassFlipOtp(user_id, res.full_name || full_name);
+        }
+      } else if (res.status === 'rejected') {
+        pollActive = false;
+        if (resEl) resEl.innerHTML = message('Access request was rejected by Host administrator.', true);
       }
-    } else if (res.status === 'rejected') {
-      if (resEl) resEl.innerHTML = message('Access request was rejected by Host.', true);
-    }
+    } catch (_) {}
   };
 
   document.querySelector('#btn-check-req').onclick = checkStatus;
   const timer = setInterval(() => {
-    if (!document.querySelector('#btn-check-req')) { clearInterval(timer); return; }
+    if (!document.querySelector('#btn-check-req') || !pollActive) {
+      clearInterval(timer);
+      return;
+    }
     checkStatus().catch(() => {});
-  }, 4000);
+  }, 1500);
 }
 
-let startupVideoDismissTimeout = null;
+function renderGlassFlipOtp(user_id, fullName = '') {
+  const form = document.querySelector('#auth-form-body');
+  if (!form) return;
+  const LENGTH = 6;
+  const GAP = 54;
+
+  form.innerHTML = `
+    <div class="vs-glass-otp-card">
+      <div class="blobs"><i></i><i></i><i></i></div>
+      <div style="display:flex;justify-content:center;margin-bottom:10px;"><svg class="i" style="width:36px;height:36px;stroke:var(--pri);"><use href="#lock"/></svg></div>
+      <h1 style="font-size:20px;font-weight:700;margin:0 0 4px;color:#0f172a;">Enter 6-Digit Activation PIN</h1>
+      <p style="margin:0 0 14px;font-size:12.5px;color:#64748b;line-height:1.4;">
+        Host Administrator approved workstation access for <b>${escapeHtml(fullName || user_id)}</b>.<br>
+        Enter the 6-digit PIN displayed on the Host PC:
+      </p>
+
+      <div class="vs-glass-stage" id="otp-glass-stage">
+        <svg class="vs-glass-links" viewBox="-180 -90 360 180">
+          <path id="otp-l1" class="glow" d=""></path>
+          <path id="otp-l2" class="core" d=""></path>
+        </svg>
+        <div class="vs-glass-ring" id="otp-glass-ring"></div>
+      </div>
+
+      <input type="text" id="otp-glass-hidden-input" maxlength="6" inputmode="numeric" autocomplete="one-time-code" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;">
+
+      <div class="vs-glass-ok" id="otp-glass-ok">
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+        <h2 style="margin:16px 0 4px;font-size:18px;color:#0f172a;">Workstation Activated!</h2>
+        <p style="font-size:12px;color:#64748b;margin:0;">Launching VS Database workspace...</p>
+      </div>
+
+      <div id="otp-glass-status" style="margin-top:10px;font-size:12px;min-height:20px;font-weight:600;"></div>
+    </div>
+  `;
+
+  const stage = document.querySelector('#otp-glass-stage');
+  const ringEl = document.querySelector('#otp-glass-ring');
+  const okEl = document.querySelector('#otp-glass-ok');
+  const field = document.querySelector('#otp-glass-hidden-input');
+  const statusEl = document.querySelector('#otp-glass-status');
+
+  const boxes = [];
+  for (let i = 0; i < LENGTH; i++) {
+    const b = document.createElement('div');
+    b.className = 'vs-glass-box';
+    b.innerHTML = '<div class="in"><span></span><i class="vs-glass-caret"></i></div>';
+    b.onclick = () => { field.focus(); };
+    ringEl.appendChild(b);
+    boxes.push(b);
+  }
+
+  const place = (i, x, y, extra = {}) => {
+    const s = boxes[i].style;
+    s.setProperty('--x', x + 'px');
+    s.setProperty('--y', y + 'px');
+    s.setProperty('--ry', extra.ry || '0deg');
+    s.setProperty('--rot', extra.rot || '0deg');
+    s.setProperty('--s', extra.s !== undefined ? extra.s : 1);
+  };
+
+  const row = () => boxes.forEach((_, i) => place(i, (i - (LENGTH - 1) / 2) * GAP, 0, { ry: '0deg', rot: '0deg', s: 1 }));
+  const all = fn => boxes.forEach(fn);
+
+  row();
+
+  const renderBoxes = () => {
+    const v = field.value;
+    boxes.forEach((b, i) => {
+      b.querySelector('span').textContent = v[i] || '';
+      const active = i === Math.min(v.length, LENGTH - 1) && document.activeElement === field && !field.disabled && !v[i];
+      b.classList.toggle('active', active);
+      b.querySelector('.vs-glass-caret').style.display = active ? 'block' : 'none';
+    });
+  };
+
+  field.oninput = async () => {
+    field.value = field.value.replace(/\D/g, '').slice(0, LENGTH);
+    renderBoxes();
+    if (field.value.length === LENGTH) {
+      field.disabled = true;
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--pc);">Verifying PIN with Host...</span>';
+      try {
+        const res = await api('/api/auth/verify-approval-pin', {
+          method: 'POST',
+          body: JSON.stringify({ pin: field.value, device_id: getDeviceId(), user_id })
+        });
+        if (res && res.ok) {
+          if (statusEl) statusEl.innerHTML = '<span style="color:#10b981;">✓ PIN Verified! Activating...</span>';
+          // 4th Glass Flip animation: sequential 360 flip, green tint, collapse, checkmark
+          all(b => b.classList.add('flip'));
+          boxes.forEach((_, i) => setTimeout(() => place(i, (i - (LENGTH - 1) / 2) * GAP, 0, { ry: '360deg' }), 100 + i * 110));
+          setTimeout(() => all((b, i) => setTimeout(() => b.classList.add('good'), i * 60)), 1200);
+          setTimeout(() => stage.classList.add('collapse'), 1900);
+          setTimeout(() => {
+            okEl.querySelectorAll('.dot').forEach(d => d.remove());
+            for (let i = 0; i < 26; i++) {
+              const d = document.createElement('i'), a = Math.random() * 6.283, r = 80 + Math.random() * 120, s = 5 + Math.random() * 8;
+              d.className = 'dot';
+              d.style.cssText = `width:${s}px;height:${s}px;border-radius:${s * .3}px;--x:${Math.cos(a) * r}px;--y:${Math.sin(a) * r}px;--r:${Math.random() * 360}deg`;
+              okEl.appendChild(d);
+            }
+            okEl.classList.add('show');
+          }, 2400);
+
+          setTimeout(async () => {
+            const token = res.session_token || res.token;
+            if (token) setSessionToken(token);
+            localStorage.setItem('vs-client-registered', 'true');
+            if (res.user_id) {
+              currentUser = {
+                user_id: res.user_id,
+                role: res.role || 'staff',
+                full_name: res.full_name || res.user_id,
+                device_name: res.device_name || getDeviceName(),
+                device_id: getDeviceId(),
+                permissions: res.permissions || {}
+              };
+              localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+            }
+            authRoot.innerHTML = '';
+            await load();
+          }, 3600);
+        } else {
+          throw new Error(res.error || 'Invalid PIN');
+        }
+      } catch (err) {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--er);">${escapeHtml(err.message || 'Invalid or expired PIN')}</span>`;
+        stage.classList.add('error');
+        setTimeout(() => {
+          stage.classList.remove('error');
+          field.disabled = false;
+          field.value = '';
+          field.focus();
+          renderBoxes();
+        }, 700);
+      }
+    }
+  };
+
+  field.onfocus = renderBoxes;
+  field.onblur = renderBoxes;
+  field.focus();
+  renderBoxes();
+}
+
 
 function dismissStartupAnimationImmediately() {
   window.__vsSplashDismissed = true;
@@ -640,9 +2271,12 @@ function getTodayDateKey() {
 }
 
 let startupVideoHasRun = false;
+let startupVideoDismissTimeout = null;
 window.__vsDashboardRendered = false;
 
 function initDailyStartupVideo(force = false) {
+  dismissStartupAnimationImmediately();
+  return;
   if (startupVideoHasRun && !force) {
     dismissStartupAnimationImmediately();
     return;
@@ -831,12 +2465,16 @@ function playExitReverseAnimationAndClose() {
 
   const doClose = async () => {
     try {
+      if (window.TauriBridge && typeof window.TauriBridge.confirmClose === 'function') {
+        await window.TauriBridge.confirmClose();
+        return;
+      }
       if (window.pywebview && window.pywebview.api && window.pywebview.api.confirm_close) {
         await window.pywebview.api.confirm_close();
         return;
       }
     } catch (err) {
-      console.warn('Native pywebview close error:', err);
+      console.warn('Native desktop close error:', err);
     }
     try {
       await fetch('/api/desktop/close', { method: 'POST' });
@@ -844,10 +2482,8 @@ function playExitReverseAnimationAndClose() {
     try { window.close(); } catch (_) {}
   };
 
-  if (!overlay || !video) {
-    doClose();
-    return;
-  }
+  doClose();
+  return;
 
   if (startupVideoDismissTimeout) {
     clearTimeout(startupVideoDismissTimeout);
@@ -898,7 +2534,7 @@ function initExitModal() {
   const confirmBtn = document.getElementById('vs-exit-btn-confirm');
   const cancelBtn = document.getElementById('vs-exit-btn-cancel');
 
-  if (!modal || modal.dataset.exitBound === '1') return;
+  if (!modal || !modal.dataset || modal.dataset.exitBound === '1') return;
   modal.dataset.exitBound = '1';
 
   if (cancelBtn) {
@@ -967,7 +2603,9 @@ function initDesktopWindowControls() {
   if (minBtn) {
     minBtn.onclick = (e) => {
       e.stopPropagation();
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.minimize_window) {
+      if (window.TauriBridge && typeof window.TauriBridge.minimizeWindow === 'function') {
+        window.TauriBridge.minimizeWindow();
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.minimize_window) {
         window.pywebview.api.minimize_window();
       }
     };
@@ -976,7 +2614,13 @@ function initDesktopWindowControls() {
   if (maxBtn) {
     maxBtn.onclick = (e) => {
       e.stopPropagation();
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
+      if (window.TauriBridge && typeof window.TauriBridge.toggleMaximize === 'function') {
+        window.TauriBridge.toggleMaximize().then(res => {
+          if (res && typeof res.maximized === 'boolean') {
+            updateMaximizeIcon(res.maximized);
+          }
+        }).catch(() => {});
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
         window.pywebview.api.maximize_window().then(res => {
           if (res && typeof res.maximized === 'boolean') {
             updateMaximizeIcon(res.maximized);
@@ -996,7 +2640,13 @@ function initDesktopWindowControls() {
   if (dragArea) {
     dragArea.ondblclick = (e) => {
       if (e.target.closest('.no-drag') || e.target.closest('.titlebar-btn')) return;
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
+      if (window.TauriBridge && typeof window.TauriBridge.toggleMaximize === 'function') {
+        window.TauriBridge.toggleMaximize().then(res => {
+          if (res && typeof res.maximized === 'boolean') {
+            updateMaximizeIcon(res.maximized);
+          }
+        }).catch(() => {});
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.maximize_window) {
         window.pywebview.api.maximize_window().then(res => {
           if (res && typeof res.maximized === 'boolean') {
             updateMaximizeIcon(res.maximized);
@@ -1016,7 +2666,9 @@ function initDesktopWindowControls() {
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
           dragStarted = true;
           cleanupDragWatch();
-          if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+          if (window.TauriBridge && typeof window.TauriBridge.startDrag === 'function') {
+            window.TauriBridge.startDrag();
+          } else if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
             window.pywebview.api.start_drag();
           }
         }
@@ -1030,7 +2682,13 @@ function initDesktopWindowControls() {
     };
   }
 
-  if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
+  if (window.TauriBridge && typeof window.TauriBridge.isMaximized === 'function') {
+    window.TauriBridge.isMaximized().then(res => {
+      if (res && typeof res.maximized === 'boolean') {
+        updateMaximizeIcon(res.maximized);
+      }
+    }).catch(() => {});
+  } else if (window.pywebview && window.pywebview.api && window.pywebview.api.is_maximized) {
     window.pywebview.api.is_maximized().then(res => {
       if (res && typeof res.maximized === 'boolean') {
         updateMaximizeIcon(res.maximized);
@@ -1043,7 +2701,6 @@ function initDesktopWindowControls() {
 
 function initSidebarCollapse() {
   const toggleBtn = document.getElementById('sidebar-toggle-btn');
-  const app = document.querySelector('.app');
   const monogram = document.querySelector('.vs-logo-monogram');
 
   function applyState(collapsed, save = true) {
@@ -1109,16 +2766,19 @@ function initSidebarCollapse() {
   };
 
   // Keyboard shortcut Ctrl+B / Cmd+B
-  window.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
-      const active = document.activeElement;
-      const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
-      if (!isInput || active.readOnly) {
-        e.preventDefault();
-        window.toggleSidebar();
+  if (!window.__vsSidebarKeyBound) {
+    window.__vsSidebarKeyBound = true;
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+        const active = document.activeElement;
+        const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+        if (!isInput || active.readOnly) {
+          e.preventDefault();
+          window.toggleSidebar();
+        }
       }
-    }
-  });
+    });
+  }
 }
 
 if (document.readyState !== 'loading') {
@@ -1137,48 +2797,685 @@ window.addEventListener('pywebviewready', () => {
   }
 });
 
+async function waitForBackend(maxWaitMs = 15000, intervalMs = 350) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.getInvoke === 'function') {
+        const inv = window.TauriBridge.getInvoke();
+        if (inv) {
+          const healthy = await inv('get_python_health').catch(() => false);
+          if (healthy) return true;
+        }
+      }
+      const resolved = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+        ? window.TauriBridge.resolveApiUrl('/api/health')
+        : '/api/health';
+      const r = await fetch(resolved, { method: 'GET' });
+      if (r.ok) return true;
+    } catch (_) {}
+    await new Promise(res => setTimeout(res, intervalMs));
+  }
+  return false;
+}
+
+function getSkeletonHtml(isClientMode) {
+  let isClient = false;
+  if (typeof isClientMode === 'boolean') {
+    isClient = isClientMode;
+  } else if (typeof window !== 'undefined' && window.__vsIsClientMode === true) {
+    isClient = true;
+  }
+
+  return `
+    <div class="vs-dashboard-skeleton" style="display:flex;flex-direction:column;gap:16px;animation:fadeIn 0.25s ease;">
+      <!-- Skeleton Search Bar -->
+      <div class="vs-skeleton" style="width:100%;height:46px;border-radius:14px;"></div>
+
+      <!-- Skeleton 5 Stats Grid -->
+      <div class="grid5">
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:50%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:40%;height:26px;border-radius:8px;"></div>
+        </div>
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:52%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:38%;height:26px;border-radius:8px;"></div>
+        </div>
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:45%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:42%;height:26px;border-radius:8px;"></div>
+        </div>
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:60%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:36%;height:26px;border-radius:8px;"></div>
+        </div>
+        <div class="glass stat vs-skeleton-stat" style="height:82px;border-radius:16px;padding:16px;display:flex;flex-direction:column;justify-content:center;gap:10px;box-sizing:border-box;">
+          <div class="vs-skeleton" style="width:55%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:32%;height:26px;border-radius:8px;"></div>
+        </div>
+      </div>
+
+      <!-- Skeleton Quick Actions Row -->
+      <div class="row vs-skeleton-actions" style="flex-wrap:wrap;gap:8px;">
+        <div class="vs-skeleton" style="width:115px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:105px;height:38px;border-radius:10px;"></div>
+        ${!isClient ? '<div class="vs-skeleton vs-skeleton-btn-primary" style="width:170px;height:38px;border-radius:10px;border:1.5px solid var(--pc, #4f46e5);box-sizing:border-box;"></div>' : ''}
+        <div class="vs-skeleton" style="width:130px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:145px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:95px;height:38px;border-radius:10px;"></div>
+      </div>
+
+      <!-- Skeleton 2-Column: Activity & Storage -->
+      <div class="two">
+        <!-- Column 1: Recent Activity Card -->
+        <section class="glass card vs-skeleton-card" style="display:flex;flex-direction:column;margin-bottom:0;">
+          <div class="row" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:20px;height:20px;border-radius:50%;"></div>
+              <div class="vs-skeleton" style="width:130px;height:18px;border-radius:6px;"></div>
+            </div>
+            <div class="vs-skeleton" style="width:75px;height:28px;border-radius:8px;"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:65%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:38%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:70%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:45%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(226,232,240,0.4);">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:58%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:32%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:36px;height:36px;border-radius:50%;flex-shrink:0;"></div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="vs-skeleton" style="width:62%;height:13px;border-radius:6px;"></div>
+                <div class="vs-skeleton" style="width:40%;height:10px;border-radius:5px;"></div>
+              </div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:60px;height:20px;border-radius:999px;flex-shrink:0;"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Column 2: Storage Card -->
+        <section class="glass card vs-skeleton-card" style="display:flex;flex-direction:column;margin-bottom:0;">
+          <div class="row" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="vs-skeleton vs-skeleton-circle" style="width:20px;height:20px;border-radius:50%;"></div>
+              <div class="vs-skeleton" style="width:80px;height:18px;border-radius:6px;"></div>
+            </div>
+            <div class="vs-skeleton vs-skeleton-pill" style="width:110px;height:22px;border-radius:999px;"></div>
+          </div>
+
+          <!-- Local disk section -->
+          <div style="margin-bottom:14px;">
+            <div class="row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div class="vs-skeleton" style="width:75px;height:14px;border-radius:6px;"></div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:58px;height:20px;border-radius:999px;"></div>
+            </div>
+            <div class="vs-skeleton vs-skeleton-pill" style="width:100%;height:10px;border-radius:999px;margin-bottom:10px;"></div>
+            <div class="vs-skeleton" style="width:85%;height:11px;border-radius:5px;margin-bottom:4px;"></div>
+            <div class="vs-skeleton" style="width:65%;height:11px;border-radius:5px;"></div>
+          </div>
+
+          <!-- Google Drive section -->
+          <div style="border-top:1px solid rgba(226,232,240,0.5);padding-top:14px;">
+            <div class="row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div class="vs-skeleton" style="width:90px;height:14px;border-radius:6px;"></div>
+              <div class="vs-skeleton vs-skeleton-pill" style="width:70px;height:20px;border-radius:999px;"></div>
+            </div>
+            <div class="vs-skeleton vs-skeleton-pill" style="width:100%;height:10px;border-radius:999px;margin-bottom:10px;"></div>
+            <div class="vs-skeleton" style="width:75%;height:11px;border-radius:5px;margin-bottom:4px;"></div>
+            <div class="vs-skeleton" style="width:55%;height:11px;border-radius:5px;"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function renderSkeletonLoader(isClientMode) {
+  const contentEl = document.querySelector('#content');
+  if (!contentEl) return;
+  let isClient = false;
+  if (typeof isClientMode === 'boolean') {
+    isClient = isClientMode;
+  } else if (typeof window !== 'undefined' && window.__vsIsClientMode === true) {
+    isClient = true;
+  }
+  contentEl.innerHTML = getSkeletonHtml(isClient);
+}
+
+function setHostChecking(isChecking) {
+  window.__vsHostChecking = !!isChecking;
+  if (isChecking) {
+    if (typeof VSOfflineManager !== 'undefined' && typeof VSOfflineManager.showCheckingBanner === 'function') {
+      VSOfflineManager.showCheckingBanner();
+    }
+    const contentEl = document.querySelector('#content');
+    if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
+      renderSkeletonLoader(true);
+    }
+  } else {
+    if (typeof VSOfflineManager !== 'undefined' && typeof VSOfflineManager.hideBanners === 'function') {
+      VSOfflineManager.hideBanners();
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.renderSkeletonLoader = renderSkeletonLoader;
+  window.getSkeletonHtml = getSkeletonHtml;
+  window.setHostChecking = setHostChecking;
+}
+
+// ==============================================================================
+// SOFTWARE UPDATE NOTIFICATION & MODAL ENGINE
+// ==============================================================================
+
+/**
+ * Resolves relative or absolute download URLs.
+ */
+function resolveDownloadUrl(rawDl) {
+  if (!rawDl) return '';
+  if (rawDl.startsWith('http://') || rawDl.startsWith('https://')) return rawDl;
+  const base = (window.TauriBridge && typeof window.TauriBridge.getBaseUrl === 'function')
+    ? window.TauriBridge.getBaseUrl()
+    : ((typeof getHostServerUrl === 'function' ? getHostServerUrl() : '') || window.location.origin || 'http://127.0.0.1:8768');
+  return `${base.replace(/\/$/, '')}${rawDl.startsWith('/') ? '' : '/'}${rawDl}`;
+}
+
+/**
+ * Dismisses an active update modal smoothly.
+ */
+function dismissUpdateModal() {
+  const overlay = document.getElementById('vs-update-modal-overlay');
+  if (!overlay) return;
+  overlay.classList.add('vs-modal-closing');
+  setTimeout(() => {
+    try { overlay.remove(); } catch (_) {}
+  }, 200);
+}
+
+/**
+ * Renders and displays the glassmorphic "Update Available" modal.
+ * @param {Object} res - Response from /api/system/check-updates
+ */
+function showUpdateAvailableModal(res) {
+  if (!res || !res.update_available) return;
+
+  const existing = document.getElementById('vs-update-modal-overlay');
+  if (existing) existing.remove();
+
+  const curVer = res.current_version || window.APP_VERSION || '2.3.0';
+  const latestVer = res.latest_version || '2.3.0';
+
+  let notesHtml = '';
+  if (res.release_notes && typeof res.release_notes === 'string' && res.release_notes.trim()) {
+    const cleanNotes = escapeHtml(res.release_notes.trim());
+    notesHtml = `
+      <div class="vs-update-notes-box">
+        <div class="vs-update-notes-title">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <span>What's New in v${escapeHtml(latestVer)}</span>
+        </div>
+        <div class="vs-update-notes-content">${cleanNotes}</div>
+      </div>
+    `;
+  }
+
+  const modalHtml = `
+    <div id="vs-update-modal-overlay" class="vs-update-overlay" role="dialog" aria-modal="true" aria-labelledby="vs-update-modal-title">
+      <div class="vs-update-card glass">
+        <button type="button" class="vs-update-close" id="vs-update-btn-close" aria-label="Close update notification" title="Later">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+
+        <div class="vs-update-header" id="vs-update-modal-header">
+          <div class="vs-update-icon-glow" id="vs-update-icon-container">
+            <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <h3 id="vs-update-modal-title" class="vs-update-title">Update Available</h3>
+              <span class="vs-update-badge-pill" id="vs-update-badge-pill">v${escapeHtml(latestVer)}</span>
+            </div>
+            <p class="vs-update-subtitle" id="vs-update-modal-subtitle">A newer version of VS Database is ready to install</p>
+          </div>
+        </div>
+
+        <div class="vs-update-body" id="vs-update-modal-body">
+          <div class="vs-update-diff-bar">
+            <div class="vs-update-diff-item">
+              <span class="diff-lbl">Installed:</span>
+              <span class="diff-val">v${escapeHtml(curVer)}</span>
+            </div>
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" style="color:#6366f1;flex-shrink:0;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <div class="vs-update-diff-item">
+              <span class="diff-lbl">Latest:</span>
+              <span class="diff-val highlight">v${escapeHtml(latestVer)}</span>
+            </div>
+          </div>
+
+          <p class="vs-update-desc">
+            A new production update is available on GitHub featuring performance enhancements, stability improvements, and enhanced database features.
+          </p>
+
+          ${notesHtml}
+
+          <div id="vs-update-progress-area" style="display:none;"></div>
+        </div>
+
+        <div class="vs-update-footer" id="vs-update-modal-footer">
+          <button type="button" id="btn-modal-update-later" class="btn vs-update-btn-secondary vs-update-btn-later">
+            <span>Later</span>
+          </button>
+          <button type="button" id="btn-modal-update-now" class="btn p vs-update-btn-primary vs-update-btn-now">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Update Now</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  const overlay = document.getElementById('vs-update-modal-overlay');
+  const btnClose = document.getElementById('vs-update-btn-close');
+  const btnLater = document.getElementById('btn-modal-update-later');
+  const btnNow = document.getElementById('btn-modal-update-now');
+  const modalHeader = document.getElementById('vs-update-modal-header');
+  const modalTitle = document.getElementById('vs-update-modal-title');
+  const modalSubtitle = document.getElementById('vs-update-modal-subtitle');
+  const modalBody = document.getElementById('vs-update-modal-body');
+  const modalFooter = document.getElementById('vs-update-modal-footer');
+  const iconContainer = document.getElementById('vs-update-icon-container');
+
+  let downloadStarted = false;
+  let pollInterval = null;
+
+  const cleanupPoll = () => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  };
+
+  let keyHandler = null;
+  const handleLater = () => {
+    if (downloadStarted) return;
+    cleanupPoll();
+    try {
+      sessionStorage.setItem('vs_update_snooze_' + latestVer, 'true');
+    } catch (_) {}
+    if (keyHandler) document.removeEventListener('keydown', keyHandler);
+    dismissUpdateModal();
+  };
+
+  keyHandler = (e) => {
+    if (e.key === 'Escape') {
+      handleLater();
+    }
+  };
+  document.addEventListener('keydown', keyHandler);
+
+  if (btnClose) btnClose.onclick = handleLater;
+  if (btnLater) btnLater.onclick = handleLater;
+
+  const renderDownloadError = (errText) => {
+    cleanupPoll();
+    downloadStarted = false;
+    if (modalTitle) modalTitle.textContent = 'Update Download Interrupted';
+    if (modalSubtitle) modalSubtitle.textContent = 'An error occurred while downloading the update package.';
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div class="vs-update-error-card">
+          <strong>Download Interrupted</strong>
+          <p>${escapeHtml(errText || 'Failed to download update package from server.')}</p>
+        </div>
+      `;
+    }
+    if (modalFooter) {
+      modalFooter.style.display = 'flex';
+      modalFooter.innerHTML = `
+        <button type="button" id="btn-modal-update-retry" class="btn p vs-update-btn-primary">
+          <span>Retry Download</span>
+        </button>
+        <button type="button" id="btn-modal-update-close-err" class="btn vs-update-btn-secondary">
+          <span>Close</span>
+        </button>
+      `;
+      const retryBtn = document.getElementById('btn-modal-update-retry');
+      const closeErrBtn = document.getElementById('btn-modal-update-close-err');
+      if (retryBtn) retryBtn.onclick = () => startDownloadFlow();
+      if (closeErrBtn) closeErrBtn.onclick = () => {
+        dismissUpdateModal();
+      };
+    }
+    if (btnClose) btnClose.style.display = 'flex';
+  };
+
+  const renderRestartView = (prog) => {
+    cleanupPoll();
+    downloadStarted = false;
+
+    // Header transformation with green success accent
+    if (iconContainer) {
+      iconContainer.className = 'vs-update-icon-glow vs-glow-success';
+      iconContainer.innerHTML = `
+        <svg viewBox="0 0 24 24" width="28" height="28" stroke="#10b981" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      `;
+    }
+    if (modalTitle) modalTitle.textContent = 'Update Download Complete';
+    if (modalSubtitle) modalSubtitle.textContent = `VS Database v${escapeHtml(latestVer)} has finished downloading. A restart is required.`;
+
+    // Modal Body transformation
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div class="vs-update-complete-card">
+          <div class="vs-update-complete-msg">
+            <strong>Update Ready to Install</strong>
+            <p>VS Database has finished downloading the update. A quick restart is required to install and apply the new version.</p>
+          </div>
+          <div class="vs-update-progress-bar-wrap">
+            <div class="vs-update-progress-track">
+              <div class="vs-update-progress-fill vs-fill-complete" style="width: 100%;"></div>
+            </div>
+          </div>
+          <div class="vs-update-complete-badge-row">
+            <span class="vs-update-ready-pill"><svg class="i" style="width:13px;height:13px;margin-right:4px;vertical-align:middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Package Ready</span>
+            <span class="vs-update-version-target">Target: v${escapeHtml(latestVer)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // Modal Footer transformation - ONLY ONE BUTTON with "Yes" option
+    if (modalFooter) {
+      modalFooter.style.display = 'flex';
+      modalFooter.innerHTML = `
+        <button type="button" id="btn-modal-restart-now" class="btn p vs-update-btn-primary" style="width:100%;font-size:15px;padding:12px 24px;">
+          <span><svg class="i" style="width:15px;height:15px;margin-right:6px;vertical-align:middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg>Restart & Apply Update</span>
+        </button>
+      `;
+
+      const btnRestart = document.getElementById('btn-modal-restart-now');
+      if (btnRestart) {
+        btnRestart.onclick = async () => {
+          btnRestart.disabled = true;
+          btnRestart.innerHTML = `
+            <span class="vs-spinner" style="width:16px;height:16px;display:inline-block;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:vsSpin 0.8s linear infinite;margin-right:8px;vertical-align:middle;"></span>
+            <span>Restarting Application...</span>
+          `;
+
+          const installerPath = (prog && prog.installer_path) || res.installer_path || '';
+          try {
+            await api('/api/system/execute-update-restart', {
+              method: 'POST',
+              body: JSON.stringify({ installer_path: installerPath })
+            });
+          } catch (e) {
+            console.warn('[Execute Update Restart Error]:', e);
+          }
+
+          if (window.TauriBridge && typeof window.TauriBridge.closeApp === 'function') {
+            await window.TauriBridge.closeApp();
+          } else {
+            try { window.close(); } catch (_) {}
+          }
+        };
+      }
+    }
+
+    // Ensure close button (X) is hidden in completed state
+    if (btnClose) btnClose.style.display = 'none';
+  };
+
+  const startDownloadFlow = async () => {
+    downloadStarted = true;
+    if (btnClose) btnClose.style.display = 'none';
+
+    // Hide footer buttons during download
+    if (modalFooter) modalFooter.style.display = 'none';
+
+    // Update Header
+    if (modalTitle) modalTitle.textContent = 'Downloading Update...';
+    if (modalSubtitle) modalSubtitle.textContent = 'Please keep VS Database open while the update package is retrieved.';
+
+    // Switch to Real-Time Progress View
+    if (modalBody) {
+      modalBody.innerHTML = `
+        <div class="vs-update-progress-view">
+          <div class="vs-update-progress-status-badge">
+            <span class="vs-update-pulse-ring"></span>
+            <span id="vs-update-status-indicator">Downloading VS Database v${escapeHtml(latestVer)} package...</span>
+          </div>
+          <div class="vs-update-progress-bar-wrap">
+            <div class="vs-update-progress-track">
+              <div class="vs-update-progress-fill" id="vs-update-progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+          <div class="vs-update-progress-info-row">
+            <div class="vs-update-percentage" id="vs-update-percentage-text">0%</div>
+            <div class="vs-update-stats-label" id="vs-update-stats-text">Downloaded: 0 MB / -- MB (0 KB/s)</div>
+          </div>
+          <p class="vs-update-progress-hint">Downloading package directly to cache. Once downloaded, you will be prompted to restart.</p>
+          <div id="vs-update-progress-area" style="display:none;"></div>
+        </div>
+      `;
+    }
+
+    let isClient = false;
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+        isClient = await window.TauriBridge.isClientMode();
+      } else if (window.__vsIsClientMode !== undefined) {
+        isClient = !!window.__vsIsClientMode;
+      }
+    } catch (_) {}
+
+    try {
+      await api('/api/system/start-update-download', {
+        method: 'POST',
+        body: JSON.stringify({
+          version: latestVer,
+          product: isClient ? 'client' : 'host'
+        })
+      });
+    } catch (startErr) {
+      console.error('[Start Update Download Error]:', startErr);
+      renderDownloadError(startErr.message || 'Could not initiate download from server.');
+      return;
+    }
+
+    // Start polling every 300ms
+    cleanupPoll();
+    pollInterval = setInterval(async () => {
+      try {
+        const prog = await api('/api/system/update-progress');
+        if (!prog) return;
+
+        if (prog.status === 'error') {
+          renderDownloadError(prog.error || 'Server reported download failure.');
+          return;
+        }
+
+        const pct = Math.min(100, Math.max(0, typeof prog.percentage === 'number' ? prog.percentage : parseFloat(prog.percentage) || 0));
+        const fillEl = document.getElementById('vs-update-progress-fill');
+        const pctEl = document.getElementById('vs-update-percentage-text');
+        const statsEl = document.getElementById('vs-update-stats-text');
+
+        if (fillEl) fillEl.style.width = pct + '%';
+        if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+        if (statsEl) {
+          let dlStr = '0 MB';
+          let totStr = '-- MB';
+          if (prog.downloaded_mb !== undefined && prog.total_mb !== undefined) {
+            dlStr = `${prog.downloaded_mb} MB`;
+            totStr = `${prog.total_mb} MB`;
+          } else if (prog.downloaded_bytes !== undefined && prog.total_bytes !== undefined) {
+            dlStr = `${(prog.downloaded_bytes / (1024 * 1024)).toFixed(1)} MB`;
+            totStr = `${(prog.total_bytes / (1024 * 1024)).toFixed(1)} MB`;
+          }
+          let speed = prog.speed_str;
+          if (!speed && prog.speed_kbps !== undefined) {
+            speed = prog.speed_kbps > 1024
+              ? `${(prog.speed_kbps / 1024).toFixed(1)} MB/s`
+              : `${Math.round(prog.speed_kbps)} KB/s`;
+          }
+          if (!speed) speed = '0 KB/s';
+          statsEl.textContent = `Downloaded: ${dlStr} / ${totStr} (${speed})`;
+        }
+
+        if (prog.status === 'complete' || pct >= 100) {
+          if (fillEl) {
+            fillEl.style.width = '100%';
+            fillEl.classList.add('vs-fill-complete');
+          }
+          if (pctEl) pctEl.textContent = '100%';
+          renderRestartView(prog);
+        }
+      } catch (pollErr) {
+        console.warn('[Update Progress Poll Warning]:', pollErr);
+      }
+    }, 300);
+  };
+
+  if (btnNow) {
+    btnNow.onclick = () => startDownloadFlow();
+  }
+}
+
+/**
+ * Checks for software updates against GitHub releases.
+ * @param {boolean} isManual - true if initiated by the user in Settings
+ */
+async function checkForAppUpdates(isManual = false) {
+  const curVer = window.APP_VERSION || '2.3.0';
+  try {
+    const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
+    window.__vsUpdateData = res;
+
+    if (res && res.update_available) {
+      const isSnoozed = sessionStorage.getItem('vs_update_snooze_' + res.latest_version) === 'true';
+      if (isManual || !isSnoozed) {
+        showUpdateAvailableModal(res);
+      }
+    }
+    return res;
+  } catch (err) {
+    if (isManual) throw err;
+    console.warn('[Update Check] Background check failed or network unavailable:', err);
+    return null;
+  }
+}
+
+window.showUpdateAvailableModal = showUpdateAvailableModal;
+window.dismissUpdateModal = dismissUpdateModal;
+window.checkForAppUpdates = checkForAppUpdates;
+
 async function load() {
   initDesktopWindowControls();
   initSidebarCollapse();
   initDailyStartupVideo();
+
+  // Detect whether running in Client Mode (ADR-015 pure client)
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+  window.__vsIsClientMode = isClient;
+
+  // Immediately render pixel-perfect skeleton screen matching detected mode (Host vs Client)
+  renderSkeletonLoader(isClient);
+
+  // If in Host mode, wait for backend to be ready (prevents startup race condition)
+  if (!isClient) {
+    await waitForBackend(15000, 350);
+  }
+
   try {
     const authStatus = await api('/api/auth/status');
-    if (!authStatus.initialized) {
-      showAuthModal('setup-host');
+    if (!authStatus.authenticated) {
+      clearSessionToken();
+      if (isClient) {
+        // If workstation previously registered, show login; else show register/access request
+        const hasRegistered = !!localStorage.getItem('vs-client-registered');
+        showAuthModal(hasRegistered ? 'login' : 'register');
+      } else {
+        showAuthModal(authStatus.initialized ? 'host-login' : 'host-setup');
+      }
+      setTimeout(() => {
+        checkForAppUpdates(false);
+      }, 1500);
       return;
     }
-    if (!authStatus.authenticated) {
-      showAuthModal(authStatus.is_loopback ? 'login' : 'request');
-      return;
+    if (authStatus.session_token || authStatus.token) {
+      setSessionToken(authStatus.session_token || authStatus.token);
     }
 
     currentUser = authStatus.user;
+    if (currentUser) {
+      localStorage.setItem('vs-user-cache', JSON.stringify(currentUser));
+    }
+    applyUserPermissions();
+    startRealtimeSync();
+
     const userBadge = document.querySelector('#user-status');
     if (userBadge) {
       userBadge.style.display = 'flex';
-      document.querySelector('#current-user-badge').textContent = `${currentUser.user_id} (${currentUser.role === 'host' ? 'Host' : 'Staff'})`;
+      const dispName = currentUser.full_name ? `${currentUser.full_name} (${currentUser.user_id})` : currentUser.user_id;
+      document.querySelector('#current-user-badge').textContent = `${dispName} (${currentUser.role === 'host' ? 'Host' : 'Staff'})`;
       document.querySelector('#logout-btn').onclick = async () => {
         try {
           await api('/api/auth/logout', { method: 'POST', body: '{}' });
-          location.reload();
-        } catch (_) { location.reload(); }
+        } catch (_) {}
+        clearSessionToken();
+        localStorage.removeItem('vs-user-cache');
+        location.reload();
       };
     }
 
     const navUsersBtn = document.querySelector('#nav-users');
     if (navUsersBtn) {
-      navUsersBtn.style.display = currentUser.role === 'host' ? 'block' : 'none';
+      navUsersBtn.style.display = (!isClient && currentUser?.role === 'host') ? 'flex' : 'none';
     }
 
-    [settings, clients, rules, firmTypes] = await Promise.all([
-      api('/api/settings'),
-      api('/api/clients'),
-      api('/api/rules'),
-      api('/api/firm-types')
-    ]);
+    renderSkeletonLoader(isClient);
+
+    try { settings = await api('/api/settings'); } catch (_) { settings = {}; }
+    try { clients = await api('/api/clients'); } catch (_) { clients = []; }
+    try { rules = await api('/api/rules'); } catch (_) { rules = { services: [], periods: [] }; }
+    try { firmTypes = await api('/api/firm-types'); } catch (_) { firmTypes = []; }
 
     updateUnifiedStatus(true, false, 'Server online', 'Drive checking...');
 
+    current = 'dashboard';
     await render();
     document.querySelectorAll('nav button').forEach(b => {
       const isCur = b.dataset.page === current;
@@ -1188,7 +3485,7 @@ async function load() {
     });
     window.__vsDashboardRendered = true;
     // Reveal .app at opacity:1 safely behind the 100% opaque #vs-daily-startup-splash so fade-out has zero washout
-    document.documentElement.classList.remove('vs-booting');
+    document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
     dismissSplash();
 
     // Check Google Drive status asynchronously without blocking initial dashboard render
@@ -1202,14 +3499,96 @@ async function load() {
     }).catch(() => {
       updateUnifiedStatus(true, false, 'Server online', 'Drive offline');
     });
+
+    // Check for updates automatically when app initializes / loads dashboard (non-blocking)
+    setTimeout(() => {
+      checkForAppUpdates(false);
+    }, 1500);
   } catch (e) {
-    window.__vsDashboardRendered = true;
-    document.documentElement.classList.remove('vs-booting');
+    console.error('[Load Error]:', e);
+    window.__vsDashboardRendered = false;
+    document.documentElement.classList.remove('vs-booting', 'vs-boot-skip');
     dismissSplash();
     updateUnifiedStatus(false, false, 'Server offline', 'Drive offline');
-    content.innerHTML = message(e.message, true);
-  }
 
+    const cachedToken = getSessionToken();
+    const cachedUser = localStorage.getItem('vs-user-cache');
+    if (cachedToken && cachedUser) {
+      try {
+        currentUser = JSON.parse(cachedUser);
+        console.warn('[Offline Mode] Booting into Offline Read-Only mode with cached credentials.');
+        VSOfflineManager.transitionToOffline();
+        clients = (await VSOfflineManager.getCachedClientsAsync())?.clients || [];
+        settings = { firm_name: 'VS Database (Offline)' };
+        rules = [];
+        firmTypes = [];
+        current = 'dashboard';
+        await render();
+        applyUserPermissions();
+        window.__vsDashboardRendered = true;
+        return;
+      } catch (err) {
+        console.error('Failed to boot offline cached user:', err);
+      }
+    }
+
+    // If offline cached user boot failed, proceed to connection error UI
+    console.warn('[Load] Central server unreachable and no active offline session.');
+    const configuredHost = (window.TauriBridge && typeof window.TauriBridge.getHostUrl === 'function')
+      ? window.TauriBridge.getHostUrl() || 'http://127.0.0.1:8768'
+      : 'http://127.0.0.1:8768';
+
+    content.innerHTML = `
+      <div class="glass card" style="max-width:580px;margin:40px auto;padding:32px;text-align:center;">
+        <div style="display:flex;justify-content:center;margin-bottom:14px;"><svg class="i" style="width:42px;height:42px;stroke:var(--er);"><use href="#alert"/></svg></div>
+        <h2 style="margin:0 0 8px;font-size:20px;">Unable to Connect to Database Server</h2>
+        <p class="muted" style="margin:0 0 20px;font-size:13px;line-height:1.5;">
+          ${escapeHtml(e.message || 'Server connection failed.')}<br>
+          Ensure the Host PC is running and accessible on port 8768.
+        </p>
+        <div class="vs-host-cfg-box" style="text-align:left;margin-bottom:20px;">
+          <label><span>Host Server Address</span> <span class="muted" style="font-weight:normal;">Port 8768</span></label>
+          <input id="conn-err-host-url" value="${escapeHtml(configuredHost)}" placeholder="e.g. 192.168.1.50:8768">
+        </div>
+        <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+          <button class="btn p" id="btn-conn-err-retry">Retry Connection</button>
+          <button class="btn" id="btn-conn-err-pair">Pair Workstation (PIN)</button>
+        </div>
+      </div>
+    `;
+
+    document.querySelector('#btn-conn-err-retry')?.addEventListener('click', async () => {
+      const h = document.querySelector('#conn-err-host-url')?.value.trim();
+      if (h && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+        window.TauriBridge.setHostUrl(h);
+      }
+      await load();
+    });
+
+    document.querySelector('#btn-conn-err-pair')?.addEventListener('click', () => {
+      const h = document.querySelector('#conn-err-host-url')?.value.trim();
+      if (h && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+        window.TauriBridge.setHostUrl(h);
+      }
+      showAuthModal('otp');
+    });
+
+    if (!window.__vsAutoRetryTimer) {
+      window.__vsAutoRetryTimer = setInterval(async () => {
+        try {
+          const resolved = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+            ? window.TauriBridge.resolveApiUrl('/api/health')
+            : '/api/health';
+          const r = await fetch(resolved, { method: 'GET' });
+          if (r.ok) {
+            clearInterval(window.__vsAutoRetryTimer);
+            window.__vsAutoRetryTimer = null;
+            await load();
+          }
+        } catch (_) {}
+      }, 3000);
+    }
+  }
 }
 
 function setup() {
@@ -1220,7 +3599,26 @@ function setup() {
   const clientName = settings.client_folder_name || 'Client';
   const driveRootName = settings.google_portal_root_name || 'VS Database';
 
+  const isSettingsUnlocked = sessionStorage.getItem('vs-settings-unlock-token');
+  const isLockedStaff = (currentUser?.role !== 'host' && currentUser?.permissions?.can_edit_settings !== true && !isSettingsUnlocked);
+
   content.innerHTML = `
+    ${isLockedStaff ? `
+    <div class="glass card" style="background:rgba(254,243,199,0.92);border:1.5px solid rgba(245,158,11,0.7);margin-bottom:18px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+      <div>
+        <b style="color:#92400e;font-size:14px;display:flex;align-items:center;gap:6px;"><svg class="i" style="width:15px;height:15px;stroke:#92400e;" aria-hidden="true"><use href="#lock"/></svg> System Configuration Locked</b>
+        <p style="margin:4px 0 0;font-size:12.5px;color:#78350f;">Staff cannot modify storage paths, Google Drive sync, or firm parameters without Host Authorization.</p>
+      </div>
+      <button type="button" class="btn p btn-sm" id="btn-request-settings-unlock" style="font-weight:700;">
+        <svg class="i" style="width:14px;height:14px;stroke:currentColor;margin-right:4px;" aria-hidden="true"><use href="#key"/></svg>Unlock with Host PIN
+      </button>
+    </div>
+    ` : (sessionStorage.getItem('vs-settings-unlock-token') ? `
+    <div class="glass card" style="background:rgba(236,253,245,0.92);border:1.5px solid rgba(16,185,129,0.7);margin-bottom:18px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;">
+      <b style="color:#065f46;font-size:13px;display:flex;align-items:center;gap:6px;"><svg class="i" style="width:15px;height:15px;stroke:#065f46;" aria-hidden="true"><use href="#unlock"/></svg> Settings Unlocked via Host Authorization PIN (Session Active)</b>
+      <span class="chip" style="background:#10b981;color:#fff;">Authorized</span>
+    </div>
+    ` : '')}
     <div class="glass card setup-wizard-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:14px;">
         <div>
@@ -1297,13 +3695,23 @@ function setup() {
         <div class="grid2" id="path-fields-grid" style="gap:16px;">
           <div id="local-root-wrapper">
             <label style="font-weight:700;font-size:13px;">Local Storage Root Folder</label>
-            <input id="local" class="input" placeholder="D:\\Code Trial" value="${escapeHtml(localVal)}">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="local" class="input" style="flex:1;" placeholder="D:\\Code Trial" value="${escapeHtml(localVal)}">
+              <button type="button" class="btn secondary" id="btn-browse-local" style="white-space:nowrap;padding:7px 13px;font-size:12px;display:inline-flex;align-items:center;gap:6px;" title="Browse local storage folder">
+                <svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#folder"/></svg> Browse...
+              </button>
+            </div>
             <p class="muted" style="margin-top:4px;font-size:11px;">Primary local disk location for office files and Client Access Link PDFs.</p>
           </div>
 
           <div id="drive-base-wrapper">
             <label style="font-weight:700;font-size:13px;">Google Drive Synced Root Path (G: Drive)</label>
-            <input id="drive-path" class="input" placeholder="G:\\My Drive\\VS Database" value="${escapeHtml(driveVal)}">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="drive-path" class="input" style="flex:1;" placeholder="G:\\My Drive\\VS Database" value="${escapeHtml(driveVal)}">
+              <button type="button" class="btn secondary" id="btn-browse-drive" style="white-space:nowrap;padding:7px 13px;font-size:12px;display:inline-flex;align-items:center;gap:6px;" title="Browse Google Drive mirror folder">
+                <svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#folder"/></svg> Browse...
+              </button>
+            </div>
             <p class="muted" style="margin-top:4px;font-size:11px;">Local mirror path for instant G: drive disk speed saving.</p>
           </div>
         </div>
@@ -1337,8 +3745,8 @@ function setup() {
             </label>
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span style="font-size:13px;color:#475569;">Release Channel:</span>
-              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v1.0.1 (Production)</span>
-              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;"></span>
+              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.3.0 (Production)</span>
+              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.3.0]</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -1349,6 +3757,9 @@ function setup() {
             <button type="button" id="btn-apply-update" class="btn p" style="display:none;">
               <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
               <span>Update Now</span>
+            </button>
+            <button type="button" id="btn-snooze-update" class="btn" style="display:none;">
+              <span>Later</span>
             </button>
           </div>
         </div>
@@ -1374,16 +3785,14 @@ function setup() {
               </p>
             </div>
             <div style="flex-shrink:0;">
-              <label class="sw t1" id="sw-app-autostart-label" title="Toggle Desktop App autostart">
-                <input type="checkbox" id="toggle-app-autostart" role="switch" aria-label="Autostart App at startup" ${settings.app_autostart ? 'checked' : ''}>
-                <span class="track glass">
-                  <span class="lbl y">Yes</span>
-                  <span class="lbl n">No</span>
-                  <span class="thumb">
-                    <svg class="ic tick"><use href="#tick"/></svg>
-                    <svg class="ic cross"><use href="#x"/></svg>
-                  </span>
-                </span>
+              <label class="vs-glass-switch" id="sw-app-autostart-label" title="Toggle Desktop App autostart" style="display:inline-flex;align-items:center;cursor:pointer;position:relative;">
+                <input type="checkbox" id="toggle-app-autostart" role="switch" aria-label="Autostart App at startup" style="position:absolute;opacity:0;pointer-events:none;" ${settings.app_autostart ? 'checked' : ''}>
+                <div class="sw-track" style="width:52px;height:28px;background:${settings.app_autostart ? '#10b981' : '#cbd5e1'};border-radius:14px;position:relative;transition:background 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:inset 0 2px 4px rgba(0,0,0,0.1);">
+                  <div class="sw-knob" style="width:22px;height:22px;background:#ffffff;border-radius:50%;position:absolute;top:3px;left:${settings.app_autostart ? '27px' : '3px'};transition:all 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:0 2px 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;">
+                    <span class="sw-icon" style="font-size:11px;line-height:1;color:${settings.app_autostart ? '#10b981' : '#94a3b8'};font-weight:900;">${settings.app_autostart ? '✓' : ''}</span>
+                  </div>
+                </div>
+                <span class="sw-text" style="margin-left:12px;font-size:13px;font-weight:700;color:${settings.app_autostart ? '#059669' : '#64748b'};min-width:40px;">${settings.app_autostart ? 'Yes' : 'No'}</span>
               </label>
             </div>
           </div>
@@ -1531,6 +3940,9 @@ function setup() {
         : null;
       if (pb) pb.simulate(1000);
 
+      if (sessionStorage.getItem('vs-settings-unlock-token')) {
+        payload.unlock_token = sessionStorage.getItem('vs-settings-unlock-token');
+      }
       settings = await api('/api/settings', {
         method: 'POST',
         body: JSON.stringify(payload)
@@ -1548,6 +3960,7 @@ function setup() {
   // Software Update Event Handlers
   const btnCheckUpdates = document.getElementById('btn-check-updates');
   const btnApplyUpdate = document.getElementById('btn-apply-update');
+  const btnSnoozeUpdate = document.getElementById('btn-snooze-update');
   const updateMsg = document.getElementById('update-status-msg');
   const commitBadge = document.getElementById('system-commit-badge');
 
@@ -1556,16 +3969,21 @@ function setup() {
       btnCheckUpdates.disabled = true;
       btnCheckUpdates.textContent = 'Checking GitHub...';
       updateMsg.style.display = 'block';
-      updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest version...</span>';
+      updateMsg.innerHTML = '<span style="color:#64748b;">Connecting to GitHub repository and checking latest release...</span>';
       try {
-        const res = await api('/api/system/check-updates');
-        if (res.current_commit) commitBadge.textContent = `[${res.current_commit}]`;
+        const curVer = window.APP_VERSION || '2.3.0';
+        const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
+        window.__vsUpdateData = res;
+        if (res.current_version) commitBadge.textContent = `[v${res.current_version}]`;
         if (res.update_available) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New update available (${res.latest_commit})! Click "Update Now" to apply.</span>`;
+          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New version available (v${res.latest_version})! Click "Update Now" to install or "Later" to postpone.</span>`;
           btnApplyUpdate.style.display = 'inline-flex';
+          if (btnSnoozeUpdate) btnSnoozeUpdate.style.display = 'inline-flex';
+          showUpdateAvailableModal(res);
         } else {
-          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date.</span>`;
+          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date (v${res.current_version || curVer}).</span>`;
           btnApplyUpdate.style.display = 'none';
+          if (btnSnoozeUpdate) btnSnoozeUpdate.style.display = 'none';
         }
       } catch (err) {
         updateMsg.innerHTML = `<span style="color:#dc2626;">Error checking updates: ${escapeHtml(err.message)}</span>`;
@@ -1576,68 +3994,132 @@ function setup() {
     };
   }
 
-  if (btnApplyUpdate) {
-    btnApplyUpdate.onclick = async () => {
-      btnApplyUpdate.disabled = true;
-      btnApplyUpdate.textContent = 'Applying Update...';
-      updateMsg.innerHTML = '<span style="color:#64748b;">Pulling latest update from GitHub...</span>';
-      try {
-        const res = await api('/api/system/apply-update', { method: 'POST', body: '{}' });
-        if (res.ok) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>Update successful! Reloading application...</span>`;
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(res.error || 'Unknown error')}</span>`;
-          btnApplyUpdate.disabled = false;
-        }
-      } catch (err) {
-        updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(err.message)}</span>`;
-        btnApplyUpdate.disabled = false;
+  if (btnSnoozeUpdate) {
+    btnSnoozeUpdate.onclick = () => {
+      const uData = window.__vsUpdateData || {};
+      if (uData.latest_version) {
+        try {
+          sessionStorage.setItem('vs_update_snooze_' + uData.latest_version, 'true');
+        } catch (_) {}
       }
+      btnApplyUpdate.style.display = 'none';
+      btnSnoozeUpdate.style.display = 'none';
+      updateMsg.innerHTML = '<span style="color:#64748b;font-size:12px;">Update postponed for this session. You can check again or update anytime.</span>';
     };
   }
 
-  // Windows Desktop App Autostart Toggle Handler (Glass UI Kit .sw.t1)
+  if (btnApplyUpdate) {
+    btnApplyUpdate.onclick = () => {
+      const uData = window.__vsUpdateData || { update_available: true };
+      showUpdateAvailableModal(uData);
+    };
+  }
+
+  // Windows Desktop App Autostart Toggle Handler
   const appAutostartToggle = document.getElementById('toggle-app-autostart');
+  const appAutostartLabel = document.getElementById('sw-app-autostart-label');
   if (appAutostartToggle) {
-    // Sync live state from backend on load
+    const updateSwitchUI = (checked) => {
+      appAutostartToggle.checked = checked;
+      const track = appAutostartLabel?.querySelector('.sw-track');
+      const knob = appAutostartLabel?.querySelector('.sw-knob');
+      const icon = appAutostartLabel?.querySelector('.sw-icon');
+      const text = appAutostartLabel?.querySelector('.sw-text');
+      if (track) track.style.background = checked ? '#10b981' : '#cbd5e1';
+      if (knob) knob.style.left = checked ? '27px' : '3px';
+      if (icon) {
+        icon.textContent = checked ? '✓' : '';
+        icon.style.color = checked ? '#10b981' : '#94a3b8';
+      }
+      if (text) {
+        text.textContent = checked ? 'Yes' : 'No';
+        text.style.color = checked ? '#059669' : '#64748b';
+      }
+    };
+
     api('/api/system/autostart').then(res => {
       if (res && typeof res.app_autostart === 'boolean') {
-        appAutostartToggle.checked = res.app_autostart;
+        updateSwitchUI(res.app_autostart);
       }
     }).catch(() => {});
 
-    appAutostartToggle.onchange = async () => {
-      const isEnabled = appAutostartToggle.checked;
-      try {
-        const resp = await api('/api/system/autostart', {
-          method: 'POST',
-          body: JSON.stringify({ app_autostart: isEnabled })
-        });
-        if (resp && resp.ok) {
-          appAutostartToggle.checked = !!resp.app_autostart;
-          const msg = resp.message || (isEnabled ? 'Desktop App autostart enabled' : 'Desktop App autostart disabled');
-          if (typeof showGlassToast === 'function') {
-            showGlassToast(msg, 'success');
-          } else if (typeof toast === 'function') {
-            toast(msg);
+    if (appAutostartLabel) {
+      appAutostartLabel.onclick = async (e) => {
+        e.preventDefault();
+        let isClient = false;
+        try {
+          if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+            isClient = await window.TauriBridge.isClientMode();
           }
-        } else {
-          throw new Error((resp && resp.error) || 'Failed to update autostart setting');
+        } catch (_) {}
+        if (isClient || (currentUser && currentUser.role !== 'host')) {
+          alert('This option is disabled from Host side.');
+          return;
         }
-      } catch (err) {
-        appAutostartToggle.checked = !isEnabled; // Revert switch on error
-        const errMsg = err.message || 'Error updating autostart';
-        if (typeof showGlassToast === 'function') {
-          showGlassToast(errMsg, 'error');
-        } else if (typeof toast === 'function') {
-          toast(errMsg, true);
+
+        const newChecked = !appAutostartToggle.checked;
+        updateSwitchUI(newChecked);
+
+        try {
+          const resp = await api('/api/system/autostart', {
+            method: 'POST',
+            body: JSON.stringify({ app_autostart: newChecked })
+          });
+          if (resp && resp.ok) {
+            updateSwitchUI(!!resp.app_autostart);
+            const msg = resp.message || (newChecked ? 'Desktop App autostart enabled' : 'Desktop App autostart disabled');
+            if (typeof showGlassToast === 'function') {
+              showGlassToast(msg, 'success');
+            } else if (typeof toast === 'function') {
+              toast(msg);
+            }
+          } else {
+            throw new Error((resp && resp.error) || 'Failed to update autostart setting');
+          }
+        } catch (err) {
+          updateSwitchUI(!newChecked);
+          const errMsg = err.message || 'Error updating autostart';
+          if (typeof showGlassToast === 'function') {
+            showGlassToast(errMsg, 'error');
+          } else if (typeof toast === 'function') {
+            toast(errMsg, true);
+          }
         }
-      }
-    };
+      };
+    }
   }
 
   // Clean Fresh Start Handler
+  const handleBrowseFolder = async (targetInputId) => {
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.openFileDialog === 'function') {
+        const selected = await window.TauriBridge.openFileDialog({ directory: true });
+        if (selected) {
+          const inputEl = document.querySelector('#' + targetInputId);
+          if (inputEl) {
+            inputEl.value = Array.isArray(selected) ? selected[0] : selected;
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return;
+        }
+      }
+      const res = await api('/api/system/browse-folder', { method: 'POST', body: JSON.stringify({ title: 'Select Storage Folder' }) });
+      if (res && res.path) {
+        const inputEl = document.querySelector('#' + targetInputId);
+        if (inputEl) {
+          inputEl.value = res.path;
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+    } catch (err) {
+      console.warn('Browse folder failed:', err);
+      showNativeToast('Could not open folder picker: ' + (err.message || 'Cancelled'), 'error');
+    }
+  };
+
+  document.querySelector('#btn-browse-local')?.addEventListener('click', () => handleBrowseFolder('local'));
+  document.querySelector('#btn-browse-drive')?.addEventListener('click', () => handleBrowseFolder('drive-path'));
+
   document.getElementById('btn-fresh-start').onclick = () => {
     if (typeof showFreshStartModal === 'function') {
       showFreshStartModal();
@@ -1652,6 +4134,37 @@ function setup() {
       }
     }
   };
+
+  // Handle staff settings lockdown
+  if (isLockedStaff) {
+    content.querySelectorAll('input:not(#btn-request-settings-unlock), select, textarea, button.primary, #btn-fresh-start').forEach(el => {
+      if (el.id !== 'btn-request-settings-unlock') {
+        el.disabled = true;
+        el.style.opacity = '0.65';
+        el.style.cursor = 'not-allowed';
+      }
+    });
+  }
+
+  document.querySelector('#btn-request-settings-unlock')?.addEventListener('click', async () => {
+    const enteredPin = prompt('Enter the 6-digit Settings Unlock PIN generated by Host PC:');
+    if (!enteredPin || enteredPin.trim().length < 6) return;
+    try {
+      const res = await api('/api/settings/verify-unlock-pin', {
+        method: 'POST',
+        body: JSON.stringify({ pin: enteredPin.trim() })
+      });
+      if (res && res.ok && res.unlock_token) {
+        sessionStorage.setItem('vs-settings-unlock-token', res.unlock_token);
+        alert('✓ Host Authorization Verified! Settings modification unlocked for this session.');
+        setup();
+      } else {
+        alert(res.error || 'Invalid or expired Unlock PIN.');
+      }
+    } catch (err) {
+      alert(`Authorization failed: ${err.message}`);
+    }
+  });
 }
 
 async function loadFirmTypes() {
@@ -1950,9 +4463,10 @@ function clientsPage() {
         <input type="text" id="clients-table-filter" placeholder="Search by name, file no., mobile, firm type or group" aria-label="Search clients">
       </label>
       <input id="client-file" type="file" accept=".csv,.xlsx" multiple style="display:none;">
-      <button class="btn" id="btn-trigger-import"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Import</button>
+      <button class="btn" id="btn-export-excel" title="Export all client records to Excel spreadsheet (.xlsx)"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Export</button>
+      <button class="btn" id="btn-trigger-import" title="Import clients from CSV or Excel"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Import</button>
+      <button class="btn" id="btn-download-sample-excel" title="Download formatted Sample Clients Import template spreadsheet (.xlsx)"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Sample Excel</button>
       <button class="primary" id="import" style="display:none;">Import</button>
-      <a class="btn" href="/api/clients/export?format=xlsx" download="VS_Database_Clients.xlsx" id="btn-export-excel"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Export</a>
       <button class="btn p" id="btn-toggle-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
       <button class="btn" id="btn-open-ft-mgmt"><svg class="i" aria-hidden="true"><use href="#setup"/></svg>Firm types</button>
       <a class="secondary" href="/api/template.csv" style="display:none;" id="btn-download-template">Download CSV template</a>
@@ -1970,7 +4484,23 @@ function clientsPage() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;">
         <div><label>Practive File No. (optional)</label><input id="manual-file-no" placeholder="V-0001"></div>
         <div><label>Client name *</label><input id="manual-name" placeholder="XYZ Traders" required></div>
-        <div><label>Mobile *</label><input id="manual-mobile" placeholder="9999999999" required></div>
+        <div>
+          <label>Mobile *</label>
+          <div class="vs-phone-group">
+            <div class="vs-phone-prefix">
+              <select id="manual-mobile-cc" class="vs-phone-select" aria-label="Country Code">
+                <option value="+91" selected>+91</option>
+                <option value="+1">+1</option>
+                <option value="+44">+44</option>
+                <option value="+971">+971</option>
+                <option value="+61">+61</option>
+                <option value="+65">+65</option>
+              </select>
+              <svg class="vs-phone-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <input id="manual-mobile" class="vs-phone-input" type="tel" maxlength="10" placeholder="10-digit number" required>
+          </div>
+        </div>
         <div>
           <label>Firm Type *</label>
           <select id="manual-type" required>
@@ -1990,8 +4520,9 @@ function clientsPage() {
 
     <!-- Registered Clients Glass Card -->
     <section class="glass card">
-      <div class="row" style="margin-bottom:14px;">
+      <div class="row" style="margin-bottom:14px;align-items:center;">
         <h2 id="clients-count-label" style="margin:0;">${clients.length} registered clients</h2>
+        ${(window.VSOfflineManager && (window.VSOfflineManager.isOffline() || clients.some(c => c._is_cached))) ? `<span class="vs-banner-stale-tag" style="margin-left:12px;">POTENTIALLY STALE (OFFLINE CACHE)</span>` : ''}
         <span class="sp"></span>
         <div id="clients-bulk-bar-container"></div>
       </div>
@@ -2034,6 +4565,9 @@ function clientsPage() {
           </tbody>
         </table>
       </div>
+      <div class="clients-pagination-bar" id="clients-pagination">
+        <span id="clients-pagination-info">Showing ${clients.length} registered clients</span>
+      </div>
     </section>
   `;
 
@@ -2059,6 +4593,10 @@ function clientsPage() {
     if (countLabel) {
       countLabel.textContent = q ? `Showing ${filtered.length} of ${clients.length} clients` : `${clients.length} registered clients`;
     }
+    const pageInfo = document.getElementById('clients-pagination-info');
+    if (pageInfo) {
+      pageInfo.textContent = q ? `Showing ${filtered.length} of ${clients.length} clients` : `Showing ${clients.length} registered clients`;
+    }
 
     if (!tbodyEl) return;
     if (!filtered.length) {
@@ -2079,7 +4617,7 @@ function clientsPage() {
         <td>${escapeHtml(c.mobile || '')}</td>
         <td>${escapeHtml(c.client_type || 'Unassigned')}</td>
         <td>${escapeHtml(c.client_group || '')}</td>
-        <td>${escapeHtml(c.status || '')}</td>
+        <td><span class="chip ${c.status === 'Inactive' ? 'w' : ''}">${escapeHtml(c.status || 'Active')}</span></td>
       </tr>
     `).join('');
 
@@ -2089,7 +4627,12 @@ function clientsPage() {
   }
 
   if (filterInput) {
-    filterInput.oninput = (e) => filterClientTable(e.target.value);
+    let clientFilterDebounceTimer = null;
+    filterInput.oninput = (e) => {
+      const val = e.target.value;
+      clearTimeout(clientFilterDebounceTimer);
+      clientFilterDebounceTimer = setTimeout(() => filterClientTable(val), 150);
+    };
   }
 
   const addPanel = field('add-client-panel');
@@ -2154,7 +4697,7 @@ function clientsPage() {
       pb.close();
 
       if (allNew.length === 0) {
-        importResult.innerHTML = `<div class="notice" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:12px 16px;border-radius:12px;">ℹ All ${allConflicts.length} client(s) in the imported file(s) already exist in the database. No new clients were added.</div>`;
+        importResult.innerHTML = `<div class="notice" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:12px 16px;border-radius:8px;"><svg class="i" style="width:14px;height:14px;stroke:#334155;fill:none;vertical-align:middle;margin-right:6px;"><use href="#info"/></svg>All ${allConflicts.length} client(s) in the imported file(s) already exist in the database. No new clients were added.</div>`;
         return;
       }
 
@@ -2170,10 +4713,10 @@ function clientsPage() {
         const skippedTotal = allConflicts.length + (r.skipped || 0);
         await execPb.finish(r.imported === 1 ? '1 New Client Imported Successfully' : `Imported ${r.imported} New Clients Successfully`);
         importResult.innerHTML = `<div class="import-summary">
-          <span class="stat imported">✓ Imported: ${r.imported} new</span>
-          ${skippedTotal > 0 ? `<span class="stat skipped" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;">ℹ Skipped: ${skippedTotal} existing</span>` : ''}
+          <span class="stat imported"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#check"/></svg>Imported: ${r.imported} new</span>
+          ${skippedTotal > 0 ? `<span class="stat skipped" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#info"/></svg>Skipped: ${skippedTotal} existing</span>` : ''}
           ${allInvalid.length ? `<span class="stat skipped">— Invalid rows: ${allInvalid.length}</span>` : ''}
-          ${r.failed ? `<span class="stat failed">⚠ Failed: ${r.failed}</span>` : ''}
+          ${r.failed ? `<span class="stat failed"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#alert"/></svg>Failed: ${r.failed}</span>` : ''}
         </div>`;
         render();
       };
@@ -2190,12 +4733,86 @@ function clientsPage() {
     }
   };
 
+  const handleClientFileDownload = async (url, fallbackName) => {
+    try {
+      showNativeToast('Generating download...', 'info', 2000);
+      const resolved = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+        ? window.TauriBridge.resolveApiUrl(url)
+        : url;
+      const resp = await fetch(resolved, {
+        headers: {
+          'X-VS-Device-Id': getDeviceId(),
+          'X-VS-App-Mode': (window.__vsIsClientMode === true) ? 'client' : 'host',
+          ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {})
+        }
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = fallbackName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 30000);
+      showNativeToast(`Downloaded ${fallbackName} successfully!`, 'success');
+    } catch (err) {
+      console.error('Download failed:', err);
+      showNativeToast(`Download failed: ${err.message}`, 'error');
+    }
+  };
+
+  document.querySelector('#btn-export-excel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    handleClientFileDownload('/api/clients/export?format=xlsx', 'VS_Database_Clients.xlsx');
+  });
+
+  document.querySelector('#btn-download-sample-excel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    handleClientFileDownload('/api/clients/sample-template', 'Sample_Clients_Import_Template.xlsx');
+  });
+
+  // Mobile number 10-digit enforcement & +91 paste normalization
+  const mobileInputEl = field('manual-mobile');
+  if (mobileInputEl) {
+    const sanitizePhoneDigits = (raw) => {
+      let digits = String(raw || '').replace(/\D/g, '');
+      if (digits.length > 10 && digits.startsWith('91')) {
+        digits = digits.slice(2);
+      } else if (digits.length > 10 && digits.startsWith('0')) {
+        digits = digits.slice(1);
+      }
+      return digits.slice(0, 10);
+    };
+
+    mobileInputEl.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+      mobileInputEl.value = sanitizePhoneDigits(text);
+    });
+
+    mobileInputEl.addEventListener('input', () => {
+      mobileInputEl.value = sanitizePhoneDigits(mobileInputEl.value);
+    });
+
+    mobileInputEl.addEventListener('keypress', (e) => {
+      if (!/\d/.test(e.key) || mobileInputEl.value.length >= 10) {
+        e.preventDefault();
+      }
+    });
+  }
+
   field('add-client').onclick = async () => {
     try {
       const typeVal = field('manual-type').value;
       if (!typeVal || typeVal === '__add_new__') throw Error('Select a valid Firm Type.');
       const nameVal = field('manual-name').value.trim();
       if (!nameVal) throw Error('Client name is required.');
+      const mobileVal = field('manual-mobile').value.trim();
+      if (!mobileVal || mobileVal.length !== 10) {
+        throw Error('Mobile number must be exactly 10 digits (excluding country code).');
+      }
 
       const pb = showGlassProgressBar({ title: 'Adding Client', subtitle: `Registering "${nameVal}"...` });
       pb.simulate(700);
@@ -2218,7 +4835,7 @@ function clientsPage() {
       clientsPage();
       const newManualResult = document.getElementById('manual-result');
       if (newManualResult) {
-        newManualResult.innerHTML = message(`✓ Client "${escapeHtml(res.name)}" (${escapeHtml(res.file_no)}) registered successfully.`);
+        newManualResult.innerHTML = message(`<svg class="i" style="width:14px;height:14px;vertical-align:middle;margin-right:6px;stroke:#16a34a;fill:none;"><use href="#check"/></svg>Client "${escapeHtml(res.name)}" (${escapeHtml(res.file_no)}) registered successfully.`);
       }
     } catch (e) {
       const existingPb = document.querySelector('.vs-progress-backdrop');
@@ -2226,6 +4843,10 @@ function clientsPage() {
       manualResult.innerHTML = message(e.message, true);
     }
   };
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 function showImportConflictModal(newClients, conflicts, invalidRows, newFirmTypes = []) {
@@ -2240,14 +4861,14 @@ function showImportConflictModal(newClients, conflicts, invalidRows, newFirmType
         <h2>Import Conflict Resolution</h2>
         <p class="muted">The following clients already exist in the database with the same Name + File Number.</p>
         <div class="summary-badges">
-          <span class="summary-badge new">✓ New: ${newClients.length}</span>
-          <span class="summary-badge conflict">⚠ Duplicates: ${conflicts.length}</span>
-          ${invalidRows.length ? `<span class="summary-badge invalid">✕ Invalid: ${invalidRows.length}</span>` : ''}
+          <span class="summary-badge new"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#check"/></svg>New: ${newClients.length}</span>
+          <span class="summary-badge conflict"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#alert"/></svg>Duplicates: ${conflicts.length}</span>
+          ${invalidRows.length ? `<span class="summary-badge invalid"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#close"/></svg>Invalid: ${invalidRows.length}</span>` : ''}
         </div>
       </div>
       ${newFirmTypes.length ? `
-        <div style="margin:0 24px 12px;padding:10px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:10px;">
-          <h4 style="margin:0 0 4px;color:#854d0e;font-size:12px;">⚠️ New Firm Type(s) Detected</h4>
+        <div style="margin:0 24px 12px;padding:10px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;">
+          <h4 style="margin:0 0 4px;color:#854d0e;font-size:12px;"><svg class="i" style="width:13px;height:13px;stroke:#ca8a04;fill:none;vertical-align:middle;margin-right:4px;"><use href="#alert"/></svg>New Firm Type(s) Detected</h4>
           <p style="margin:0 0 6px;font-size:12px;color:#713f12;">The import contains unregistered firm type(s): <strong>${newFirmTypes.map(esc).join(', ')}</strong>.</p>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#713f12;cursor:pointer;">
             <input type="checkbox" id="approve-all-firm-types-cb" checked> Automatically create and register these firm types
@@ -2392,11 +5013,11 @@ function showImportConflictModal(newClients, conflicts, invalidRows, newFirmType
       const importResult = document.getElementById('import-result');
       if (importResult) {
         importResult.innerHTML = `<div class="import-summary">
-          <span class="stat imported">✓ Imported: ${r.imported}</span>
-          <span class="stat replaced">↻ Replaced: ${r.replaced}</span>
-          <span class="stat skipped">→ Skipped: ${r.skipped}</span>
-          <span class="stat renamed">✎ Renamed: ${r.renamed}</span>
-          ${r.failed ? `<span class="stat failed">⚠ Failed: ${r.failed}</span>` : ''}
+          <span class="stat imported"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#check"/></svg>Imported: ${r.imported}</span>
+          <span class="stat replaced"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#refresh"/></svg>Replaced: ${r.replaced}</span>
+          <span class="stat skipped"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#info"/></svg>Skipped: ${r.skipped}</span>
+          <span class="stat renamed"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#edit"/></svg>Renamed: ${r.renamed}</span>
+          ${r.failed ? `<span class="stat failed"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#alert"/></svg>Failed: ${r.failed}</span>` : ''}
         </div>`;
       }
       render();
@@ -2429,7 +5050,7 @@ function folders() {
       <div class="row" style="margin-top:16px;">
         <button class="btn secondary" id="save-rules"><svg class="i" aria-hidden="true"><use href="#check"/></svg>Save rules</button>
         <button class="btn p" id="create"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Create missing folders</button>
-        <button class="btn btn-reconcile" id="reconcile-all" style="background:linear-gradient(135deg, #10b981, #059669);color:#ffffff;border:0;font-weight:700;"><svg class="i" style="stroke:#fff;" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile</button>
+        <button class="btn secondary" id="reconcile-all"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile</button>
       </div>
       <div id="result" style="margin-top:12px;"></div>
       <div id="reconcile-result" style="margin-top:12px;"></div>
@@ -2465,7 +5086,7 @@ function folders() {
       const r = await api('/api/folders/reconcile', { method: 'POST', body: '{}' });
       let html = `<div class="notice">${r.clients_scanned} client(s) scanned. ${r.folders} folder(s) and ${r.files} file(s) discovered.</div>`;
       if (r.missing_folders > 0 || r.missing_files > 0) {
-        html += `<div class="missing-notice"><strong>⚠ Missing items detected (not deleted — retained in database):</strong>`;
+        html += `<div class="missing-notice"><strong><svg class="i" style="width:14px;height:14px;stroke:#dc2626;fill:none;vertical-align:middle;margin-right:4px;"><use href="#alert"/></svg>Missing items detected (not deleted — retained in database):</strong>`;
         if (r.missing_folders > 0) html += `${r.missing_folders} folder(s) no longer on disk. `;
         if (r.missing_files > 0) html += `${r.missing_files} file(s) no longer on disk.`;
         if (r.missing_folder_details && r.missing_folder_details.length > 0) {
@@ -2475,11 +5096,10 @@ function folders() {
       }
       reconcileResult.innerHTML = html;
     } catch (e) { reconcileResult.innerHTML = message(e.message, true); }
-    finally { btn.disabled = false; btn.innerHTML = '<svg class="i" style="stroke:#fff;" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile'; }
+    finally { btn.disabled = false; btn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile'; }
   };
-  if (window.GlassUI && window.GlassUI.createDropdown) {
-    const orderSel = field('order');
-    if (orderSel) window.GlassUI.createDropdown(orderSel);
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
   }
 }
 
@@ -2514,7 +5134,7 @@ function playCompletionChime() {
 }
 
 function requestNotificationPermission() {
-  if (typeof window.pywebview !== 'undefined' || window.location.search.includes('desktop_app=1') || window.location.port === '8767') {
+  if ((window.TauriBridge && window.TauriBridge.isTauri) || typeof window.pywebview !== 'undefined' || window.location.search.includes('desktop_app=1') || window.location.port === '8767') {
     return;
   }
   if ('Notification' in window && Notification.permission === 'default') {
@@ -2523,14 +5143,14 @@ function requestNotificationPermission() {
     } catch (_) {}
   }
 }
-if (typeof window.pywebview === 'undefined' && !window.location.search.includes('desktop_app=1')) {
+if (!(window.TauriBridge && window.TauriBridge.isTauri) && typeof window.pywebview === 'undefined' && !window.location.search.includes('desktop_app=1')) {
   document.addEventListener('click', requestNotificationPermission, { once: true });
 }
 
 let titleFlashTimer = null;
 const originalDocTitle = document.title || 'VS Database';
 
-function flashTabTitle(text = '✅ Task Complete!') {
+function flashTabTitle(text = 'Task Complete!') {
   if (titleFlashTimer) clearInterval(titleFlashTimer);
   let isOriginal = false;
   titleFlashTimer = setInterval(() => {
@@ -2556,12 +5176,12 @@ function notifyTaskComplete({ title = 'Task Completed', message = 'Operation com
   playCompletionChime();
   
   if (document.hidden) {
-    flashTabTitle(`(1) ✅ ${title}`);
+    flashTabTitle(`(1) ${title}`);
     
     if ('Notification' in window) {
       if (Notification.permission === 'granted') {
         try {
-          const notif = new Notification(`✅ ${title}`, {
+          const notif = new Notification(`${title}`, {
             body: message,
             icon: 'logo Monogram.png',
             badge: 'logo Monogram.png',
@@ -2577,7 +5197,7 @@ function notifyTaskComplete({ title = 'Task Completed', message = 'Operation com
         Notification.requestPermission().then(perm => {
           if (perm === 'granted') {
             try {
-              const notif = new Notification(`✅ ${title}`, { body: message, icon: 'logo Monogram.png' });
+              const notif = new Notification(`${title}`, { body: message, icon: 'logo Monogram.png' });
               notif.onclick = () => { window.focus(); notif.close(); };
             } catch (e) {}
           }
@@ -3005,16 +5625,16 @@ class BackgroundFileSaveQueue {
         btn.innerHTML = `
           <div class="vs-queue-badge-spinner"></div>
           <span>Saving (${currentJob.completed_files + 1}/${currentJob.total_files}) ${currentJob.progress_percent}%</span>
-          <span style="background:#e0e7ff;color:#3730a3;padding:2px 7px;border-radius:10px;font-size:11px;">${activeJobs.length} active</span>
+          <span style="background:#f1f5f9;color:#334155;border:1px solid var(--line);padding:2px 7px;border-radius:6px;font-size:11px;">${activeJobs.length} active</span>
         `;
       } else if (activeJobs.length > 0) {
         btn.innerHTML = `
-          <span>⏳</span>
+          <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <span>${activeJobs.length} Job(s) in Queue</span>
         `;
       } else {
         btn.innerHTML = `
-          <span>✅</span>
+          <svg class="i" style="width:14px;height:14px;stroke:#16a34a;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
           <span>Queue Finished (${this.jobs.length})</span>
         `;
       }
@@ -3067,7 +5687,7 @@ class BackgroundFileSaveQueue {
           <div class="vs-queue-item-card ${job.status}" id="queue-card-${job.id}">
             <div class="vs-queue-item-header">
               <div class="vs-queue-client-info" title="${escapeHtml(job.client_name)} (${escapeHtml(job.client_file_no)})">
-                <span>🏢</span>
+                <svg class="i" style="width:14px;height:14px;stroke:var(--tx2);fill:none;vertical-align:middle;margin-right:4px;"><use href="#clients"/></svg>
                 <strong style="color:#0f172a;">${escapeHtml(job.client_name)}</strong>
                 <span class="muted" style="font-size:11px;font-weight:600;">(${escapeHtml(job.client_file_no)})</span>
               </div>
@@ -3075,25 +5695,25 @@ class BackgroundFileSaveQueue {
                 <span class="${badgeClass}" style="font-size:10.5px;padding:2px 7px;">${job.status.toUpperCase()}</span>
                 ${(isQueued || isProc) ? `
                   <button type="button" class="vs-queue-cancel-btn" onclick="window.fileSaveQueue.cancelJob('${job.id}')" title="Cancel this save job">
-                    <span>✕</span> Cancel
+                    <svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:3px;"><use href="#close"/></svg>Cancel
                   </button>
                 ` : `
                   <button type="button" class="vs-queue-remove-btn" onclick="window.fileSaveQueue.removeJob('${job.id}')" title="Dismiss">
-                    ✕
+                    <svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;"><use href="#close"/></svg>
                   </button>
                 `}
               </div>
             </div>
 
             <div class="vs-queue-target-path">
-              <span>📁</span>
+              <svg class="i" style="width:14px;height:14px;color:#2563eb;" aria-hidden="true"><use href="#folder"/></svg>
               <span>Folder: <code>/${escapeHtml(job.target_folder || 'Client Root')}</code></span>
               <span class="muted">• ${job.period}</span>
             </div>
 
             <div class="vs-queue-status-line">
               <span class="muted" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px;" title="${escapeHtml(statusText)}">
-                ${isProc ? '⏳ ' : (isComp ? '✅ ' : (isCanc ? '🚫 ' : '📄 '))}${statusText}
+                ${isProc ? '<svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' : (isComp ? '<svg class="i" style="width:11px;height:11px;stroke:#10b981;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>' : (isCanc ? '<svg class="i" style="width:11px;height:11px;stroke:#ef4444;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>' : '<svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'))} ${statusText}
               </span>
               <strong style="font-size:11.5px;color:#1e1b4b;">${pct}%</strong>
             </div>
@@ -3308,7 +5928,7 @@ async function processIncomingStaging(staging) {
           file_base64: item.file_base64 || item.base64 || item._b64 || '',
           staged_file_id: item.staged_file_id || null,
           staging_session_id: item.staging_session_id || null,
-          badge: item.badge || '📥 Chrome Download',
+          badge: item.badge || 'Chrome Download',
           is_pdf: isPdf,
           source_local_path: item.source_local_path || item.localPath || item.local_path || '',
           source_url: item.source_url || item.url || item.sourceData?.url || '',
@@ -3339,10 +5959,10 @@ async function processIncomingStaging(staging) {
       }
       const noticeEl = document.getElementById('result');
       if (noticeEl) {
-        noticeEl.innerHTML = `<div class="notice" style="background:#eff6ff;border-color:#bfdbfe;color:#1e40af;font-weight:600;">📥 ${newFiles.length} file(s) received from Chrome Extension. Select a Client & Destination Folder to save.</div>`;
+        noticeEl.innerHTML = `<div class="notice" style="background:#f8fafc;border-color:#e2e8f0;color:#0f172a;font-weight:600;"><svg class="i" style="width:14px;height:14px;vertical-align:middle;margin-right:6px;"><use href="#dl"/></svg>${newFiles.length} file(s) received from Chrome Extension. Select a Client & Destination Folder to save.</div>`;
       }
       if (typeof showNativeToast === 'function') {
-        showNativeToast(`📥 Received ${newFiles.length} file(s) from Chrome Extension`, 'success');
+        showNativeToast(`Received ${newFiles.length} file(s) from Chrome Extension`, 'success');
       }
       return true;
     }
@@ -3368,13 +5988,15 @@ function save() {
     returnedBannerHtml = `
       <div class="stg-banner-returned" id="stg-banner-returned">
         <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:20px;">✅</span>
+          <span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#d1fae5;color:#059669;">
+            <svg style="width:14px;height:14px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><polyline stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="20 6 9 17 4 12"/></svg>
+          </span>
           <div>
             <div style="font-weight:700;color:#065f46;">Processed PDF returned to staging: <u>${escapeHtml(resFile.filename || 'document.pdf')}</u></div>
             <div style="font-size:11px;color:#047857;margin-top:2px;">Original selected PDF(s) replaced. All other staged files preserved. Ready to save to client.</div>
           </div>
         </div>
-        <button type="button" class="btn-tiny" onclick="document.getElementById('stg-banner-returned')?.remove()" style="font-size:13px;padding:2px 8px;">✕</button>
+        <button type="button" class="btn-tiny" onclick="document.getElementById('stg-banner-returned')?.remove()" aria-label="Dismiss banner" style="display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;"><svg class="i" style="width:12px;height:12px;"><use href="#close"/></svg></button>
       </div>
     `;
     window.lastAppliedStagingResult = null;
@@ -3387,11 +6009,11 @@ function save() {
       <p class="muted">Upload and organize client documents: PDF, Excel, Word, CSV, ZIP, JSON, images, and other office files.</p>
       
       <!-- DRAG AND DROP ZONE -->
-      <div id="save-dropzone" class="dropzone" style="border: 2px dashed rgba(112, 126, 187, 0.4); border-radius: 20px; padding: 32px 20px; text-align: center; background: rgba(255, 255, 255, 0.55); cursor: pointer; transition: all 0.2s ease; margin-bottom: 16px;">
-        <div style="margin-bottom: 8px;"><svg class="i" style="width:38px;height:38px;color:#2563eb;" aria-hidden="true"><use href="#upload"/></svg></div>
-        <h3 style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700; color: var(--tx);">Drag & Drop Documents Here</h3>
+      <div id="save-dropzone" class="dropzone" style="border: 1px dashed var(--line); border-radius: 8px; padding: 28px 20px; text-align: center; background: #ffffff; cursor: pointer; transition: all 0.15s ease; margin-bottom: 16px;">
+        <div style="margin-bottom: 8px;"><svg class="i" style="width:32px;height:32px;color:var(--tx);" aria-hidden="true"><use href="#upload"/></svg></div>
+        <h3 style="margin: 0 0 6px 0; font-size: 15px; font-weight: 700; color: var(--tx);">Drag & Drop Documents Here</h3>
         <p style="margin: 0 0 12px 0; font-size: 12px; color: var(--muted);">PDF, Excel, Word, CSV, ZIP, JSON, Images</p>
-        <span id="save-file-label" class="btn p" style="min-height:36px;font-size:12px;padding:0 18px;border-radius:20px;">Choose Files from Computer</span>
+        <span id="save-file-label" class="btn p" style="min-height:36px;font-size:12px;padding:0 16px;border-radius:8px;">Choose Files from Computer</span>
         <input type="file" id="pdf" multiple style="display:none;">
       </div>
 
@@ -3405,7 +6027,7 @@ function save() {
       <div class="grid" style="margin-top:0;">
         <div>
           <label>Select Client *</label>
-          <input type="text" id="client-search-filter" placeholder="Search client by name or file no..." style="margin-bottom:6px;width:100%;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--glass2);font-size:12px;" />
+          <input type="text" id="client-search-filter" placeholder="Search client by name or file no..." style="margin-bottom:6px;width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:#ffffff;font-size:12px;" />
           <select id="client">
             <option value="">Select client…</option>
             ${clients.map(c => `<option value="${escapeHtml(c.file_no)}">${escapeHtml(c.name)} (${escapeHtml(c.file_no)})</option>`).join('')}
@@ -3436,9 +6058,12 @@ function save() {
         </div>
 
         <div id="web-folder-navigator" style="border:1px solid var(--line);border-radius:16px;background:var(--glass2);padding:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);gap:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);gap:8px;flex-wrap:wrap;">
             <button id="web-folder-nav-up" type="button" class="btn" style="min-height:30px;font-size:11px;padding:2px 10px;">&larr; Up</button>
             <span id="web-folder-nav-crumb" style="font-size:12px;font-weight:600;color:var(--tx);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/ (Client Root)</span>
+            <button id="web-folder-nav-add-folder" type="button" class="btn secondary" style="min-height:30px;font-size:11px;padding:2px 10px;display:inline-flex;align-items:center;gap:4px;" title="Create new subfolder in current directory">
+              <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#plus"/></svg>+ Add Folder
+            </button>
             <button id="web-folder-nav-select-this" type="button" class="btn p" style="min-height:30px;font-size:11px;padding:2px 12px;"><svg class="i" aria-hidden="true"><use href="#check"/></svg>Select This Folder</button>
           </div>
           <div id="web-folder-nav-list" style="max-height:200px;overflow-y:auto;">
@@ -3454,18 +6079,18 @@ function save() {
         <span id="save-drive-container" style="position:relative;display:inline-flex;align-items:center;">
           <label class="check" id="save-drive-label"><input type="checkbox" id="save-drive" checked> Copy to Google Drive (Office Storage)</label>
           <div id="save-drive-lock" class="glass-drive-lock-badge" style="display:none;" tabindex="0" role="button" aria-label="Google Drive Office storage is locked in Only Client mode">
-            <span class="lock-icon">🔒</span>
+            <span class="lock-icon"><svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             <span class="lock-text">Copy to Google Drive</span>
             <span class="lock-pill">Only Client</span>
             <div class="glass-drive-lock-tooltip">
               <div style="font-weight:800;color:#93c5fd;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
-                <span>🔒</span> Google Drive Office Storage Locked
+                <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Google Drive Office Storage Locked
               </div>
               <div style="margin-bottom:6px;color:#e2e8f0;">
                 <strong>Reason:</strong> Google Drive is currently configured in <strong>'Only Client'</strong> mode. Internal office files stay strictly on Local Storage.
               </div>
               <div style="border-top:1px solid rgba(255,255,255,0.15);padding-top:6px;font-size:11px;color:#94a3b8;">
-                <strong>💡 How to Unlock:</strong><br>
+                <strong><svg class="i" style="width:12px;height:12px;stroke:#fbbf24;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>How to Unlock:</strong><br>
                 Go to the <strong>Setup</strong> tab and switch Google Drive mode to <em>'Use Google Drive for backup And Client'</em> or <em>'Only Backup'</em>.<br>
                 <em>(Shared files can still be saved directly to the Client Portal using the per-file checkbox in the list above.)</em>
               </div>
@@ -3528,11 +6153,17 @@ function save() {
     const filtered = clients.filter(c => !q || (c.name || '').toLowerCase().includes(q) || (c.file_no || '').toLowerCase().includes(q));
     clientSelect.innerHTML = '<option value="">Select client…</option>' +
       filtered.map(c => `<option value="${escapeHtml(c.file_no)}">${escapeHtml(c.name)} (${escapeHtml(c.file_no)})</option>`).join('');
+    if (clientSelect._glassDropdown) {
+      clientSelect._glassDropdown.rebuild();
+    }
   }
 
   if (clientSearchFilter) {
+    let clientSearchDebounce = null;
     clientSearchFilter.oninput = (e) => {
-      renderClientOptions(e.target.value);
+      const val = e.target.value;
+      clearTimeout(clientSearchDebounce);
+      clientSearchDebounce = setTimeout(() => renderClientOptions(val), 150);
     };
   }
 
@@ -3599,7 +6230,7 @@ function save() {
     for (const f of newFilesList) {
       const isPdf = Boolean(f.is_pdf || (f.name || f.filename || '').toLowerCase().endsWith('.pdf'));
       let stagedFileId = f.staged_file_id || null;
-      let badge = f.badge || (f.source_local_path ? '📥 Chrome Download' : null);
+      let badge = f.badge || (f.source_local_path ? 'Chrome Download' : null);
 
       // Check if file is already in selectedFiles by staged_file_id or source_local_path
       const isDuplicate = selectedFiles.some(sf => 
@@ -3656,7 +6287,7 @@ function save() {
             size: f.size || 0,
             is_pdf: isPdf,
             pdf_selected: false,
-            badge: badge || '📥 Chrome Download'
+            badge: badge || 'Chrome Download'
           });
         }
       }
@@ -3794,7 +6425,7 @@ function save() {
         <div>
           ${selectedPdfs.length > 0 ? `
             <button type="button" class="btn-open-pdf-studio" id="btn-open-pdf-studio" title="Send selected PDF(s) into PDF Studio">
-              <span>📄 Open in PDF Studio</span>
+              <span><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#file"/></svg>Open in PDF Studio</span>
               <span style="background:rgba(255,255,255,0.3);padding:1px 7px;border-radius:10px;font-size:11px;font-weight:800;">${selectedPdfs.length}</span>
             </button>
           ` : ''}
@@ -3806,7 +6437,7 @@ function save() {
         <div style="flex:1;">Files (${selectedFiles.length})</div>
         <div style="display:flex;align-items:center;gap:18px;">
           <div style="display:inline-flex;align-items:center;gap:8px;" title="Toggle Client Portal access for all files">
-            <span style="font-size:11.5px;font-weight:700;color:#1e40af;">👥 Client Portal (All):</span>
+            <span style="font-size:11.5px;font-weight:700;color:var(--tx);"><svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#drive"/></svg>Client Portal (All):</span>
             ${window.GlassUI && window.GlassUI.renderPillSwitch ? window.GlassUI.renderPillSwitch({
               id: 'master-portal-pill',
               className: 'master-portal-pill-input',
@@ -3839,23 +6470,23 @@ function save() {
 
           let lockBadgeHtml = '';
           if (!isPdf) {
-            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="Non-PDF file">📄 Ready</span>`;
+            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="Non-PDF file"><svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Ready</span>`;
           } else if (file.is_encrypted === null) {
-            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge checking">⏳ Checking...</span>`;
+            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge checking"><svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Checking...</span>`;
           } else if (!file.is_encrypted || file.is_unlocked) {
             const badgeTitle = file.matched_label ? `Auto-unlocked with: ${file.matched_label}` : 'File is unlocked and ready to save';
-            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="${escapeHtml(badgeTitle)}">🔓 ${file.matched_label ? 'Auto-Unlocked' : 'Unlocked'}</span>`;
+            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="${escapeHtml(badgeTitle)}"><svg class="i" style="width:11px;height:11px;stroke:#10b981;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>${file.matched_label ? 'Auto-Unlocked' : 'Unlocked'}</span>`;
           } else {
             lockBadgeHtml = `
               <span class="vs-pdf-status-glass-badge locked btn-toggle-unlock-drawer" data-idx="${idx}" title="PDF is locked. Click to enter password">
-                🔒 Locked
+                <svg class="i" style="width:11px;height:11px;stroke:#ef4444;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Locked
               </span>
             `;
           }
 
           const fileIconSvg = (window.GlassUI && window.GlassUI.renderFileIcon)
             ? window.GlassUI.renderFileIcon(file.name, 36)
-            : `<span style="font-size:20px;">${isPdf ? '📕' : '📄'}</span>`;
+            : `<svg class="i" style="width:24px;height:24px;stroke:var(--tx2);fill:none;"><use href="#file"/></svg>`;
 
           const pillToggleHtml = (window.GlassUI && window.GlassUI.renderPillSwitch)
             ? window.GlassUI.renderPillSwitch({
@@ -3903,7 +6534,7 @@ function save() {
                 </div>
 
                 <div class="vs-file-actions-group">
-                  <button type="button" class="btn-ai-rename-chip btn-ai-rename-staged" data-idx="${idx}" title="Analyze document contents and propose standardized name">✨ AI Rename</button>
+                  <button type="button" class="btn-ai-rename-chip btn-ai-rename-staged" data-idx="${idx}" title="Analyze document contents and propose standardized name"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#ai"/></svg>AI Rename</button>
 
                   <div style="display:inline-flex;align-items:center;gap:6px;" title="Save this file into the Client's Google Drive Portal">
                     <span style="font-size:11px;font-weight:700;color:var(--muted);">Portal:</span>
@@ -3921,11 +6552,11 @@ function save() {
               ${(file.show_unlock_panel && isPdf && !file.is_unlocked) ? `
                 <div class="vs-inline-unlock-drawer">
                   <span style="font-size:11.5px;font-weight:700;color:#92400e;display:flex;align-items:center;gap:4px;">
-                    <span>🔑</span> Enter PDF Password:
+                    <svg class="i" style="width:13px;height:13px;stroke:#d97706;fill:none;vertical-align:middle;" viewBox="0 0 24 24"><path d="M21 2l-2 2m-1.5 1.5L16 7l-4 4-2-2-4 4 2 2-2 2-2-2-2 2 3 3 6-6 4-4 1.5-1.5z"/><circle cx="7.5" cy="16.5" r="1.5"/></svg> Enter PDF Password:
                   </span>
                   <input type="password" class="inline-pdf-pw-input" data-idx="${idx}" placeholder="Password for this PDF..." value="${escapeHtml(file.entered_password || '')}" style="flex:1;min-width:140px;padding:4px 8px;font-size:12px;border:1px solid #d97706;border-radius:6px;background:#fff;">
                   <button type="button" class="btn-inline-unlock primary btn-sm" data-idx="${idx}" style="font-size:11px;font-weight:700;padding:4px 12px;background:#d97706;border-color:#b45309;color:#fff;">Unlock & Remember</button>
-                  ${file.unlock_error ? `<div style="width:100%;color:#dc2626;font-size:11px;font-weight:700;margin-top:2px;">⚠️ ${escapeHtml(file.unlock_error)}</div>` : ''}
+                  ${file.unlock_error ? `<div style="width:100%;color:#dc2626;font-size:11px;font-weight:700;margin-top:2px;"><svg class="i" style="width:12px;height:12px;stroke:#dc2626;fill:none;vertical-align:middle;margin-right:3px;"><use href="#alert"/></svg>${escapeHtml(file.unlock_error)}</div>` : ''}
                 </div>
               ` : ''}
             </div>
@@ -4149,7 +6780,7 @@ function save() {
     if (overlay) overlay.classList.remove('active');
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       addIncomingFiles(Array.from(e.dataTransfer.files));
-      showNativeToast(`📥 Added ${e.dataTransfer.files.length} document(s) to Save workspace`, 'success');
+      showNativeToast(`Added ${e.dataTransfer.files.length} document(s) to Save workspace`, 'success');
     }
   };
   fileInput.onchange = () => {
@@ -4209,7 +6840,7 @@ function save() {
         <div style="padding:14px;font-size:12px;color:var(--muted);text-align:center;">
           No subfolders here.<br>
           <button type="button" id="web-empty-select-btn" class="primary btn-sm" style="margin-top:8px;font-size:11px;font-weight:700;">
-            ✓ Use ${escapeHtml(navPath ? '/' + navPath : 'Client Root')}
+            <svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;"><use href="#check"/></svg>Use ${escapeHtml(navPath ? '/' + navPath : 'Client Root')}
           </button>
         </div>
       `;
@@ -4229,7 +6860,7 @@ function save() {
       return `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin:3px 0;border-radius:10px;background:rgba(255,255,255,0.7);border:1px solid var(--line);font-size:12px;">
           <div class="web-folder-name-btn" data-path="${escapeHtml(itemPath)}" style="cursor:pointer;flex:1;display:flex;align-items:center;gap:6px;">
-            <span>📁</span>
+            <svg class="i" style="width:14px;height:14px;color:#2563eb;" aria-hidden="true"><use href="#folder"/></svg>
             <strong>${escapeHtml(f.name)}</strong>
             ${subCount > 0 ? `<small style="color:var(--muted);">(${subCount})</small>` : ''}
           </div>
@@ -4296,6 +6927,144 @@ function save() {
     updateFolderDisplay();
     renderNav();
   };
+
+  function showCreateFolderModal(options = '') {
+    return new Promise((resolve) => {
+      let overlay = document.getElementById('vs-create-folder-modal');
+      if (overlay) overlay.remove();
+
+      let modalTitle = 'Create New Folder';
+      let modalSubtitle = '';
+      let placeholderText = 'e.g. Invoices, GST 2026, Statements';
+      let initialVal = '';
+      let btnLabel = 'Create Folder';
+
+      if (typeof options === 'string') {
+        const parentNavPath = options;
+        const displayParent = parentNavPath ? `/${parentNavPath}` : '/ (Client Root)';
+        modalSubtitle = `Adding inside: <code style="font-weight:600;color:#0f172a;background:#f1f5f9;padding:2px 6px;border-radius:4px;">${escapeHtml(displayParent)}</code>`;
+      } else if (typeof options === 'object' && options !== null) {
+        if (options.title) modalTitle = options.title;
+        if (options.subtitle) modalSubtitle = options.subtitle;
+        if (options.placeholder) placeholderText = options.placeholder;
+        if (options.initialValue) initialVal = options.initialValue;
+        if (options.buttonText) btnLabel = options.buttonText;
+      }
+
+      overlay = document.createElement('div');
+      overlay.id = 'vs-create-folder-modal';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:999999;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.15s ease;';
+
+      overlay.innerHTML = `
+        <div class="glass card" style="width:100%;max-width:420px;padding:22px 24px;border-radius:12px;background:#ffffff;border:1px solid var(--line);box-shadow:0 16px 36px rgba(15,23,42,0.14);">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+            <div style="width:36px;height:36px;border-radius:8px;background:#f8fafc;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);flex-shrink:0;">
+              <svg class="i" style="width:18px;height:18px;stroke:#0f172a;fill:none;" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            </div>
+            <div>
+              <h3 style="margin:0;font-size:15px;font-weight:700;color:#0f172a;">${escapeHtml(modalTitle)}</h3>
+              ${modalSubtitle ? `<p class="muted" style="margin:3px 0 0;font-size:12px;">${modalSubtitle}</p>` : ''}
+            </div>
+          </div>
+          <div style="margin:14px 0 18px;">
+            <label style="display:block;font-size:12px;font-weight:600;color:#0f172a;margin-bottom:6px;">Folder Name *</label>
+            <input id="vs-new-folder-input" type="text" placeholder="${escapeHtml(placeholderText)}" value="${escapeHtml(initialVal)}" style="width:100%;height:38px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:#ffffff;font-size:13px;font-weight:500;color:#0f172a;outline:none;transition:border-color 0.15s ease;">
+            <div id="vs-new-folder-err" style="display:none;color:#dc2626;font-size:11.5px;font-weight:600;margin-top:6px;"></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button type="button" class="btn secondary" id="vs-btn-folder-cancel" style="padding:8px 16px;border-radius:8px;font-size:13px;">Cancel</button>
+            <button type="button" class="btn p" id="vs-btn-folder-create" style="padding:8px 18px;border-radius:8px;font-size:13px;background:#0f172a;color:#ffffff;">${escapeHtml(btnLabel)}</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      const input = overlay.querySelector('#vs-new-folder-input');
+      const errEl = overlay.querySelector('#vs-new-folder-err');
+      const btnCancel = overlay.querySelector('#vs-btn-folder-cancel');
+      const btnCreate = overlay.querySelector('#vs-btn-folder-create');
+
+      const close = (val) => {
+        overlay.style.opacity = '0';
+        overlay.style.transition = 'opacity 0.15s ease';
+        setTimeout(() => {
+          overlay.remove();
+          resolve(val);
+        }, 150);
+      };
+
+      const submit = () => {
+        const val = input.value.trim();
+        if (!val) {
+          errEl.textContent = 'Please enter a valid folder name.';
+          errEl.style.display = 'block';
+          input.focus();
+          return;
+        }
+        if (/[\\/:*?"<>|]/.test(val)) {
+          errEl.textContent = 'Folder name cannot contain characters: \\ / : * ? " < > |';
+          errEl.style.display = 'block';
+          input.focus();
+          return;
+        }
+        close(val);
+      };
+
+      btnCancel.onclick = () => close(null);
+      btnCreate.onclick = submit;
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          close(null);
+        }
+      };
+      overlay.onclick = (e) => {
+        if (e.target === overlay) close(null);
+      };
+
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 50);
+    });
+  }
+  window.showCreateFolderModal = showCreateFolderModal;
+
+  const addFolderBtn = field('web-folder-nav-add-folder');
+  if (addFolderBtn) {
+    addFolderBtn.onclick = async () => {
+      if (!clientSelect.value) {
+        showNativeAlert('Please select a client before adding a folder.', { title: 'No Client Selected', type: 'warning' });
+        return;
+      }
+      const folderName = await showCreateFolderModal(navPath);
+      if (!folderName || !folderName.trim()) return;
+      const cleanName = folderName.trim().replace(/[\\/:*?"<>|]/g, '_');
+      const targetSubPath = navPath ? `${navPath}/${cleanName}` : cleanName;
+      try {
+        const payload = {
+          relative_path: targetSubPath,
+          storage_kind: storageSelect ? storageSelect.value : 'office'
+        };
+        const res = await api(`/api/client-folders/${encodeURIComponent(clientSelect.value)}/folders`, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        showNativeToast(`Folder "${cleanName}" created successfully!`, 'success');
+        await loadTree(clientSelect.value);
+        selectedTargetFolder = targetSubPath;
+        navPath = targetSubPath;
+        updateFolderDisplay();
+        renderNav();
+      } catch (err) {
+        showNativeToast('Failed to create folder: ' + err.message, 'error');
+      }
+    };
+  }
 
   selectThisBtn.onclick = () => {
     selectedTargetFolder = navPath;
@@ -4369,7 +7138,7 @@ function save() {
         // Automatically show tick animation with text "Files will be saved shortly"
         showGlassmorphicSuccessAnimation("Files will be saved shortly");
 
-        result.innerHTML = message(`📋 <strong>${totalFiles} file(s) added to background queue</strong> for <strong>${escapeHtml(clientName)}</strong>. Files will be saved in the background. You can now select another client and continue saving.`);
+        result.innerHTML = message(`<svg class="i" style="width:14px;height:14px;stroke:var(--tx);fill:none;vertical-align:middle;margin-right:6px;"><use href="#check"/></svg><strong>${totalFiles} file(s) added to background queue</strong> for <strong>${escapeHtml(clientName)}</strong>. Files will be saved in the background. You can now select another client and continue saving.`);
 
         // Clear files and reset form immediately so user can save for other clients
         selectedFiles = [];
@@ -4386,6 +7155,7 @@ function save() {
       }
 
       // If <= 5 files and no queue active: interactive saving
+      window.__isSavingDocument = true;
       const saveBtn = field('save-document');
       saveBtn.disabled = true;
       saveBtn.textContent = 'Saving Documents...';
@@ -4505,8 +7275,14 @@ function save() {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save Documents';
       }
+    } finally {
+      window.__isSavingDocument = false;
     }
   };
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 async function drive() {
@@ -4514,9 +7290,9 @@ async function drive() {
   content.innerHTML = `
     <div class="glass card">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:8px;">
-        <svg class="i" style="width:36px;height:36px;color:#2563eb;" aria-hidden="true"><use href="#drive"/></svg>
+        <svg class="i" style="width:32px;height:32px;color:var(--tx);" aria-hidden="true"><use href="#drive"/></svg>
         <div>
-          <h1 style="margin:0;font-size:24px;font-weight:600;">Google Drive Client Sharing</h1>
+          <h1 style="margin:0;font-size:20px;font-weight:600;">Google Drive Client Sharing</h1>
           <p class="muted" style="margin:2px 0 0;font-size:13px;">Connect your firm Google Drive once. The system automatically maintains separated, secure Client Document Access portals for each client.</p>
         </div>
       </div>
@@ -4524,23 +7300,25 @@ async function drive() {
         <div><label>Google OAuth credentials JSON</label><input id="google-credentials" type="file" accept="application/json,.json"><p class="muted" style="margin-top:4px;">Redirect URI:<br><code>${status.redirect_uri}</code></p></div>
         <div>
           <label>Connection status</label>
-          <p class="path" style="display:flex;align-items:center;gap:8px;">
-            <svg class="i" style="width:18px;height:18px;color:${status.connected ? '#10b981' : '#f59e0b'};" aria-hidden="true"><use href="#drive"/></svg>
-            <strong>${status.connected ? 'Connected to Google Drive' : 'Not connected'}</strong>
-          </p>
-          <p class="muted">Credentials: ${status.credentials_uploaded ? 'uploaded' : 'not uploaded'}</p>
+          <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+            <span class="chip ${status.connected ? '' : 'w'}" style="font-size:12px;padding:4px 10px;">
+              <svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#drive"/></svg>
+              ${status.connected ? 'Connected to Google Drive' : 'Not connected'}
+            </span>
+          </div>
+          <p class="muted" style="margin-top:6px;font-size:12px;">Credentials: ${status.credentials_uploaded ? 'uploaded' : 'not uploaded'}</p>
         </div>
       </div>
-      <div style="margin-top:16px;background:var(--glass2);border:1px solid var(--line);border-radius:14px;padding:16px;">
-        <label style="font-weight:700;margin-bottom:6px;display:block;color:var(--tx);">Google Drive Usage Mode</label>
+      <div style="margin-top:16px;background:var(--glass2);border:1px solid var(--line);border-radius:10px;padding:16px;">
+        <label style="font-weight:600;margin-bottom:6px;display:block;color:var(--tx);">Google Drive Usage Mode</label>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-          <select id="drive-usage-mode" class="input" style="flex:1;min-width:280px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13.5px;background:var(--glass2);">
+          <select id="drive-usage-mode" class="input" style="flex:1;min-width:280px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--glass2);">
             <option value="backup_and_client" ${status.google_drive_mode === 'backup_and_client' || !status.google_drive_mode ? 'selected' : ''}>Use Google Drive for backup And Client</option>
             <option value="only_client" ${status.google_drive_mode === 'only_client' ? 'selected' : ''}>Only Client</option>
             <option value="only_backup" ${status.google_drive_mode === 'only_backup' ? 'selected' : ''}>Only Backup</option>
             <option value="disabled" ${status.google_drive_mode === 'disabled' ? 'selected' : ''}>Disable</option>
           </select>
-          <button class="btn p" id="save-drive-mode" style="padding:9px 18px;font-size:13px;">Save Drive Mode</button>
+          <button class="btn p" id="save-drive-mode" style="padding:8px 16px;font-size:13px;">Save Drive Mode</button>
         </div>
         <p class="muted" style="margin:6px 0 0;font-size:12px;">Controls whether Google Drive handles both Client Document Portals and System Backups, is dedicated solely to Client Portals or Backups, or is disabled.</p>
       </div>
@@ -4614,6 +7392,10 @@ async function drive() {
       btn.textContent = 'Create client folder links';
     }
   };
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 async function activity() {
@@ -4876,26 +7658,85 @@ async function activity() {
 }
 
 async function usersPage() {
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+
+  if (!currentUser) {
+    try {
+      const st = await api('/api/auth/status');
+      if (st && st.user) currentUser = st.user;
+    } catch (_) {}
+  }
   if (currentUser?.role !== 'host') {
+    if (!isClient) {
+      content.innerHTML = `
+        <div class="card" style="max-width:540px;margin:40px auto;text-align:center;padding:28px;">
+          <h2 style="margin-top:0;">Host Administrator Authentication Required</h2>
+          <p class="muted" style="margin-bottom:20px;font-size:13px;">
+            You are currently accessing from the Host PC console, but your active session (${escapeHtml(currentUser?.user_id || 'Staff')}) does not have Host Administrator authority.
+          </p>
+          <button class="primary" id="btn-switch-to-host-login" style="padding:10px 24px;font-weight:700;">Sign In as Host Administrator</button>
+        </div>
+      `;
+      document.querySelector('#btn-switch-to-host-login')?.addEventListener('click', () => {
+        showAuthModal('host-login');
+      });
+      return;
+    }
     content.innerHTML = message('Access restricted to Host administrator.', true);
     return;
   }
   const data = await api('/api/admin/users');
   const pendingRequests = data.requests.filter(r => r.status === 'pending');
 
+  let hostLanAddr = '192.168.1.50:8768';
+  try {
+    const hStat = await api('/api/desktop/health');
+    if (hStat && hStat.host_address) hostLanAddr = hStat.host_address;
+  } catch (_) {}
+
   content.innerHTML = `
+    <!-- 1. Workstation Pairing (PIN Generation) Card -->
+    <section class="glass card" style="border-left:4px solid var(--pc);margin-bottom:18px;">
+      <div class="row" style="align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <h2 style="margin:0 0 4px;"><svg class="i" style="color:var(--pc);"><use href="#check"/></svg>Pair Workstation (6-Digit PIN)</h2>
+          <p class="muted" style="margin:0;font-size:13px;">Generate a single-use 6-digit PIN to connect staff client PCs to this Host PC.</p>
+          <div style="margin-top:8px;font-size:12.5px;color:var(--ink);">
+            Host Server Address for Client PCs: <code style="background:rgba(0,0,0,0.06);padding:3px 8px;border-radius:6px;font-weight:700;color:var(--pc);" id="host-lan-address-text">${escapeHtml(hostLanAddr)}</code>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn p" id="btn-generate-pairing-pin" style="padding:10px 18px;font-weight:700;">
+            <svg class="i" aria-hidden="true"><use href="#plus"/></svg> Generate Pairing PIN
+          </button>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn secondary btn-sm" id="btn-generate-settings-pin" style="font-weight:700;">
+            <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><path d="M21 2l-2 2m-1.5 1.5L16 7l-4 4-2-2-4 4 2 2-2 2-2-2-2 2 3 3 6-6 4-4 1.5-1.5z"/><circle cx="7.5" cy="16.5" r="1.5"/></svg>Generate Settings Unlock PIN
+          </button>
+        </div>
+      </div>
+      <div id="pairing-pin-display-container" style="display:none;margin-top:16px;"></div>
+      <div id="settings-pin-display-container" style="display:none;margin-top:16px;"></div>
+    </section>
+
     ${pendingRequests.length > 0 ? `
     <section class="glass card" style="border-color:rgba(245,158,11,0.4);margin-bottom:16px;">
-      <h2 style="color:var(--wn);"><svg class="i"><use href="#alert"/></svg>Pending device access requests (${pendingRequests.length})</h2>
+      <h2 style="color:var(--wn);"><svg class="i"><use href="#alert"/></svg>Pending workstation access requests (${pendingRequests.length})</h2>
       <div id="pending-requests-container">
         ${pendingRequests.map(r => `
-          <div class="req-item" id="req-${r.request_id}" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);">
+          <div class="req-item" id="req-${r.request_id}" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px;">
             <div class="req-meta">
-              <b>${escapeHtml(r.user_id)}</b> &middot; Device: <strong>${escapeHtml(r.device_name)}</strong> (<code>${escapeHtml(r.ip_address)}</code>)<br>
-              <small class="muted">Requested at: ${new Date(r.created_at).toLocaleString()}</small>
+              <b>${escapeHtml(r.full_name || r.user_id)}</b> (<code>${escapeHtml(r.user_id)}</code>) &middot; Device: <strong>${escapeHtml(r.device_name)}</strong> (<code>${escapeHtml(r.ip_address)}</code>)<br>
+              <small class="muted">Requested: ${new Date(r.created_at).toLocaleString()}</small>
             </div>
             <div class="acts">
-              <button class="btn p btn-sm btn-approve" data-id="${r.request_id}">Approve</button>
+              <button class="btn p btn-sm btn-approve" data-id="${r.request_id}" style="font-weight:600;">Approve & Generate 6-Digit PIN</button>
               <button class="btn d btn-sm btn-reject" data-id="${r.request_id}">Reject</button>
             </div>
           </div>
@@ -4978,11 +7819,14 @@ async function usersPage() {
                 <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}</td>
                 <td>
                   <div class="acts">
-                    ${u.role !== 'host' ? (u.status === 'active' ? `
-                      <button class="btn btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="disabled">Disable</button>
-                    ` : `
-                      <button class="btn p btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="active">Enable</button>
-                    `) : `<span class="chip">Owner</span>`}
+                    ${u.role !== 'host' ? `
+                      <button class="btn btn-sm btn-manage-perms" data-uid="${escapeHtml(u.user_id)}" data-name="${escapeHtml(u.full_name || u.user_id)}" data-perms='${escapeHtml(JSON.stringify(u.permissions || {}))}' style="font-weight:600;"><svg class="i" style="width:13px;height:13px;margin-right:4px;vertical-align:middle;" aria-hidden="true"><use href="#key"/></svg>Permissions</button>
+                      ${u.status === 'active' ? `
+                        <button class="btn btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="disabled">Disable</button>
+                      ` : `
+                        <button class="btn p btn-sm btn-toggle-user" data-user="${u.user_id}" data-status="active">Enable</button>
+                      `}
+                    ` : `<span class="chip">Owner</span>`}
                     <button class="btn btn-sm btn-change-pwd" data-uid="${escapeHtml(u.user_id)}">Reset password</button>
                   </div>
                 </td>
@@ -4997,15 +7841,118 @@ async function usersPage() {
 
   // Attach handlers
 
+  const genBtn = content.querySelector('#btn-generate-pairing-pin');
+  const pinContainer = content.querySelector('#pairing-pin-display-container');
+  if (genBtn && pinContainer) {
+    genBtn.onclick = async () => {
+      try {
+        genBtn.disabled = true;
+        genBtn.innerHTML = '<span class="muted">Generating...</span>';
+        const res = await api('/api/host/pairing/generate-pin', { method: 'POST', body: '{}' });
+        if (res && res.ok && res.pin) {
+          const pin = res.pin;
+          let remaining = res.expires_in_seconds || 300;
+          pinContainer.style.display = 'block';
+          pinContainer.innerHTML = `
+            <div style="background:linear-gradient(135deg, rgba(72,105,232,0.08), rgba(99,102,241,0.12));border:1.5px dashed rgba(72,105,232,0.4);border-radius:14px;padding:20px;text-align:center;">
+              <span class="muted" style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Active Workstation Pairing PIN</span>
+              <div style="display:flex;justify-content:center;gap:10px;margin:14px 0;">
+                ${pin.split('').map(d => `<span style="display:inline-flex;width:44px;height:54px;align-items:center;justify-content:center;background:#fff;border:2px solid var(--pc);border-radius:10px;font-size:26px;font-weight:800;color:var(--pc);box-shadow:0 4px 12px rgba(72,105,232,0.15);">${d}</span>`).join('')}
+              </div>
+              <p style="margin:0 0 10px;font-size:13px;color:var(--ink);">
+                Enter these 6 digits on the <strong>Client Workstation</strong> to pair instantly.<br>
+                <span id="pin-countdown-text" style="color:var(--muted);font-size:12px;">PIN expires in: <b>5:00</b></span>
+              </p>
+              <button class="btn secondary btn-sm" id="btn-copy-pin"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy PIN</button>
+            </div>
+          `;
+
+          if (window.__vsPinTimer) clearInterval(window.__vsPinTimer);
+          window.__vsPinTimer = setInterval(() => {
+            remaining--;
+            const countEl = document.querySelector('#pin-countdown-text');
+            if (countEl) {
+              if (remaining <= 0) {
+                clearInterval(window.__vsPinTimer);
+                countEl.innerHTML = '<span style="color:var(--er);font-weight:700;">PIN expired. Please generate a new PIN.</span>';
+              } else {
+                const m = Math.floor(remaining / 60);
+                const s = remaining % 60;
+                countEl.innerHTML = `PIN expires in: <b>${m}:${s < 10 ? '0' : ''}${s}</b>`;
+              }
+            }
+          }, 1000);
+
+          document.querySelector('#btn-copy-pin')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(pin);
+            alert(`PIN ${pin} copied to clipboard!`);
+          });
+        }
+      } catch (err) {
+        alert(`Failed to generate PIN: ${err.message}`);
+      } finally {
+        genBtn.disabled = false;
+        genBtn.innerHTML = '<svg class="i" aria-hidden="true"><use href="#plus"/></svg> Generate Pairing PIN';
+      }
+    };
+  }
+
   content.querySelectorAll('.btn-approve').forEach(btn => {
     btn.onclick = async () => {
       try {
         btn.disabled = true;
-        await api('/api/admin/requests/approve', { method: 'POST', body: JSON.stringify({ request_id: btn.dataset.id }) });
+        btn.textContent = 'Approving & Generating PIN...';
+        const res = await api('/api/admin/requests/approve', { method: 'POST', body: JSON.stringify({ request_id: btn.dataset.id }) });
+        if (res && res.pin) {
+          showHostApprovalPinModal(res.pin, res.full_name || res.user_id, res.expires_in_seconds || 600);
+        }
         await usersPage();
-      } catch (e) { alert(e.message); }
+      } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = 'Approve & Generate 6-Digit PIN'; }
     };
   });
+
+  content.querySelectorAll('.btn-manage-perms').forEach(btn => {
+    btn.onclick = () => {
+      let pObj = {};
+      try { pObj = JSON.parse(btn.dataset.perms || '{}'); } catch (_) {}
+      openUserPermissionsModal(btn.dataset.uid, btn.dataset.name, pObj);
+    };
+  });
+
+  const btnGenSettingsPin = content.querySelector('#btn-generate-settings-pin');
+  const settingsPinContainer = content.querySelector('#settings-pin-display-container');
+  if (btnGenSettingsPin && settingsPinContainer) {
+    btnGenSettingsPin.onclick = async () => {
+      try {
+        btnGenSettingsPin.disabled = true;
+        const res = await api('/api/admin/settings/generate-unlock-pin', { method: 'POST', body: '{}' });
+        if (res && res.pin) {
+          settingsPinContainer.style.display = 'block';
+          settingsPinContainer.innerHTML = `
+            <div style="background:rgba(254,243,199,0.7);border:1.5px dashed rgba(245,158,11,0.6);border-radius:14px;padding:16px 20px;text-align:center;">
+              <span style="font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;">Host Authorization Unlock PIN (Settings)</span>
+              <div style="display:flex;justify-content:center;gap:8px;margin:12px 0;">
+                ${res.pin.split('').map(d => `<span style="display:inline-flex;width:40px;height:50px;align-items:center;justify-content:center;background:#fff;border:2px solid #f59e0b;border-radius:10px;font-size:24px;font-weight:800;color:#b45309;box-shadow:0 3px 10px rgba(245,158,11,0.2);">${d}</span>`).join('')}
+              </div>
+              <p style="margin:0 0 8px;font-size:12.5px;color:#78350f;">
+                Give this 6-digit Unlock PIN to staff to authorize settings modification on their PC.<br>
+                Valid for 15 minutes (single-use).
+              </p>
+              <button class="btn secondary btn-sm" id="btn-copy-settings-unlock-pin"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy PIN</button>
+            </div>
+          `;
+          document.querySelector('#btn-copy-settings-unlock-pin')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(res.pin);
+            alert(`Unlock PIN ${res.pin} copied!`);
+          });
+        }
+      } catch (err) {
+        alert(`Failed to generate Settings PIN: ${err.message}`);
+      } finally {
+        btnGenSettingsPin.disabled = false;
+      }
+    };
+  }
 
   content.querySelectorAll('.btn-reject').forEach(btn => {
     btn.onclick = async () => {
@@ -5054,12 +8001,12 @@ async function usersPage() {
         span.textContent = btn.dataset.pwd || '(Not saved)';
         span.style.color = '#0A1F44';
         span.style.fontWeight = '700';
-        btn.textContent = '🙈 Hide';
+        btn.textContent = 'Hide';
       } else {
         span.textContent = '••••••••';
         span.style.color = '';
         span.style.fontWeight = '';
-        btn.textContent = '👁 View';
+        btn.textContent = 'View';
       }
     };
   });
@@ -5101,7 +8048,7 @@ function showChangePasswordModal(userId, onSave) {
         <label style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:#334155;">New Password (min. 6 chars) *</label>
         <div style="display:flex;gap:6px;">
           <input id="modal-new-pwd" type="password" placeholder="Enter new password" style="flex:1;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
-          <button type="button" id="toggle-new-pwd" class="secondary" style="padding:0 10px;font-size:12px;">👁</button>
+          <button type="button" id="toggle-new-pwd" class="secondary" style="padding:0 12px;font-size:12px;">View</button>
         </div>
       </div>
       
@@ -5129,10 +8076,10 @@ function showChangePasswordModal(userId, onSave) {
   toggleBtn.onclick = () => {
     if (pwdInput.type === 'password') {
       pwdInput.type = 'text';
-      toggleBtn.textContent = '🙈';
+      toggleBtn.textContent = 'Hide';
     } else {
       pwdInput.type = 'password';
-      toggleBtn.textContent = '👁';
+      toggleBtn.textContent = 'View';
     }
   };
 
@@ -5165,42 +8112,46 @@ var escapeHtml = window.escapeHtml || (value => String(value || '').replace(/[&<
    ========================================================================== */
 
 async function dashboard() {
+  const hadSkeleton = !!document.querySelector('.vs-dashboard-skeleton');
   content.innerHTML = `
     <!-- Prominent Global Search Bar -->
     <label class="field" style="margin-bottom:16px;">
       <svg class="i" aria-hidden="true"><use href="#search"/></svg>
-      <input type="text" id="dash-global-search" class="dash-search-input" placeholder="Search client, file number, folder, or file..." autocomplete="off" aria-label="Search client, file number, folder or file">
+      <input type="text" id="dash-global-search" class="dash-search-input" placeholder="Search clients, files, or folders..." autocomplete="off" aria-label="Search clients, files, or folders">
     </label>
     <div id="dash-search-results" class="dash-search-results" style="display:none;"></div>
 
     <!-- Quick Stats Grid -->
     <div class="grid5" id="dash-stats-grid">
-      <div class="glass stat" id="card-stat-clients" style="cursor:pointer;" title="Click to view Clients">
+      <div class="glass stat" id="card-stat-clients" tabindex="0" role="button" style="cursor:pointer;" title="Click to view Clients">
         <span>Clients</span>
-        <b id="stat-total-clients">${clients.length || '0'}</b>
+        <b id="stat-total-clients">${(clients && clients.length) || '0'}</b>
       </div>
-      <div class="glass stat" id="card-stat-folders" style="cursor:pointer;" title="Click to view Folders">
+      <div class="glass stat" id="card-stat-folders" tabindex="0" role="button" style="cursor:pointer;" title="Click to view Folders">
         <span>Folders</span>
         <b id="stat-total-folders">...</b>
       </div>
-      <div class="glass stat" id="card-stat-files" style="cursor:pointer;" title="Click to view Saved Files">
+      <div class="glass stat" id="card-stat-files" tabindex="0" role="button" style="cursor:pointer;" title="Click to view Saved Files">
         <span>Files</span>
         <b id="stat-total-files">...</b>
       </div>
-      <div class="glass stat" id="card-stat-cloud" style="cursor:pointer;" title="Click to view Drive Sharing">
+      <div class="glass stat" id="card-stat-cloud" tabindex="0" role="button" style="cursor:pointer;" title="Click to view Drive Sharing">
         <span>Cloud files</span>
         <b id="stat-cloud-files">...</b>
       </div>
-      <div class="glass stat" id="card-stat-issues" style="cursor:pointer;" title="Click to review Attention Items">
+      <div class="glass stat" id="card-stat-issues" tabindex="0" role="button" style="cursor:pointer;" title="Click to review Attention Items">
         <span>Needs attention</span>
         <b id="stat-pending-issues">0</b>
       </div>
     </div>
 
     <!-- Quick Actions Row -->
-    <div class="row" style="margin-top:16px;">
+    <div class="row" style="margin-top:16px;flex-wrap:wrap;gap:8px;">
       <button class="btn p" id="dash-quick-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
       <button class="btn" id="dash-quick-save-file"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Save file</button>
+      ${(currentUser?.role === 'host' && window.__vsIsClientMode !== true) ? `
+      <button class="btn" id="dash-quick-pair-pin" style="font-weight:600;"><svg class="i" aria-hidden="true"><use href="#users"/></svg>Pair Workstation (PIN)</button>
+      ` : ''}
       <button class="btn" id="qa-open-explorer"><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Open explorer</button>
       <button class="btn" id="qa-reconcile"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Reconcile folders</button>
       <button class="btn" id="qa-backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg>Backup</button>
@@ -5246,7 +8197,7 @@ async function dashboard() {
         </div>
         <p class="muted" style="font-size:12.5px;margin-bottom:16px;line-height:1.5;">
           <span id="dash-local-free-text">...</span> free of <span id="dash-local-usage-text">Calculating...</span>. Backups share this disk. <a href="#backup" id="dash-open-backup-tab" style="color:var(--pc);font-weight:600;text-decoration:none;">Move backups to Drive</a>
-          <span style="display:block;margin-top:4px;font-size:11.5px;">Path: <code id="dash-local-path-text">${escapeHtml(settings.local_root || 'D:\\Code Trial')}</code> &middot; Managed: <strong id="dash-local-managed-text" style="color:var(--pc);">0 B</strong></span>
+          <span style="display:block;margin-top:4px;font-size:11.5px;">Path: <code id="dash-local-path-text">${escapeHtml((settings && settings.local_root) || 'D:\\Code Trial')}</code> &middot; Managed: <strong id="dash-local-managed-text" style="color:var(--pc);">0 B</strong></span>
         </p>
 
         <!-- Google Drive Cloud Storage -->
@@ -5268,6 +8219,12 @@ async function dashboard() {
     </div>
   `;
 
+  if (hadSkeleton && content) {
+    content.classList.remove('tab-enter');
+    void content.offsetWidth;
+    content.classList.add('tab-enter');
+  }
+
   attachDashboardEvents();
   loadDashboardData();
 }
@@ -5286,11 +8243,24 @@ function attachDashboardEvents() {
   });
 
   document.querySelector('#dash-quick-save-file')?.addEventListener('click', () => navigateTo('save'));
+  document.querySelector('#dash-quick-pair-pin')?.addEventListener('click', () => navigateTo('users'));
   document.querySelector('#card-stat-clients')?.addEventListener('click', () => navigateTo('clients'));
   document.querySelector('#card-stat-folders')?.addEventListener('click', () => navigateTo('folders'));
   document.querySelector('#card-stat-files')?.addEventListener('click', () => navigateTo('save'));
   document.querySelector('#card-stat-cloud')?.addEventListener('click', () => navigateTo('drive'));
   document.querySelector('#card-stat-issues')?.addEventListener('click', () => navigateTo('activity'));
+
+  ['#card-stat-clients', '#card-stat-folders', '#card-stat-files', '#card-stat-cloud', '#card-stat-issues'].forEach(sel => {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          el.click();
+        }
+      });
+    }
+  });
 
   document.querySelector('#qa-add-client')?.addEventListener('click', () => {
     if (typeof showAddClientModal === 'function') showAddClientModal();
@@ -5370,7 +8340,7 @@ function renderGlobalSearchResults(res, query, container) {
   }
 
   if (clientsList.length) {
-    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;">👥 Clients (${clientsList.length})</div>`;
+    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;display:flex;align-items:center;gap:6px;"><svg class="i" style="width:13px;height:13px;vertical-align:middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><span>Clients (${clientsList.length})</span></div>`;
     html += clientsList.map(c => `
       <div class="dash-search-item" data-type="client" data-fno="${esc(c.file_no)}">
         <div>
@@ -5384,11 +8354,11 @@ function renderGlobalSearchResults(res, query, container) {
   }
 
   if (foldersList.length) {
-    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;margin-top:6px;">📁 Folders (${foldersList.length})</div>`;
+    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;margin-top:6px;">Folders (${foldersList.length})</div>`;
     html += foldersList.map(f => `
       <div class="dash-search-item" data-type="folder" data-fno="${esc(f.client_file_no)}" data-path="${esc(f.relative_path)}">
         <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80%;">
-          <span>📁 ${esc(f.relative_path)}</span>
+          <span>${esc(f.relative_path)}</span>
           <span class="muted" style="font-size:10px;margin-left:6px;">Client: ${esc(f.client_file_no)}</span>
         </div>
         <span class="file-meta-badge" style="font-size:10px;">${esc(f.storage_kind)}</span>
@@ -5397,11 +8367,11 @@ function renderGlobalSearchResults(res, query, container) {
   }
 
   if (filesList.length) {
-    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;margin-top:6px;">📄 Files (${filesList.length})</div>`;
+    html += `<div style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;margin-top:6px;">Files (${filesList.length})</div>`;
     html += filesList.map(doc => `
       <div class="dash-search-item" data-type="file" data-fno="${esc(doc.client_file_no)}" data-path="${esc(doc.relative_path)}">
         <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80%;">
-          <span>📄 ${esc(doc.relative_path)}</span>
+          <span>${esc(doc.relative_path)}</span>
           <span class="muted" style="font-size:10px;margin-left:6px;">${doc.size_bytes ? formatBytes(doc.size_bytes) : ''}</span>
         </div>
         <span class="file-meta-badge" style="font-size:10px;">${esc(doc.storage_kind)}</span>
@@ -5452,14 +8422,22 @@ async function loadDashboardStats() {
     if (fEl) fEl.textContent = stats.total_folders || '0';
     if (docEl) docEl.textContent = stats.total_files || '0';
     if (cldEl) cldEl.textContent = stats.cloud_files || '0';
-    if (issEl) issEl.textContent = stats.pending_issues || '0';
+    if (issEl) {
+      const pendingCount = Number(stats.pending_issues || 0);
+      issEl.textContent = pendingCount;
+      const issuesCard = document.querySelector('#card-stat-issues');
+      if (issuesCard) {
+        if (pendingCount > 0) issuesCard.classList.add('attention');
+        else issuesCard.classList.remove('attention');
+      }
+    }
 
     const attentionContainer = document.querySelector('#dash-attention-container');
     if (attentionContainer) {
       const items = data.pending_items || [];
       if (items.length) {
         attentionContainer.innerHTML = `
-          <h3 style="font-size:13px;font-weight:700;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;color:#b91c1c;">⚠️ Attention Required</h3>
+          <h3 style="font-size:13px;font-weight:700;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;color:#b91c1c;">Attention Required</h3>
           ${items.map(item => `
             <div class="dash-attention-card ${item.severity || 'warning'}">
               <div>
@@ -5519,11 +8497,11 @@ async function loadDashboardCloudStorage() {
     if (driveInfo && driveInfo.connected) {
       if (driveBadge) {
         driveBadge.className = 'summary-badge ok';
-        driveBadge.textContent = '☁️ Connected';
+        driveBadge.textContent = 'Connected';
       }
       if (driveStatusBadge) {
         driveStatusBadge.className = 'summary-badge ok';
-        driveStatusBadge.textContent = '✓ Connected';
+        driveStatusBadge.textContent = 'Connected';
       }
       if (driveBody) {
         const dPercent = Number(driveInfo.percent_used || 0);
@@ -5558,11 +8536,11 @@ async function loadDashboardCloudStorage() {
     } else {
       if (driveBadge) {
         driveBadge.className = 'summary-badge conflict';
-        driveBadge.textContent = '⚠️ Not Connected';
+        driveBadge.textContent = 'Not Connected';
       }
       if (driveStatusBadge) {
         driveStatusBadge.className = 'summary-badge conflict';
-        driveStatusBadge.textContent = '⚠️ Not Connected';
+        driveStatusBadge.textContent = 'Not Connected';
       }
       if (driveBody) {
         driveBody.innerHTML = `
@@ -5584,11 +8562,11 @@ async function loadDashboardCloudStorage() {
   } catch (err) {
     if (driveBadge) {
       driveBadge.className = 'summary-badge conflict';
-      driveBadge.textContent = '⚠️ Cloud Offline';
+      driveBadge.textContent = 'Cloud Offline';
     }
     if (driveStatusBadge) {
       driveStatusBadge.className = 'summary-badge conflict';
-      driveStatusBadge.textContent = '⚠️ Offline';
+      driveStatusBadge.textContent = 'Offline';
     }
   }
 }
@@ -5601,20 +8579,20 @@ async function loadDashboardActivity() {
 
     const formatActionName = (action) => {
       const map = {
-        'client_created': '👤 Client Added',
-        'client_updated': '✏️ Client Updated',
-        'client_deleted': '🗑️ Client Deleted',
-        'file_saved': '💾 File Saved',
-        'backup_created': '🛡️ Manual Backup',
-        'automatic_backup_created': '🛡️ Automatic Backup',
-        'backup_restored': '🔄 System Restored',
-        'backup_deleted': '🗑️ Backup Deleted',
-        'portal_blocked': '🔒 Portal Blocked',
-        'portal_unblocked': '🔓 Portal Restored',
-        'login': '🔑 User Sign In',
-        'logout': '🚪 User Sign Out',
-        'password_changed': '🔑 Password Changed',
-        'device_approved': '💻 Device Authorized'
+        'client_created': 'Client Added',
+        'client_updated': 'Client Updated',
+        'client_deleted': 'Client Deleted',
+        'file_saved': 'File Saved',
+        'backup_created': 'Manual Backup',
+        'automatic_backup_created': 'Automatic Backup',
+        'backup_restored': 'System Restored',
+        'backup_deleted': 'Backup Deleted',
+        'portal_blocked': 'Portal Blocked',
+        'portal_unblocked': 'Portal Restored',
+        'login': 'User Sign In',
+        'logout': 'User Sign Out',
+        'password_changed': 'Password Changed',
+        'device_approved': 'Device Authorized'
       };
       if (map[action]) return map[action];
       return (action || 'Activity').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
@@ -5798,6 +8776,10 @@ function attachBackupEvents() {
   });
 
   document.querySelector('#btn-refresh-backups')?.addEventListener('click', loadBackupHistory);
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 async function loadBackupHistory() {
@@ -5989,10 +8971,17 @@ load().then(() => {
   }
 });
 
-// Fast periodic staging poller: detects incoming files from Chrome Extension
+// Periodic staging poller: detects incoming files from Chrome Extension on Host PC
 let isPollingStaging = false;
 async function pollIncomingStaging() {
-  if (isPollingStaging || incomingDrainInProgress) return;
+  if (window.__isSavingDocument || isPollingStaging || incomingDrainInProgress) return;
+  let isClient = false;
+  try {
+    if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+      isClient = await window.TauriBridge.isClientMode();
+    }
+  } catch (_) {}
+  if (isClient) return; // Client workstations do not drain host extension staging
   try {
     isPollingStaging = true;
     // 1. Check for remote navigation requests (e.g. from extension or secondary launcher)
@@ -6029,7 +9018,7 @@ async function pollIncomingStaging() {
     isPollingStaging = false;
   }
 }
-setInterval(pollIncomingStaging, 800);
+setInterval(pollIncomingStaging, 5000);
 window.addEventListener('focus', pollIncomingStaging);
 
 
