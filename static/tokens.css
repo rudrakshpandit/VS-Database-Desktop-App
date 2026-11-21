@@ -8,9 +8,9 @@
   --tx: #0f172a;
   --tx2: #475569;
   --glass: rgba(255, 255, 255, 0.62);
-  --glass2: rgba(255, 255, 255, 0.8);
+  --glass2: rgba(255, 255, 255, 0.80);
   --bd: rgba(255, 255, 255, 0.75);
-  --line: rgba(15, 23, 42, 0.1);
+  --line: rgba(15, 23, 42, 0.10);
   --pri: linear-gradient(135deg, #2563eb, #7c3aed);
   --pc: #4338ca;
   --ok: #047857;
@@ -36,11 +36,11 @@
   --danger: var(--er);
 
   /* Shared Card Design Tokens (STEP 3) */
-  --card-bg: #ffffff;
-  --card-border: #e5e7eb;
+  --card-bg: var(--glass2);
+  --card-border: var(--bd);
   --card-radius: 14px;
-  --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06);
-  --shadow-md: 0 2px 4px rgba(16,24,40,.06), 0 10px 24px rgba(16,24,40,.10);
+  --shadow-sm: 0 4px 16px rgba(49, 46, 129, 0.08);
+  --shadow-md: 0 10px 30px rgba(49, 46, 129, 0.14);
   --warn: #f59e0b;
 
   /* Radii */
