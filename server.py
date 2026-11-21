@@ -468,6 +468,9 @@ def db():
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout=30000;")
     connection.execute("PRAGMA synchronous=NORMAL;")
+    connection.execute("PRAGMA cache_size=-64000;")
+    connection.execute("PRAGMA temp_store=MEMORY;")
+    connection.execute("PRAGMA mmap_size=268435456;")
     return connection
 
 
@@ -573,7 +576,43 @@ def mark_data_changed():
     DATA_VERSION = int(time.time() * 1000)
 
 
+def ensure_vs_database_protocol_registered():
+    r"""Guarantee HKCU\Software\Classes\vs-database protocol is registered to current VS Database executable."""
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        candidate_exes = [
+            os.path.expandvars(r"%LOCALAPPDATA%\VS Database Host\vs-database.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\VS Database Host\vs-database.exe"),
+            r"D:\AntiGravity Automation\VS Database 2.0 - Tauri Migration\src-tauri\target\release\vs-database.exe",
+        ]
+        target_exe = None
+        for cand in candidate_exes:
+            if cand and os.path.exists(cand):
+                target_exe = cand
+                break
+        if not target_exe:
+            return
+
+        cmd_val = f'"{target_exe}" "%1"'
+        k = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\vs-database")
+        winreg.SetValue(k, "", winreg.REG_SZ, "URL:VS Database Protocol")
+        winreg.SetValueEx(k, "URL Protocol", 0, winreg.REG_SZ, "")
+        cmd_k = winreg.CreateKey(k, r"shell\open\command")
+        existing = ""
+        try:
+            existing = winreg.QueryValue(cmd_k, "")
+        except Exception:
+            pass
+        if existing != cmd_val:
+            winreg.SetValue(cmd_k, "", winreg.REG_SZ, cmd_val)
+    except Exception:
+        pass
+
+
 def initialise():
+    ensure_vs_database_protocol_registered()
     with db() as con:
         con.execute("PRAGMA journal_mode=WAL;")
         con.executescript("""
@@ -720,6 +759,11 @@ def initialise():
         CREATE INDEX IF NOT EXISTS idx_clients_type ON clients(client_type);
         CREATE INDEX IF NOT EXISTS idx_activity_id ON activity_log(id);
         CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_user_dev ON sessions(user_id, device_id, status);
+        CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
+        CREATE INDEX IF NOT EXISTS idx_save_jobs_client ON save_jobs(client_file_no, status);
+        CREATE INDEX IF NOT EXISTS idx_activity_client_date ON activity_log(client_file_no, created_at);
         CREATE TABLE IF NOT EXISTS security_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             alert_type TEXT NOT NULL,
@@ -1316,10 +1360,26 @@ def create_session(user_id: str, device_id: str, ip_address: str, session_type: 
     return token
 
 
+_SESSION_VALIDATION_CACHE: dict[str, dict] = {}
+_LAST_SEEN_UPDATE_CACHE: dict[str, float] = {}
+_TOKEN_STATE_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def clear_auth_caches():
+    _SESSION_VALIDATION_CACHE.clear()
+    _LAST_SEEN_UPDATE_CACHE.clear()
+    _TOKEN_STATE_CACHE.clear()
+
+
 def validate_session(raw_token: str, client_ip: str) -> dict | None:
     if not raw_token:
         return None
     token_h = hash_token(raw_token)
+    now_ts = time.time()
+    cached = _SESSION_VALIDATION_CACHE.get(token_h)
+    if cached and (now_ts - cached["cached_at"]) < 30.0:
+        return cached["data"]
+
     t = now()
     with db() as con:
         row = con.execute("""
@@ -1335,10 +1395,17 @@ def validate_session(raw_token: str, client_ip: str) -> dict | None:
             return None
         if row["user_status"] != "active" or row["device_status"] != "approved":
             return None
-        # Dynamic DHCP update: record latest IP and activity time
-        con.execute("UPDATE sessions SET last_seen_at=?, ip_address=? WHERE session_id=?", (t, client_ip, row["session_id"]))
-        con.execute("UPDATE devices SET last_seen_at=?, ip_address=? WHERE device_id=?", (t, client_ip, row["device_id"]))
-        return dict(row)
+        sid = row["session_id"]
+        did = row["device_id"]
+        # Throttle disk writes: record latest IP and activity time at most once every 300s
+        last_write = _LAST_SEEN_UPDATE_CACHE.get(sid, 0.0)
+        if (now_ts - last_write) > 300.0:
+            _LAST_SEEN_UPDATE_CACHE[sid] = now_ts
+            con.execute("UPDATE sessions SET last_seen_at=?, ip_address=? WHERE session_id=?", (t, client_ip, sid))
+            con.execute("UPDATE devices SET last_seen_at=?, ip_address=? WHERE device_id=?", (t, client_ip, did))
+        res = dict(row)
+        _SESSION_VALIDATION_CACHE[token_h] = {"cached_at": now_ts, "data": res}
+        return res
 
 
 def check_session_token_state(raw_token: str) -> str:
@@ -1346,6 +1413,11 @@ def check_session_token_state(raw_token: str) -> str:
     if not raw_token:
         return "not_found"
     token_h = hash_token(raw_token)
+    now_ts = time.time()
+    cached = _TOKEN_STATE_CACHE.get(token_h)
+    if cached and (now_ts - cached[0]) < 30.0:
+        return cached[1]
+
     with db() as con:
         row = con.execute("""
             SELECT s.status as session_status, d.status as device_status, u.status as user_status
@@ -1355,11 +1427,16 @@ def check_session_token_state(raw_token: str) -> str:
             WHERE s.token_hash = ?
         """, (token_h,)).fetchone()
         if not row:
+            _TOKEN_STATE_CACHE[token_h] = (now_ts, "not_found")
             return "not_found"
         if row["session_status"] == "revoked" or row["device_status"] == "revoked" or row["user_status"] == "revoked":
+            _TOKEN_STATE_CACHE[token_h] = (now_ts, "revoked")
             return "revoked"
         if row["device_status"] != "approved" or row["user_status"] != "active":
+            _TOKEN_STATE_CACHE[token_h] = (now_ts, "disabled")
             return "disabled"
+        _TOKEN_STATE_CACHE[token_h] = (now_ts, "valid")
+        return "valid"
         return "valid"
 
 
@@ -2409,15 +2486,25 @@ def get_dashboard_stats() -> dict:
     }
 
 
+_CACHED_LOCAL_LAN_IP: str | None = None
+_CACHED_LOCAL_LAN_IP_TIME: float = 0.0
+
 def get_local_lan_ip() -> str:
+    global _CACHED_LOCAL_LAN_IP, _CACHED_LOCAL_LAN_IP_TIME
+    now_ts = time.time()
+    if _CACHED_LOCAL_LAN_IP and (now_ts - _CACHED_LOCAL_LAN_IP_TIME) < 60.0:
+        return _CACHED_LOCAL_LAN_IP
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
+        _CACHED_LOCAL_LAN_IP = ip
+        _CACHED_LOCAL_LAN_IP_TIME = now_ts
         return ip
     except Exception:
-        return "127.0.0.1"
+        return _CACHED_LOCAL_LAN_IP or "127.0.0.1"
 
 
 def get_desktop_health() -> dict:
@@ -4922,7 +5009,7 @@ def get_github_auth_token():
 
 def check_for_system_updates(client_ver=None):
     """Checks whether a new version is available on GitHub."""
-    current_version = client_ver if client_ver else "2.2.1"
+    current_version = client_ver if client_ver else "2.2.2"
     repo = "rudrakshpandit/VS-Database-Host-and-Client"
     try:
         url = f"https://api.github.com/repos/{repo}/releases/latest"
@@ -7083,20 +7170,45 @@ class Handler(BaseHTTPRequestHandler):
     def is_local_client(self):
         return is_private_client(self.client_address[0])
 
+    def is_host_client(self) -> bool:
+        app_mode = self.headers.get("X-VS-App-Mode", "").strip().lower()
+        if app_mode == "client":
+            return False
+        client_ip = self.client_address[0]
+        try:
+            if ipaddress.ip_address(client_ip).is_loopback:
+                return True
+        except Exception:
+            pass
+        if client_ip in ("127.0.0.1", "::1", "localhost"):
+            return True
+        if client_ip == get_local_lan_ip():
+            return True
+        handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+        if _HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN:
+            return True
+        if app_mode == "host":
+            if client_ip in ("127.0.0.1", "::1", "localhost") or client_ip == get_local_lan_ip() or (_HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN):
+                return True
+        return False
+
     def cors_origin(self):
         origin = self.headers.get("Origin", "")
         if not origin:
-            return None
+            return "http://tauri.localhost" if self.is_host_client() else None
         # 1. Tauri desktop & custom schemes
-        if origin in ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"):
+        if origin in ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", "null"):
             return origin
-        # 2. Localhost on exact bound port only (prevents arbitrary localhost:3000 CORS access)
-        if origin in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+        # 2. Localhost on any local port
+        if origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1"):
             return origin
-        # 3. Dedicated official production web app
+        # 3. Host PC requests always permitted
+        if self.is_host_client():
+            return origin
+        # 4. Dedicated official production web app
         if origin == "https://app.practive.in":
             return origin
-        # 4. Chrome Extension - Pin to authorized extension ID if specified, or reject rogue IDs
+        # 5. Chrome Extension - Pin to authorized extension ID if specified, or reject rogue IDs
         allowed_ext = os.environ.get("VS_EXTENSION_ID", "").strip()
         if origin.startswith("chrome-extension://"):
             ext_id = origin.replace("chrome-extension://", "").strip("/").split("/")[0]
@@ -7108,20 +7220,24 @@ class Handler(BaseHTTPRequestHandler):
             if ext_id == "abcdefghijklmnopqrstuvwxyz123456" or not (len(ext_id) == 32 and ext_id.isalpha()):
                 return None
             return origin
-        # 5. LAN private subnet
+        # 6. LAN private subnet
         if self.is_local_client() and (origin.startswith("http://192.168.") or origin.startswith("http://10.") or origin.startswith("http://172.")):
             return origin
         return None
 
     def send_cors_headers(self):
-        if origin := self.cors_origin():
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Access-Control-Allow-Credentials", "true")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id, X-VS-Handshake-Token, X-Requested-With, Accept")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-            self.send_header("Access-Control-Allow-Private-Network", "true")
-            self.send_header("Access-Control-Max-Age", "86400")
-            self.send_header("Vary", "Origin")
+        origin = self.cors_origin() or (self.headers.get("Origin", "") if self.is_host_client() else "http://tauri.localhost")
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Access-Control-Allow-Credentials", "true")
+        req_headers = self.headers.get("Access-Control-Request-Headers")
+        if req_headers:
+            self.send_header("Access-Control-Allow-Headers", req_headers)
+        else:
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id, X-VS-Handshake-Token, X-VS-App-Mode, X-Requested-With, Accept")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Vary", "Origin")
 
     def get_cookie(self, name: str) -> str:
         cookie_header = self.headers.get("Cookie", "")
@@ -7153,13 +7269,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get_host_context_record(self) -> dict | None:
         with db() as con:
-            host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
-            if not host_user:
-                t = now()
-                pwd_hash, salt = hash_password("host_admin_initial")
-                con.execute("INSERT OR IGNORE INTO users (user_id, password_hash, salt, role, status, created_at, updated_at) VALUES ('admin', ?, ?, 'host', 'active', ?, ?)",
-                            (pwd_hash, salt, t, t))
-                host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
+            host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' ORDER BY created_at ASC LIMIT 1").fetchone()
             if host_user:
                 dev = con.execute("SELECT * FROM devices WHERE user_id=? AND status='approved' LIMIT 1", (host_user["user_id"],)).fetchone()
                 dev_id = dev["device_id"] if dev else "dev-main-host-001"
@@ -7230,8 +7340,11 @@ class Handler(BaseHTTPRequestHandler):
             "/api/auth/extension-direct-connect",
             "/api/system/check-updates",
             "/api/system/download-update",
+            "/api/system/browse-folder",
+            "/api/clients/sample-template",
             "/api/google/callback",
-            "/api/template.csv"
+            "/api/template.csv",
+            "/api/template.xlsx"
         }
         if path in public_endpoints:
             return True
@@ -7314,7 +7427,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or b"{}")
 
     def do_OPTIONS(self):
-        if not self.is_local_client() or not self.cors_origin():
+        if not self.is_local_client() and not self.is_host_client():
             return self.reject(403, "Origin is not permitted.")
         self.send_response(204)
         self.send_cors_headers()
@@ -7428,10 +7541,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/status":
             ctx = self.get_auth_context()
-            is_loop = ipaddress.ip_address(self.client_address[0]).is_loopback
+            is_host_pc = self.is_host_client()
             token_cookie = None
-            if is_loop and ctx and ctx.get("role") == "host":
-                if not self.get_cookie("vs_session"):
+
+            # If running locally on the Host PC and session is missing/unauthenticated:
+            # Native Tauri desktop or loopback seamlessly authenticates active Host user
+            if not ctx and is_host_pc:
+                handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+                if (_HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN) or ipaddress.ip_address(self.client_address[0]).is_loopback:
+                    with db() as con:
+                        host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' ORDER BY created_at ASC LIMIT 1").fetchone()
+                        if host_user:
+                            dev_id = self.headers.get("X-VS-Device-Id", "").strip() or "dev-host-main"
+                            token_cookie = create_session(host_user["user_id"], dev_id, "127.0.0.1", session_type="desktop_host")
+                            ctx = validate_session(token_cookie, "127.0.0.1")
+
+            if is_host_pc and ctx and ctx.get("role") == "host":
+                if not self.get_cookie("vs_session") and not token_cookie:
                     token_cookie = create_session(ctx["user_id"], ctx["device_id"], "127.0.0.1", session_type="web")
             cur_token = self.get_auth_token() or token_cookie
             user_data = None
@@ -7461,7 +7587,7 @@ class Handler(BaseHTTPRequestHandler):
                 "user": user_data,
                 "session_token": cur_token if ctx else None,
                 "token": cur_token if ctx else None,
-                "is_loopback": is_loop
+                "is_loopback": is_host_pc
             }).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -7722,6 +7848,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
                 self.send_header("Content-Disposition", f'attachment; filename="VS_Database_Clients_Export_{today_str}.csv"')
                 self.send_header("Content-Length", str(len(csv_bytes)))
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(csv_bytes)
                 return
@@ -7731,9 +7859,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 self.send_header("Content-Disposition", f'attachment; filename="VS_Database_Clients_Export_{today_str}.xlsx"')
                 self.send_header("Content-Length", str(len(xlsx_bytes)))
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(xlsx_bytes)
                 return
+
+        if path in ("/api/clients/sample-template", "/api/template.xlsx"):
+            headers = ["File No.", "Name", "Mobile", "Firm Type", "Group", "Status"]
+            sample_rows = [
+                ["V-0001", "Shree Ram Textiles", "9829012345", "Partnership", "Trading", "Active"],
+                ["V-0002", "Rudraksh Tech Solutions", "9414012345", "Private Limited", "IT Services", "Active"],
+                ["V-0003", "Vimal & Associates", "9460222319", "Proprietorship", "Legal", "Active"]
+            ]
+            xlsx_bytes = generate_xlsx(headers, sample_rows)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", 'attachment; filename="Sample_Clients_Import_Template.xlsx"')
+            self.send_header("Content-Length", str(len(xlsx_bytes)))
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(xlsx_bytes)
+            return
 
         if path == "/api/system/check-updates":
             query_params = parse_qs(urlparse(self.path).query)
@@ -7748,6 +7896,7 @@ class Handler(BaseHTTPRequestHandler):
             candidates = [
                 app_root / fname,
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.2_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.1_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.0_x64-setup.exe",
                 app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.1.0_x64-setup.exe",
@@ -8204,8 +8353,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/auth/setup-host":
                 client_ip = self.client_address[0]
-                is_loop = ipaddress.ip_address(client_ip).is_loopback
-                if not is_loop and has_host_user():
+                if not self.is_host_client() and has_host_user():
                     raise ValueError("Host administrator can only be configured or reset locally on the Host PC.")
                 user_id = str(payload.get("user_id", "")).strip() or "Rudra_Dev"
                 password = str(payload.get("password", "")).strip()
@@ -8251,7 +8399,8 @@ class Handler(BaseHTTPRequestHandler):
                 if len(password) < 6:
                     raise ValueError("Password must be at least 6 characters.")
                 client_ip = self.client_address[0]
-                is_loop = ipaddress.ip_address(client_ip).is_loopback
+                is_from_host = self.is_host_client()
+                is_first_user = not has_host_user()
                 t = now()
                 req_id = str(uuid.uuid4())
 
@@ -8263,14 +8412,18 @@ class Handler(BaseHTTPRequestHandler):
                             con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
                             pin_approved = True
 
-                if is_loop:
+                # If registration is on the Host PC or if setting up first host user:
+                # Immediate Host Administrator authorization with zero approval wait!
+                if is_from_host or is_first_user:
                     is_auto_approved = True
                     role = "host"
+                    user_status = "active"
+                    device_status = "approved"
                 else:
-                    is_auto_approved = pin_approved or (not has_host_user())
-                    role = "host" if (not has_host_user()) else "staff"
-                user_status = "active" if is_auto_approved else "pending"
-                device_status = "approved" if is_auto_approved else "pending"
+                    is_auto_approved = pin_approved
+                    role = "staff"
+                    user_status = "active" if is_auto_approved else "pending"
+                    device_status = "approved" if is_auto_approved else "pending"
 
                 with db() as con:
                     existing_user = con.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
@@ -8298,7 +8451,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 mark_data_changed()
                 if is_auto_approved:
-                    token = create_session(user_id, device_id, client_ip, session_type="web")
+                    token = create_session(user_id, device_id, client_ip, session_type="web" if role == "host" else "workstation")
                     raw = json.dumps({"ok": True, "status": "approved", "user_id": user_id, "role": role, "device_id": device_id, "device_name": device_name, "token": token, "session_token": token, "message": "Registered and signed in successfully."}).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -8328,12 +8481,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Account access is pending Host approval.")
 
                     client_ip = self.client_address[0]
-                    is_loop = ipaddress.ip_address(client_ip).is_loopback
+                    is_from_host = self.is_host_client()
                     if not device_id:
                         device_id = str(uuid.uuid4())
                     dev = con.execute("SELECT * FROM devices WHERE device_id=? AND user_id=?", (device_id, user_id)).fetchone()
                     if not dev:
-                        if user["role"] == "host" or is_loop:
+                        if user["role"] == "host" or is_from_host:
                             t_dev = now()
                             dev_name = "Host Server PC" if user["role"] == "host" else "Office Workstation"
                             con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
@@ -9552,6 +9705,46 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/system/autostart":
                 app_autostart = bool(payload.get("app_autostart", False))
                 return self.send_json(set_app_autostart(app_autostart))
+
+            if path == "/api/system/browse-folder":
+                initial = str(payload.get("current") or "").strip()
+                if not initial or not os.path.isdir(initial):
+                    initial = os.path.expanduser("~")
+                chosen = [None]
+                def _browse():
+                    # Try tkinter filedialog
+                    try:
+                        import tkinter as tk
+                        from tkinter import filedialog
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)
+                        folder = filedialog.askdirectory(initialdir=initial, title="Select Storage Folder")
+                        root.destroy()
+                        if folder:
+                            chosen[0] = os.path.normpath(folder)
+                    except Exception:
+                        pass
+                    # If tkinter did not yield a result, fallback to Windows PowerShell FolderBrowserDialog
+                    if not chosen[0] and sys.platform == "win32":
+                        try:
+                            ps_cmd = (
+                                "Add-Type -AssemblyName System.Windows.Forms; "
+                                "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                                "$f.Description = 'Select Storage Folder'; "
+                                f"$f.SelectedPath = '{initial}'; "
+                                "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"
+                            )
+                            res = subprocess.check_output(["powershell", "-NoProfile", "-Command", ps_cmd], text=True, timeout=30).strip()
+                            if res and os.path.isdir(res):
+                                chosen[0] = os.path.normpath(res)
+                        except Exception:
+                            pass
+
+                th = threading.Thread(target=_browse)
+                th.start()
+                th.join(timeout=45)
+                return self.send_json({"ok": True, "path": chosen[0] or ""})
 
             if path == "/api/desktop/close":
                 threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
@@ -12170,6 +12363,18 @@ def stop_server():
     _BACKEND_STATE = "STOPPED"
 
 
+class FastThreadingHTTPServer(ThreadingHTTPServer):
+    def get_request(self):
+        sock, addr = super().get_request()
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            sock.settimeout(20.0)
+        except Exception:
+            pass
+        return sock, addr
+
+
 def start_server_background(port: int = None, host: str = "0.0.0.0"):
     """Starts the VS Database backend server in background threads."""
     global PORT, _SERVER_INSTANCE, _BACKGROUND_TIMERS, _BACKEND_STATE
@@ -12192,7 +12397,7 @@ def start_server_background(port: int = None, host: str = "0.0.0.0"):
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer.request_queue_size = 128
-    main_server = ThreadingHTTPServer((host, PORT), Handler)
+    main_server = FastThreadingHTTPServer((host, PORT), Handler)
     main_server.daemon_threads = True
     _SERVER_INSTANCE = main_server
     _BACKEND_STATE = "READY"
@@ -12225,7 +12430,7 @@ if __name__ == "__main__":
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer.request_queue_size = 128
-    main_server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    main_server = FastThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     main_server.daemon_threads = True
     _SERVER_INSTANCE = main_server
     _BACKEND_STATE = "READY"

@@ -411,6 +411,16 @@ fn close_window(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn is_maximized(window: tauri::Window) -> Result<bool, String> {
+    window.is_maximized().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn start_drag(window: tauri::Window) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_python_health() -> bool {
     is_python_server_healthy()
 }
@@ -459,6 +469,8 @@ pub fn run() {
         minimize_window,
         maximize_window,
         close_window,
+        is_maximized,
+        start_drag,
         get_python_health,
         get_desktop_handshake_token,
         get_app_mode,
@@ -485,13 +497,15 @@ pub fn run() {
     // Window close event hook for lifecycle decoupling (DEF-003)
     builder = builder.on_window_event(|_window, event| {
         if let tauri::WindowEvent::CloseRequested { .. } = event {
-            if can_shutdown_backend() {
-                eprintln!("[Lifecycle] No active LAN clients or LAN mode. Shutting down backend...");
-                send_desktop_shutdown();
-            } else {
-                eprintln!("[Lifecycle] Active LAN clients or LAN mode enabled. Detaching UI while preserving server...");
-                send_desktop_detach();
-            }
+            std::thread::spawn(|| {
+                if can_shutdown_backend() {
+                    eprintln!("[Lifecycle] No active LAN clients or LAN mode. Shutting down backend...");
+                    send_desktop_shutdown();
+                } else {
+                    eprintln!("[Lifecycle] Active LAN clients or LAN mode enabled. Detaching UI while preserving server...");
+                    send_desktop_detach();
+                }
+            });
         }
     });
 
@@ -501,13 +515,15 @@ pub fn run() {
 
     app.run(|_app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            if can_shutdown_backend() {
-                eprintln!("[Lifecycle] App exit requested, ensuring backend shutdown...");
-                send_desktop_shutdown();
-            } else {
-                eprintln!("[Lifecycle] App exit with LAN mode, server retained.");
-                send_desktop_detach();
-            }
+            std::thread::spawn(|| {
+                if can_shutdown_backend() {
+                    eprintln!("[Lifecycle] App exit requested, ensuring backend shutdown...");
+                    send_desktop_shutdown();
+                } else {
+                    eprintln!("[Lifecycle] App exit with LAN mode, server retained.");
+                    send_desktop_detach();
+                }
+            });
         }
     });
 }

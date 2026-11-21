@@ -2,6 +2,14 @@ const queues = new Map();
 const busy = new Set();
 const extensionInitiatedDownloads = new Set();
 
+// Automatically clean up dead/blocked blank tabs if created by failed protocol or download links
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const url = tab.url || changeInfo.url || '';
+  if (url.includes('about:blank#blocked')) {
+    chrome.tabs.remove(tabId).catch(() => {});
+  }
+});
+
 // Enable Chrome Side Panel on action click
 if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -17,16 +25,28 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 const SUPPORTED_EXTENSIONS = [
-  '.pdf', '.xlsx', '.xls', '.csv', '.docx', '.doc', '.pptx', '.ppt', '.zip', '.json', '.txt', '.xml'
+  '.pdf', '.xlsx', '.xls', '.xlsm', '.xlsb', '.csv', '.tsv', '.docx', '.doc',
+  '.pptx', '.ppt', '.zip', '.rar', '.7z', '.gz', '.json', '.txt', '.xml',
+  '.pfx', '.p12', '.cer', '.html', '.htm'
 ];
 
 function getExtensionFromMime(mime) {
   const m = (mime || '').toLowerCase();
   if (m.includes('spreadsheet') || m.includes('excel') || m.includes('sheet')) return 'xlsx';
   if (m.includes('csv')) return 'csv';
+  if (m.includes('tab-separated') || m.includes('tsv')) return 'tsv';
   if (m.includes('word') || m.includes('document')) return 'docx';
+  if (m.includes('presentation') || m.includes('powerpoint')) return 'pptx';
   if (m.includes('zip')) return 'zip';
+  if (m.includes('rar') || m.includes('x-rar')) return 'rar';
+  if (m.includes('7z') || m.includes('x-7z')) return '7z';
+  if (m.includes('gzip') || m.includes('gz')) return 'gz';
   if (m.includes('json')) return 'json';
+  if (m.includes('xml')) return 'xml';
+  if (m.includes('html')) return 'html';
+  if (m.includes('text/plain') || m.includes('txt')) return 'txt';
+  if (m.includes('pkcs12') || m.includes('x-pkcs12')) return 'pfx';
+  if (m.includes('x-x509') || m.includes('cert')) return 'cer';
   return 'pdf';
 }
 
@@ -37,7 +57,7 @@ function isSupportedFile(filename, mime, url = '') {
   if (SUPPORTED_EXTENSIONS.some(ext => name.endsWith(ext) || name.includes(ext + '?') || name.includes(ext + '#') || u.includes(ext))) {
     return true;
   }
-  if (m.includes('pdf') || m.includes('spreadsheet') || m.includes('excel') || m.includes('word') || m.includes('document') || m.includes('zip') || m.includes('json') || m.includes('octet-stream') || m.includes('csv')) {
+  if (m.includes('pdf') || m.includes('spreadsheet') || m.includes('excel') || m.includes('word') || m.includes('document') || m.includes('zip') || m.includes('json') || m.includes('octet-stream') || m.includes('csv') || m.includes('xml') || m.includes('text') || m.includes('archive') || m.includes('tar') || m.includes('html')) {
     return true;
   }
   if (/download|export|report|statement|challan|receipt|invoice|return|gstr|itr|ais|tis|26as|ledger|ack|computation|form/i.test(name) || /download|export|report|statement|challan|receipt|invoice|return|gstr|itr|ais|tis|26as|ledger|ack|computation|form/i.test(u)) {
@@ -46,22 +66,74 @@ function isSupportedFile(filename, mime, url = '') {
   return false;
 }
 
-function extractFilename(url, suggestedName, mime = '') {
-  if (suggestedName && suggestedName.trim()) {
-    const clean = suggestedName.split(/[/\\]/).pop().trim();
+function safeDecode(str) {
+  try {
+    return decodeURIComponent(str);
+  } catch (_) {
+    return str;
+  }
+}
+
+function extractFilename(url = '', suggestedName = '', mime = '') {
+  if (suggestedName && typeof suggestedName === 'string' && suggestedName.trim()) {
+    const clean = safeDecode(suggestedName.split(/[/\\]/).pop().trim());
     if (clean) {
       if (clean.includes('.')) return clean;
       const ext = getExtensionFromMime(mime);
       return `${clean}.${ext}`;
     }
   }
+
+  const rawUrl = String(url || '').trim();
+
+  // 1. Handle data: URLs (regex match MIME type)
+  if (rawUrl.startsWith('data:')) {
+    const match = rawUrl.match(/^data:([^;,]+)/);
+    const dataMime = (match ? match[1] : mime) || mime;
+    const ext = getExtensionFromMime(dataMime);
+    return `document_${Date.now()}.${ext}`;
+  }
+
+  // 2. Handle blob: and standard HTTP/HTTPS URLs
   try {
-    const u = new URL(url);
-    const pathPart = u.pathname.split('/').pop();
-    if (pathPart && pathPart.includes('.')) return decodeURIComponent(pathPart);
-    const queryFile = u.searchParams.get('file') || u.searchParams.get('filename') || u.searchParams.get('name') || u.searchParams.get('doc');
-    if (queryFile) return decodeURIComponent(queryFile);
-  } catch (_) {}
+    let parseableUrl = rawUrl;
+    if (parseableUrl.startsWith('blob:')) {
+      parseableUrl = parseableUrl.slice(5);
+    }
+    const u = new URL(parseableUrl);
+
+    // Check URL query parameters for explicit filename
+    const queryFile = u.searchParams.get('filename') ||
+                      u.searchParams.get('file') ||
+                      u.searchParams.get('fileName') ||
+                      u.searchParams.get('name') ||
+                      u.searchParams.get('doc') ||
+                      u.searchParams.get('document') ||
+                      u.searchParams.get('attachment_filename');
+    if (queryFile) {
+      const clean = safeDecode(queryFile.split(/[/\\]/).pop().trim());
+      if (clean) {
+        if (clean.includes('.')) return clean;
+        return `${clean}.${getExtensionFromMime(mime)}`;
+      }
+    }
+
+    const pathPart = u.pathname.split('/').filter(Boolean).pop();
+    if (pathPart && pathPart.includes('.')) {
+      return safeDecode(pathPart);
+    }
+  } catch (_) {
+    // Fallback regex for query parameters if URL constructor failed
+    const qMatch = rawUrl.match(/[?&](?:filename|file|fileName|name|doc|document)=([^&#]+)/i);
+    if (qMatch && qMatch[1]) {
+      const clean = safeDecode(qMatch[1].split(/[/\\]/).pop().trim());
+      if (clean) {
+        if (clean.includes('.')) return clean;
+        return `${clean}.${getExtensionFromMime(mime)}`;
+      }
+    }
+  }
+
   const ext = getExtensionFromMime(mime);
   return `document.${ext}`;
 }
@@ -77,28 +149,30 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function isServerOrigin(url) {
+function isServerOriginSync(url) {
   try {
     const u = new URL(url);
-    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
-      if (u.port === '8767' || u.pathname.startsWith('/api/client-files/')) return true;
-    }
+    const isLocal = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    const isVsDomain = u.hostname === 'vs-database.in' || u.hostname.endsWith('.vs-database.in');
+    const portNum = parseInt(u.port, 10);
+    const isAllowedPort = !isNaN(portNum) && portNum >= 8767 && portNum <= 8799;
+
+    if (isLocal && isAllowedPort) return true;
+    if (isVsDomain) return true;
+    if ((isLocal || isVsDomain) && u.pathname.startsWith('/api/client-files/')) return true;
+  } catch (_) {}
+  return false;
+}
+
+async function isServerOrigin(url) {
+  try {
+    if (isServerOriginSync(url)) return true;
+    const u = new URL(url);
     const store = await chrome.storage.local.get(['server']);
     if (store.server) {
       const sUrl = new URL(store.server);
       if (u.origin === sUrl.origin) return true;
     }
-    if (u.hostname === 'vs-database.in') return true;
-  } catch (_) {}
-  return false;
-}
-
-function isServerOriginSync(url) {
-  try {
-    const u = new URL(url);
-    if ((u.hostname === 'localhost' || u.hostname === '127.0.0.1') && u.port === '8767') return true;
-    if (u.hostname === 'vs-database.in') return true;
-    if (u.pathname.startsWith('/api/client-files/')) return true;
   } catch (_) {}
   return false;
 }
@@ -346,8 +420,15 @@ async function handleDetectedDownload(downloadItem, customName) {
 }
 
 chrome.downloads.onCreated.addListener((downloadItem) => {
+  if (isServerOriginSync(downloadItem.url) || extensionInitiatedDownloads.has(downloadItem.id) || extensionInitiatedDownloads.has(downloadItem.url)) {
+    return;
+  }
+
+  // Freeze in Chromium network pipeline immediately (Zero-Leak Pause Guarantee)
+  chrome.downloads.pause(downloadItem.id).catch(() => {});
+
   const filename = extractFilename(downloadItem.url, downloadItem.filename, downloadItem.mime);
-  if (isSupportedFile(filename, downloadItem.mime, downloadItem.url) && !isServerOriginSync(downloadItem.url)) {
+  if (isSupportedFile(filename, downloadItem.mime, downloadItem.url)) {
     // Start parallel background pre-fetch immediately
     if (downloadItem.url && /^https?:/i.test(downloadItem.url)) {
       startBackgroundCapture(downloadItem.url, downloadItem.id).catch(() => {});
@@ -355,12 +436,55 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   }
 });
 
+async function getTargetTabForPrompt(downloadItem) {
+  if (downloadItem && downloadItem.tabId && downloadItem.tabId > 0) {
+    try {
+      const tab = await chrome.tabs.get(downloadItem.tabId);
+      if (tab && tab.id && !tab.url?.startsWith('chrome://')) {
+        return tab;
+      }
+    } catch (_) {}
+  }
+  return await findBestTabForPrompt(downloadItem ? downloadItem.url : '');
+}
+
+async function findBestTabForPrompt(downloadUrl = '') {
+  try {
+    const tabs = await chrome.tabs.query({ lastFocusedWindow: true });
+    if (!tabs || !tabs.length) return null;
+
+    const activeTab = tabs.find(t => t.active);
+    // If active tab is a normal website page (not blank, not the raw download URL)
+    if (activeTab && activeTab.url && !activeTab.url.startsWith('chrome://') && !activeTab.url.startsWith('about:') && activeTab.url !== downloadUrl) {
+      return activeTab;
+    }
+
+    // If active tab is blank, blocked, or the raw download URL itself, find the portal tab the user is working on
+    const portalTab = tabs.find(t => t.url && /^https?:/i.test(t.url) && !isServerOriginSync(t.url) && t.url !== downloadUrl);
+    if (portalTab) {
+      // Clean up stray blank/blocked tabs that were opened by target="_blank"
+      if (activeTab && (activeTab.url === 'about:blank' || activeTab.url === downloadUrl || activeTab.url.includes('about:blank#blocked'))) {
+        chrome.tabs.remove(activeTab.id).catch(() => {});
+        chrome.tabs.update(portalTab.id, { active: true }).catch(() => {});
+      }
+      return portalTab;
+    }
+
+    return activeTab && !activeTab.url?.startsWith('chrome://') ? activeTab : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-  const filename = extractFilename(downloadItem.url, downloadItem.filename, downloadItem.mime);
-  if (!isSupportedFile(filename, downloadItem.mime, downloadItem.url) || isServerOriginSync(downloadItem.url)) {
+  // Only bypass if internal server origin or extension initiated
+  if (isServerOriginSync(downloadItem.url) || extensionInitiatedDownloads.has(downloadItem.id) || extensionInitiatedDownloads.has(downloadItem.url)) {
     suggest();
     return false;
   }
+
+  // Do NOT call suggest() for unrecognized files! Instead of silently leaking unknown files to disk, intercept and prompt the user!
+  const filename = extractFilename(downloadItem.url, downloadItem.filename, downloadItem.mime);
 
   // Pre-fetch in background immediately
   if (downloadItem.url && /^https?:/i.test(downloadItem.url)) {
@@ -373,13 +497,13 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     if (isBulk) {
       isBulkModeActive = true;
       bulkInterceptedDownloadIds.add(Number(downloadItem.id));
+      // Strictly cancel normal download so nothing leaks to Downloads folder!
       cancelOrDeleteDownload(downloadItem.id);
 
-      // Broadcast file to bulk collector dock on active tab
-      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-        if (tabs[0]?.id && !tabs[0].url?.startsWith('chrome://')) {
-          ensureContentScript(tabs[0].id).then(() => {
-            chrome.tabs.sendMessage(tabs[0].id, {
+      getTargetTabForPrompt(downloadItem).then((targetTab) => {
+        if (targetTab?.id) {
+          ensureContentScript(targetTab.id).then(() => {
+            chrome.tabs.sendMessage(targetTab.id, {
               type: 'SHOW_DOWNLOAD_INTERCEPT_PROMPT',
               downloadId: downloadItem.id,
               filename: filename,
@@ -393,18 +517,19 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       return;
     }
 
-    // Normal non-bulk download prompt
+    // Normal non-bulk download prompt: NEVER AUTO-SUGGEST ON TIMEOUT!
+    // Safety cleanup timeout: after 10 minutes of complete inactivity, cancel the download
     const timeoutId = setTimeout(() => {
       pendingDownloadDecisions.delete(downloadItem.id);
-      try { suggest({ filename: downloadItem.filename || filename, conflictAction: 'uniquify' }); } catch (_) {}
-    }, 25000);
+      cancelOrDeleteDownload(downloadItem.id);
+    }, 600000);
 
-    pendingDownloadDecisions.set(downloadItem.id, { suggest, timeoutId });
+    pendingDownloadDecisions.set(downloadItem.id, { suggest, timeoutId, filename, url: downloadItem.url });
 
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      if (tabs[0]?.id && !tabs[0].url?.startsWith('chrome://')) {
-        ensureContentScript(tabs[0].id).then(() => {
-          chrome.tabs.sendMessage(tabs[0].id, {
+    getTargetTabForPrompt(downloadItem).then((targetTab) => {
+      if (targetTab?.id) {
+        ensureContentScript(targetTab.id).then(() => {
+          chrome.tabs.sendMessage(targetTab.id, {
             type: 'SHOW_DOWNLOAD_INTERCEPT_PROMPT',
             downloadId: downloadItem.id,
             filename: filename,
@@ -427,7 +552,9 @@ async function callServerApi(endpoint, options = {}) {
   if (storedServer.includes(':8766')) storedServer = '';
   const candidates = [
     storedServer,
+    'http://127.0.0.1:8768',
     'http://127.0.0.1:8767',
+    'http://localhost:8768',
     'http://localhost:8767',
     'http://vs-database.in'
   ].filter(Boolean);
@@ -725,6 +852,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       if (decision === 'no') {
+        // THIS IS THE SOLE AND ONLY PATH ALLOWED TO DOWNLOAD NORMALLY.
         if (pending && pending.suggest) {
           try { pending.suggest(); } catch (_) {}
         }
@@ -736,51 +864,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       if (decision === 'bulk') {
+        // Bulk Save: Cancel/remove from normal downloads shelf, keep in bulk collector.
         isBulkModeActive = true;
         await chrome.storage.local.set({ bulk_mode: true });
-        const pending = pendingDownloadDecisions.get(downloadId);
-        if (pending) {
-          clearTimeout(pending.timeoutId);
-          pendingDownloadDecisions.delete(downloadId);
-          if (pending.suggest) {
-            try { pending.suggest({ filename: filename || 'document.pdf', conflictAction: 'uniquify' }); } catch (_) {}
-          }
-        }
         if (downloadId) {
           const numId = Number(downloadId);
           const dlId = (!isNaN(numId) && numId > 0) ? numId : downloadId;
           bulkInterceptedDownloadIds.add(dlId);
-          chrome.downloads.resume(dlId, () => {
-            void chrome.runtime.lastError;
-          });
+          cancelOrDeleteDownload(dlId);
         }
         sendResponse({ ok: true, queued: true });
         return;
       }
 
       if (decision === 'yes') {
-        if (file_base64 && downloadId) {
-          cancelOrDeleteDownload(downloadId);
-        } else if (downloadId) {
-          // If waiting for disk buffer, let Chrome write to disk; it will be moved/deleted by server upon staging
-          if (pending && pending.suggest) {
-            try { pending.suggest({ filename: filename || 'document.pdf', conflictAction: 'uniquify' }); } catch (_) {}
+        let b64 = file_base64 || null;
+
+        // Check captureCache if base64 not provided directly
+        if (!b64) {
+          const capKey = getCaptureKey(url, downloadId);
+          const capPromise = captureCache.get(capKey);
+          if (capPromise) {
+            try {
+              const capRes = await capPromise;
+              if (capRes && capRes.base64) {
+                b64 = capRes.base64;
+              }
+            } catch (_) {}
           }
-          chrome.downloads.resume(downloadId, () => {
-            void chrome.runtime.lastError;
-          });
         }
 
-        await chrome.storage.local.set({
-          pending_detected_file: {
-            filename: filename || 'detected_document.pdf',
-            file_type: mime || 'application/octet-stream',
-            file_size: fileSize || 0,
-            source_url: url,
-            file_base64: file_base64 || null,
-            downloadId: downloadId,
-            timestamp: Date.now()
+        if (b64) {
+          // File payload is already captured in memory -> eliminate disk download
+          if (downloadId) {
+            cancelOrDeleteDownload(downloadId);
           }
+        } else {
+          // Payload not in memory -> Zero-Copy local staging in hidden .vs_staging folder
+          const safeName = filename || 'document.pdf';
+          if (pending && pending.suggest) {
+            try {
+              pending.suggest({
+                filename: '.vs_staging/' + safeName,
+                conflictAction: 'overwrite'
+              });
+            } catch (_) {}
+          }
+          if (downloadId) {
+            chrome.downloads.resume(downloadId).catch(() => {});
+          }
+        }
+
+        const detObj = {
+          filename: filename || 'detected_document.pdf',
+          file_type: mime || 'application/octet-stream',
+          file_size: fileSize || 0,
+          source_url: url,
+          file_base64: b64,
+          download_id: downloadId,
+          timestamp: Date.now()
+        };
+
+        await chrome.storage.local.set({
+          pending_detected_file: detObj,
+          latest_download_detected: detObj
         });
 
         sendResponse({ ok: true, saved_pending: true });
@@ -792,80 +939,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 let isRedirectingToApp = false;
 
-// The desktop application binds to 8767 (and dynamic range 8767-8799).
+// The desktop application binds to 8768 (Host Mode) or 8767 (Standard Mode), plus dynamic range 8767-8799.
 // Under no circumstances should port 8766 (Office Automation) ever be probed or used.
-const DESKTOP_PORTS = Array.from({ length: 33 }, (_, index) => 8767 + index);
+const DESKTOP_PORTS = [8768, 8767, ...Array.from({ length: 31 }, (_, index) => 8769 + index)];
 
 function desktopEndpointForPort(port) {
   return `http://127.0.0.1:${port}`;
 }
 
-let cachedDesktopEndpoint = 'http://127.0.0.1:8767';
+let cachedDesktopEndpoint = null;
 let lastEndpointVerifiedAt = 0;
 
-async function findDesktopEndpoint(timeoutMs = 250) {
+async function checkEndpointHealth(url, timeoutMs = 250) {
+  try {
+    const res = await fetch(`${url}/api/desktop/health`, {
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && data.ok && data.service === 'VS Database Desktop') {
+        return url;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function findDesktopEndpoint(timeoutMs = 300) {
   const now = Date.now();
   // 1. Instant 0ms memory cache if verified within last 4 seconds
   if (cachedDesktopEndpoint && (now - lastEndpointVerifiedAt < 4000)) {
     return cachedDesktopEndpoint;
   }
 
-  // 2. Ultra-fast 35ms loopback check on primary candidate (local loopback responds in < 2ms)
-  const candidate = cachedDesktopEndpoint || 'http://127.0.0.1:8767';
-  try {
-    const fastResp = await fetch(`${candidate}/api/desktop/health`, {
-      signal: AbortSignal.timeout(35)
-    });
-    if (fastResp.ok) {
-      const health = await fastResp.json().catch(() => null);
-      if (health && health.ok && health.service === 'VS Database Desktop') {
-        cachedDesktopEndpoint = candidate;
-        lastEndpointVerifiedAt = Date.now();
-        return candidate;
-      }
-    }
-  } catch (_) {}
-
-  // 3. Fast check of stored server or fallback localhost
+  // 2. Parallel check of stored server and primary ports (8768 Host Mode & 8767 Standard Mode)
   const stored = await chrome.storage.local.get(['server']);
   let storedServer = (stored.server || '').replace(/\/$/, '');
   if (storedServer.includes(':8766')) storedServer = '';
 
-  const quickCandidates = [storedServer, 'http://127.0.0.1:8767', 'http://localhost:8767'].filter(Boolean);
-  for (const ep of [...new Set(quickCandidates)]) {
-    try {
-      const resp = await fetch(`${ep}/api/desktop/health`, { signal: AbortSignal.timeout(60) });
-      if (resp.ok) {
-        const h = await resp.json().catch(() => null);
-        if (h && h.ok && h.service === 'VS Database Desktop') {
-          cachedDesktopEndpoint = ep;
-          lastEndpointVerifiedAt = Date.now();
-          await chrome.storage.local.set({ server: ep });
-          return ep;
-        }
-      }
-    } catch (_) {}
+  const quickCandidates = [
+    cachedDesktopEndpoint,
+    storedServer,
+    'http://127.0.0.1:8768',
+    'http://127.0.0.1:8767',
+    'http://localhost:8768',
+    'http://localhost:8767'
+  ].filter(Boolean);
+
+  const uniqueQuick = [...new Set(quickCandidates)];
+  const quickResults = await Promise.all(uniqueQuick.map(ep => checkEndpointHealth(ep, timeoutMs)));
+  const foundQuick = quickResults.find(Boolean);
+  if (foundQuick) {
+    cachedDesktopEndpoint = foundQuick;
+    lastEndpointVerifiedAt = Date.now();
+    await chrome.storage.local.set({ server: foundQuick });
+    return foundQuick;
   }
 
-  // 4. Fallback scan across dynamic range (8767-8799)
-  const checks = await Promise.all(DESKTOP_PORTS.map(async p => {
-    const ep = `http://127.0.0.1:${p}`;
-    try {
-      const response = await fetch(`${ep}/api/desktop/health`, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!response.ok) return null;
-      const health = await response.json().catch(() => null);
-      return health && health.ok && health.service === 'VS Database Desktop' ? ep : null;
-    } catch (_) {
-      return null;
-    }
-  }));
-  const endpoint = checks.find(Boolean) || null;
-  if (endpoint) {
-    cachedDesktopEndpoint = endpoint;
+  // 3. Fallback scan across dynamic range (8767-8799)
+  const scanResults = await Promise.all(DESKTOP_PORTS.map(p => checkEndpointHealth(`http://127.0.0.1:${p}`, timeoutMs)));
+  const foundScan = scanResults.find(Boolean) || null;
+  if (foundScan) {
+    cachedDesktopEndpoint = foundScan;
     lastEndpointVerifiedAt = Date.now();
-    await chrome.storage.local.set({ server: endpoint });
+    await chrome.storage.local.set({ server: foundScan });
   }
-  return endpoint;
+  return foundScan;
 }
 
 async function redirectToDesktopApp(stagingData = null, originTabId = null) {
@@ -873,24 +1012,24 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
   isRedirectingToApp = true;
   setTimeout(() => { isRedirectingToApp = false; }, 800);
 
-  // 1. Ultra-fast check if desktop application is currently running (< 2ms)
-  let targetEndpoint = await findDesktopEndpoint(250);
+  // 1. Check if desktop application is currently running
+  let targetEndpoint = await findDesktopEndpoint(300);
 
   // 2. If Desktop App is offline, wake it up via in-page protocol on the user's active tab
   if (!targetEndpoint) {
     if (originTabId) {
       chrome.tabs.sendMessage(originTabId, { type: 'TRIGGER_PROTOCOL_LAUNCH' }).catch(() => {});
     }
-    // Fast poll every 250ms for server readiness (completes as soon as binary boots)
-    for (let i = 0; i < 20; i++) {
+    // Fast poll for server readiness (allows WebView2 + Rust + Python to boot smoothly)
+    for (let i = 0; i < 28; i++) {
       await new Promise(r => setTimeout(r, 250));
-      targetEndpoint = await findDesktopEndpoint(150);
+      targetEndpoint = await findDesktopEndpoint(200);
       if (targetEndpoint) break;
     }
   }
 
   if (!targetEndpoint) {
-    console.warn('VS Database Desktop App did not become available; keeping browser downloads intact.');
+    console.warn('VS Database Desktop App did not become available.');
     return { ok: false, error: 'Desktop application is not running.' };
   }
 
@@ -935,14 +1074,14 @@ async function redirectToDesktopApp(stagingData = null, originTabId = null) {
 
 // Stream single file directly into Desktop App Staging without lock congestion
 async function stageSingleFileToDesktopApp(fileItem, originTabId = null, bringToFront = false) {
-  let targetEndpoint = await findDesktopEndpoint(250);
+  let targetEndpoint = await findDesktopEndpoint(300);
   if (!targetEndpoint) {
     if (originTabId) {
       chrome.tabs.sendMessage(originTabId, { type: 'TRIGGER_PROTOCOL_LAUNCH' }).catch(() => {});
     }
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 28; i++) {
       await new Promise(r => setTimeout(r, 250));
-      targetEndpoint = await findDesktopEndpoint(150);
+      targetEndpoint = await findDesktopEndpoint(200);
       if (targetEndpoint) break;
     }
   }
@@ -1011,7 +1150,7 @@ async function stageSingleFileToDesktopApp(fileItem, originTabId = null, bringTo
 
       // 1. High-Performance Zero-Copy Ingestion: Check local disk first!
       if (!sourceLocalPath && downloadId) {
-        sourceLocalPath = await waitForDownloadComplete(downloadId, 3000);
+        sourceLocalPath = await waitForDownloadComplete(downloadId, 5000);
       }
 
       // If file exists on local disk, clear base64 payload to eliminate network and JSON encoding overhead
@@ -1052,10 +1191,14 @@ async function stageSingleFileToDesktopApp(fileItem, originTabId = null, bringTo
         if (file?.url) captureCache.delete(file.url);
         await chrome.storage.local.remove(['pending_detected_file', 'latest_download_detected']);
       } else {
-        console.warn('[Extension] Staging was not acknowledged by desktop; preserving local download intact.');
+        // Strictly clean up download shelf so nothing sits in normal Downloads!
+        if (downloadId) {
+          cancelOrDeleteDownload(downloadId);
+        }
+        console.warn('[Extension] Staging not yet acknowledged; document preserved in pending storage queue.');
       }
 
-      sendResponse({ ok: Boolean(sendResult && sendResult.ok), result: sendResult?.result });
+      sendResponse({ ok: Boolean(sendResult && sendResult.ok), result: sendResult?.result, error: sendResult?.error });
     })();
     return true;
   }
@@ -1275,9 +1418,22 @@ async function stageSingleFileToDesktopApp(fileItem, originTabId = null, bringTo
         const det = {
           filename: message.filename || 'filing.pdf',
           source_url: message.url || '',
-          file_type: 'application/octet-stream',
+          file_type: message.mime || 'application/octet-stream',
+          file_size: message.size || (message.base64 ? Math.round(message.base64.length * 0.75) : 0),
+          file_base64: message.base64 || message.file_base64 || null,
+          base64: message.base64 || message.file_base64 || null,
           timestamp: Date.now()
         };
+        if (message.base64 && message.url) {
+          captureCache.set(message.url, Promise.resolve({
+            ok: true,
+            base64: message.base64,
+            mime: message.mime || 'application/pdf',
+            size: message.size || Math.round(message.base64.length * 0.75),
+            url: message.url,
+            timestamp: Date.now()
+          }));
+        }
         await chrome.storage.local.set({
           pending_detected_file: det,
           latest_download_detected: det

@@ -2,6 +2,7 @@ if (!globalThis.__vsDatabaseFilingSaverLoaded) {
 globalThis.__vsDatabaseFilingSaverLoaded = true;
 const AUTO_KEY = 'ca-office-practive-job';
 let automationRunning = false;
+const capturedBlobsCache = new Map();
 
 // ========================================================
 // PRACTIVE AUTOMATION HELPERS
@@ -537,6 +538,11 @@ function arrayBufferToBase64(buffer) {
 
 async function retrieveDocumentBytes(url) {
   if (!url) throw new Error('No URL provided');
+
+  // 0. In-memory captured blob cache from page-hook interceptor
+  if (capturedBlobsCache.has(url)) {
+    return capturedBlobsCache.get(url);
+  }
 
   // 1. Data URI
   if (url.startsWith('data:')) {
@@ -1525,7 +1531,11 @@ function showDownloadPrompt(data) {
       file: detObj,
       base64: b64,
       use_stored_file: false
-    }).catch(() => {});
+    }, (res) => {
+      if (chrome.runtime.lastError || (res && !res.ok)) {
+        showToast('📁 Staged in VS Database queue. Launch desktop app to view.', 4500);
+      }
+    });
 
     showToast(`⚡ Sent to VS Database Desktop App!`);
   };
@@ -1632,21 +1642,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
-// Triggers Windows protocol handler directly on the active webpage
-// This ensures Chrome shows the permission prompt on the SAME TAB with the "Always allow" checkbox
+// Triggers Windows protocol handler cleanly via an invisible iframe
+// This prevents Chrome from navigating the active tab to about:blank#blocked or opening blank tabs!
 function triggerAppProtocolOnPage() {
   try {
-    const a = document.createElement('a');
-    a.href = 'vs-database://open?from_extension=1&skip_animation=1#save';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { if (a.parentNode) a.remove(); }, 600);
-  } catch (_) {
-    try {
-      window.location.href = 'vs-database://open?from_extension=1&skip_animation=1#save';
-    } catch (_) {}
-  }
+    let iframe = document.getElementById('vs-protocol-launcher-frame');
+    if (iframe) {
+      try { iframe.remove(); } catch (_) {}
+    }
+    iframe = document.createElement('iframe');
+    iframe.id = 'vs-protocol-launcher-frame';
+    iframe.style.position = 'fixed';
+    iframe.style.top = '-9999px';
+    iframe.style.left = '-9999px';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    iframe.style.border = 'none';
+    document.documentElement.appendChild(iframe);
+    iframe.src = 'vs-database://open?from_extension=1&skip_animation=1#save';
+    setTimeout(() => {
+      try { if (iframe && iframe.parentNode) iframe.remove(); } catch (_) {}
+    }, 2500);
+  } catch (_) {}
 }
 
 // ========================================================
@@ -1655,20 +1674,82 @@ function triggerAppProtocolOnPage() {
 // ========================================================
 document.addEventListener('click', (e) => {
   try {
-    if (!e.isTrusted || !e.target) return;
+    if (!e.target) return;
     const tag = e.target.nodeName;
     if (tag === 'HTML' || tag === 'BODY') return;
 
-    const el = e.target.closest('a, button, [role="button"], input[type="button"], input[type="submit"], div[onclick], span[onclick], tr, [class*="download" i], [class*="export" i], [class*="pdf" i]');
+    // Traverse shadow DOM, SVG icons, and nested elements using composedPath
+    const path = (typeof e.composedPath === 'function') ? e.composedPath() : [e.target];
+    let el = null;
+    const matchSelector = 'a, button, [role="button"], input[type="button"], input[type="submit"], div[onclick], span[onclick], tr, [class*="download" i], [class*="export" i], [class*="pdf" i]';
+
+    for (const node of path) {
+      if (node && node.nodeType === 1) {
+        if (node.matches && node.matches(matchSelector)) {
+          el = node;
+          break;
+        }
+        if (node.closest) {
+          const matched = node.closest(matchSelector);
+          if (matched) {
+            el = matched;
+            break;
+          }
+        }
+      }
+    }
+
+    // Inspect buttons, aria-labels, titles, and icon child nodes for download/export intent
+    if (!el) {
+      for (const node of path) {
+        if (node && node.nodeType === 1) {
+          const attrStr = [
+            node.getAttribute?.('aria-label') || '',
+            node.getAttribute?.('title') || '',
+            node.getAttribute?.('data-action') || '',
+            typeof node.className === 'string' ? node.className : ''
+          ].join(' ');
+          if (/pdf|download|export|ledger|statement|report|challan|receipt|invoice|return|p&l|holding|contract/i.test(attrStr)) {
+            el = node;
+            break;
+          }
+        }
+      }
+    }
     if (!el) return;
-    const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.title || '').replace(/\s+/g, ' ').trim();
-    const href = el.href || '';
-    if ((/pdf|download|export|ledger|statement|report|challan|receipt|invoice|return|p&l|holding|contract/i.test(text) || /\.(pdf|xlsx|xls|csv|zip)/i.test(href)) && text.length > 1 && text.length < 120) {
+
+    let text = (el.innerText || el.value || el.getAttribute?.('aria-label') || el.title || '').replace(/\s+/g, ' ').trim();
+    if (!text && el.querySelectorAll) {
+      const iconNodes = el.querySelectorAll('[aria-label], [title], svg, i, span');
+      for (const icon of iconNodes) {
+        const candidate = (icon.getAttribute?.('aria-label') || icon.getAttribute?.('title') || icon.innerText || (typeof icon.className === 'string' ? icon.className : '')).replace(/\s+/g, ' ').trim();
+        if (/pdf|download|export|ledger|statement|report|challan|receipt|invoice|return|p&l|holding|contract/i.test(candidate)) {
+          text = candidate;
+          break;
+        }
+      }
+    }
+
+    const href = el.href || el.getAttribute?.('href') || '';
+    const downloadAttr = el.getAttribute?.('download') || el.download || '';
+    const classStr = typeof el.className === 'string' ? el.className : '';
+
+    const isMatch = (/pdf|download|export|ledger|statement|report|challan|receipt|invoice|return|p&l|holding|contract/i.test(text) ||
+      /\.(pdf|xlsx|xls|csv|zip)/i.test(href) ||
+      Boolean(downloadAttr) ||
+      /download|export/i.test(classStr));
+
+    if (isMatch && ((text && text.length > 1 && text.length < 120) || href || downloadAttr)) {
+      const rawName = (downloadAttr || text || 'document').replace(/[^a-z0-9._ -]/gi, '_').trim() || 'document';
+      const filename = rawName.toLowerCase().endsWith('.pdf') || /\.(xlsx|xls|csv|zip)$/i.test(rawName)
+        ? rawName
+        : `${rawName}.pdf`;
+
       chrome.runtime.sendMessage({
         type: 'RECORD_INTENT_DOWNLOAD',
-        filename: `${text.replace(/[^a-z0-9._ -]/gi, '_')}.pdf`,
+        filename: filename,
         url: href,
-        text
+        text: text || downloadAttr || 'download'
       });
     }
   } catch (_) {}
@@ -1677,21 +1758,54 @@ document.addEventListener('click', (e) => {
 // Auto-run Practive if on Practive tab
 if (location.hostname === 'app.practive.in') setTimeout(runPractive, 700);
 
-// Return bridge from VS Database Website
+// Message Bridge from Page Hook & VS Database Website
 window.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'VS_SAVED_CLOSE_AND_RETURN') {
+  if (!event.data) return;
+
+  // Captured binary blob from page-hook.js in MAIN world
+  if (event.data.type === 'VS_PAGE_BLOB_CAPTURED') {
+    const { url, filename, base64, size, mime } = event.data;
+    if (base64) {
+      if (url) capturedBlobsCache.set(url, base64);
+      if (filename) capturedBlobsCache.set(filename, base64);
+      chrome.runtime.sendMessage({
+        type: 'RECORD_INTENT_DOWNLOAD',
+        filename: filename || 'document.pdf',
+        url: url || '',
+        base64: base64,
+        file_base64: base64,
+        size: size || Math.round((base64.length * 3) / 4),
+        mime: mime || 'application/pdf',
+        source: 'page_hook_blob'
+      });
+    }
+  }
+
+  // File System Access API Save Picker triggered
+  if (event.data.type === 'VS_FILE_SYSTEM_PICKER_TRIGGERED') {
+    if (event.data.suggestedName) {
+      chrome.runtime.sendMessage({
+        type: 'RECORD_INTENT_DOWNLOAD',
+        filename: event.data.suggestedName,
+        url: location.href,
+        source: 'file_picker_interceptor'
+      });
+    }
+  }
+
+  if (event.data.type === 'VS_SAVED_CLOSE_AND_RETURN') {
     chrome.runtime.sendMessage({
       type: 'VS_SAVED_CLOSE_AND_RETURN',
       origin_tab_id: event.data.origin_tab_id
     });
   }
-  if (event.data && event.data.type === 'VS_FOCUS_ORIGIN_TAB') {
+  if (event.data.type === 'VS_FOCUS_ORIGIN_TAB') {
     chrome.runtime.sendMessage({
       type: 'VS_FOCUS_ORIGIN_TAB',
       origin_tab_id: event.data.origin_tab_id
     });
   }
-  if (event.data && event.data.type === 'VS_CLOSE_WEBSITE_TAB') {
+  if (event.data.type === 'VS_CLOSE_WEBSITE_TAB') {
     chrome.runtime.sendMessage({
       type: 'VS_CLOSE_WEBSITE_TAB'
     });

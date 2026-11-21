@@ -1,5 +1,5 @@
 
-window.APP_VERSION = '2.2.1';
+window.APP_VERSION = '2.2.2';
 
 // ==============================================================================
 // PHASE 16: REAL-TIME SYNC, RBAC, GLASS OTP & SETTINGS LOCK HELPERS
@@ -22,13 +22,19 @@ function startRealtimeSync() {
         if (res.version > currentDataVersion) {
           currentDataVersion = res.version;
           console.log('[RealtimeSync] Remote data version updated:', res.version, 'refreshing active views...');
-          if (current === 'clients' && typeof clientsPage === 'function') {
+
+          // Keep global clients cache fresh across all tabs and views
+          try {
             const cl = await api('/api/clients');
             if (Array.isArray(cl)) {
               clients = cl;
-              if (typeof renderClients === 'function') renderClients();
+              if (current === 'clients' && typeof renderClients === 'function') {
+                renderClients();
+              }
             }
-          } else if (current === 'dashboard' && typeof dashboardPage === 'function') {
+          } catch (_) {}
+
+          if (current === 'dashboard' && typeof dashboardPage === 'function') {
             if (typeof loadStats === 'function') loadStats().catch(() => {});
             if (typeof loadActivity === 'function') loadActivity().catch(() => {});
           } else if (current === 'users' && typeof usersPage === 'function') {
@@ -47,7 +53,7 @@ function startRealtimeSync() {
         }
       }
     } catch (_) {}
-  }, 3500);
+  }, 1500);
 }
 
 function applyUserPermissions() {
@@ -85,7 +91,7 @@ function showHostApprovalPinModal(pin, userName, seconds = 600) {
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:999999;';
   modal.innerHTML = `
     <div class="glass card" style="max-width:440px;width:92%;padding:28px 24px;text-align:center;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);">
-      <div style="font-size:36px;margin-bottom:8px;">⚡</div>
+      <div style="display:flex;justify-content:center;margin-bottom:12px;"><svg class="i" style="width:36px;height:36px;stroke:#2563eb;" aria-hidden="true"><use href="#zap"/></svg></div>
       <h2 style="font-size:20px;margin:0 0 6px;">Workstation Access Approved!</h2>
       <p class="muted" style="font-size:13px;line-height:1.4;margin:0 0 16px;">
         Workstation approved for <b>${escapeHtml(userName)}</b>.<br>
@@ -98,7 +104,7 @@ function showHostApprovalPinModal(pin, userName, seconds = 600) {
         PIN expires in: <b id="host-approve-timer">10:00</b>
       </div>
       <div style="display:flex;gap:10px;justify-content:center;">
-        <button class="btn secondary" id="btn-copy-approve-pin">📋 Copy PIN</button>
+        <button class="btn secondary" id="btn-copy-approve-pin"><svg class="i" style="width:14px;height:14px;margin-right:4px;" aria-hidden="true"><use href="#copy"/></svg>Copy PIN</button>
         <button class="btn p" id="btn-close-approve-modal">Done</button>
       </div>
     </div>
@@ -141,7 +147,7 @@ function openUserPermissionsModal(userId, fullName, currentPerms = {}) {
   modal.innerHTML = `
     <div class="glass card" style="max-width:560px;width:94%;padding:26px 24px;text-align:left;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);max-height:90vh;overflow-y:auto;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-        <h2 style="font-size:18px;margin:0;">🔑 User Permissions & Access Control</h2>
+        <h2 style="font-size:18px;margin:0;display:flex;align-items:center;gap:8px;"><svg class="i" style="width:18px;height:18px;stroke:var(--pri);" aria-hidden="true"><use href="#key"/></svg>User Permissions & Access Control</h2>
         <button class="btn ib" id="btn-close-perms-x" style="font-size:16px;">✕</button>
       </div>
       <p class="muted" style="font-size:13px;margin:0 0 16px;">
@@ -587,7 +593,7 @@ const VSOfflineManager = {
   startHeartbeat(checkImmediately = false) {
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     if (checkImmediately) this.checkHeartbeat();
-    this.heartbeatInterval = setInterval(() => this.checkHeartbeat(), 2000);
+    this.heartbeatInterval = setInterval(() => this.checkHeartbeat(), 8000);
   },
 
   async checkHeartbeat() {
@@ -595,13 +601,13 @@ const VSOfflineManager = {
     this.heartbeatInFlight = true;
 
     const healthUrl = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
-      ? window.TauriBridge.resolveApiUrl('/api/desktop/health')
-      : '/api/desktop/health';
+      ? window.TauriBridge.resolveApiUrl('/api/health')
+      : '/api/health';
 
     const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     let timeoutId = null;
     if (controller) {
-      timeoutId = setTimeout(() => controller.abort(), 1800);
+      timeoutId = setTimeout(() => controller.abort(), 4500);
     }
 
     try {
@@ -639,7 +645,7 @@ const VSOfflineManager = {
 
   handleFailure() {
     this.consecutiveFailures++;
-    if (this.consecutiveFailures >= 2 && this.currentState !== this.STATE_OFFLINE) {
+    if (this.consecutiveFailures >= 3 && this.currentState !== this.STATE_OFFLINE) {
       this.transitionToOffline();
     }
   },
@@ -754,7 +760,7 @@ const VSOfflineManager = {
       {
         name: 'PBKDF2',
         salt: saltBytes,
-        iterations: 100000,
+        iterations: 10000,
         hash: 'SHA-256'
       },
       keyMaterial,
@@ -935,11 +941,13 @@ const VSOfflineManager = {
     banner.className = 'vs-network-banner vs-banner-checking';
     banner.innerHTML = `
       <div class="vs-banner-content">
-        <span class="vs-banner-icon">&#8635;</span>
+        <span class="vs-banner-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg></span>
         <span class="vs-banner-title">CHECKING CONNECTION TO CENTRAL HOST...</span>
         <span class="vs-banner-desc">Edits are paused until Host availability is confirmed.</span>
       </div>
     `;
+    banner.style.top = '38px';
+    banner.style.zIndex = '99990';
     banner.style.display = 'block';
   },
 
@@ -952,11 +960,13 @@ const VSOfflineManager = {
       document.body.prepend(banner);
     }
     banner.className = 'vs-network-banner vs-banner-offline';
+    banner.style.top = '38px';
+    banner.style.zIndex = '99990';
     const cachedData = this.getCachedClients();
     const cachedTime = cachedData ? new Date(cachedData.timestamp).toLocaleTimeString() : 'N/A';
     banner.innerHTML = `
       <div class="vs-banner-content">
-        <span class="vs-banner-icon">&#9888;</span>
+        <span class="vs-banner-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
         <span class="vs-banner-title">CENTRAL SERVER DISCONNECTED — OFFLINE READ-ONLY MODE</span>
         <span class="vs-banner-desc">Record modifications and uploads are disabled. Showing cached records (${cachedTime}).</span>
         <span class="vs-banner-stale-tag">POTENTIALLY STALE</span>
@@ -969,9 +979,11 @@ const VSOfflineManager = {
     let banner = document.getElementById('vs-offline-banner');
     if (banner) {
       banner.className = 'vs-network-banner vs-banner-reconnecting';
+      banner.style.top = '38px';
+      banner.style.zIndex = '99990';
       banner.innerHTML = `
         <div class="vs-banner-content">
-          <span class="vs-banner-icon">&#8635;</span>
+          <span class="vs-banner-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg></span>
           <span class="vs-banner-title">RECONNECTING TO CENTRAL HOST...</span>
           <span class="vs-banner-desc">Validating workstation authorization and fetching fresh records.</span>
         </div>
@@ -995,7 +1007,7 @@ const VSOfflineManager = {
     }
     overlay.innerHTML = `
       <div class="vs-revoked-card">
-        <div class="vs-revoked-icon">&#128274;</div>
+        <div class="vs-revoked-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
         <h2>WORKSTATION ACCESS REVOKED</h2>
         <p>This client device has been revoked by the Host Administrator (ADR-015 Central Authority).</p>
         <p class="vs-revoked-sub">Local cached data has been purged for security. Please request a new pairing PIN from the administrator to re-pair this workstation.</p>
@@ -1014,7 +1026,7 @@ const VSOfflineManager = {
     style.textContent = `
       .vs-network-banner {
         position: fixed;
-        top: 0;
+        top: 38px; /* Positioned right below the 38px frameless titlebar so close/min/max buttons are never hidden */
         left: 0;
         right: 0;
         z-index: 99999;
@@ -1170,6 +1182,7 @@ const api = async (path, options = {}) => {
     headers: {
       'Content-Type': 'application/json',
       'X-VS-Device-Id': getDeviceId(),
+      'X-VS-App-Mode': (window.__vsIsClientMode === true) ? 'client' : 'host',
       ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {}),
       ...(options.headers || {})
     }
@@ -1507,7 +1520,7 @@ function renderHostLoginForm() {
   if (!form) return;
   form.innerHTML = `
     <div style="background:rgba(238,242,255,0.7);border:1px solid #c7d2fe;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:#3730a3;">
-      👑 <strong>Host Server Console:</strong> Sign in with Master Administrator credentials to manage clients, folders, staff workstations, and database backups.
+      <svg class="i" style="width:15px;height:15px;display:inline-block;vertical-align:middle;margin-right:4px;stroke:#2563eb;" aria-hidden="true"><use href="#shield"/></svg><strong>Host Server Console:</strong> Sign in with Master Administrator credentials to manage clients, folders, staff workstations, and database backups.
     </div>
     <div>
       <label>Host Admin User ID</label>
@@ -1569,7 +1582,7 @@ function renderHostSetupForm() {
   if (!form) return;
   form.innerHTML = `
     <div style="background:rgba(238,242,255,0.7);border:1px solid #c7d2fe;border-radius:10px;padding:12px;margin-bottom:14px;font-size:12.5px;color:#3730a3;">
-      🛠️ <strong>Master Administrator Setup:</strong> Configure or reset the primary master credentials for this Host server.
+      <svg class="i" style="width:15px;height:15px;display:inline-block;vertical-align:middle;margin-right:4px;stroke:#2563eb;" aria-hidden="true"><use href="#setup"/></svg><strong>Master Administrator Setup:</strong> Configure or reset the primary master credentials for this Host server.
     </div>
     <div>
       <label>Host Administrator Name</label>
@@ -1636,7 +1649,15 @@ function renderHostSetupForm() {
         await load();
       }, 500);
     } catch (e) {
-      if (result) result.innerHTML = message(e.message, true);
+      const errMsg = e.message || '';
+      if (errMsg.toLowerCase().includes('failed to fetch') || errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('abort')) {
+        if (result) result.innerHTML = message('Connecting to Central Server (port 8768)... Server is initializing, please wait 3 seconds and retry.', true);
+        if (typeof waitForBackend === 'function') {
+          await waitForBackend(6000, 400);
+        }
+      } else {
+        if (result) result.innerHTML = message(errMsg, true);
+      }
     }
   });
 }
@@ -1758,6 +1779,7 @@ function renderOtpPairingForm() {
         if (result) result.innerHTML = message('✓ 6-Digit PIN Verified! Slabs Flipped & Paired Successfully!');
         const token = res.session_token || res.token;
         if (token) setSessionToken(token);
+        localStorage.setItem('vs-client-registered', 'true');
         setTimeout(async () => {
           authRoot.innerHTML = '';
           await load();
@@ -1932,15 +1954,12 @@ function renderRegisterForm() {
         body: JSON.stringify({ user_id, password, full_name, device_name, device_id: getDeviceId() })
       });
 
-      if (res.status === 'approved' || res.ok) {
-        if (res.session_token || res.token) {
-          result.innerHTML = message('Registration successful! Signing in...');
-          setSessionToken(res.session_token || res.token);
-          authRoot.innerHTML = '';
-          await load();
-        } else {
-          renderWaitingApproval(user_id, password, full_name);
-        }
+      if (res.status === 'approved' || ((res.session_token || res.token) && res.ok)) {
+        result.innerHTML = message('Registration successful! Signing in...');
+        setSessionToken(res.session_token || res.token);
+        localStorage.setItem('vs-client-registered', 'true');
+        authRoot.innerHTML = '';
+        await load();
       } else {
         renderWaitingApproval(user_id, password, full_name);
       }
@@ -2025,7 +2044,7 @@ function renderGlassFlipOtp(user_id, fullName = '') {
   form.innerHTML = `
     <div class="vs-glass-otp-card">
       <div class="blobs"><i></i><i></i><i></i></div>
-      <div style="font-size:32px;margin-bottom:6px;">🔐</div>
+      <div style="display:flex;justify-content:center;margin-bottom:10px;"><svg class="i" style="width:36px;height:36px;stroke:var(--pri);"><use href="#lock"/></svg></div>
       <h1 style="font-size:20px;font-weight:700;margin:0 0 4px;color:#0f172a;">Enter 6-Digit Activation PIN</h1>
       <p style="margin:0 0 14px;font-size:12.5px;color:#64748b;line-height:1.4;">
         Host Administrator approved workstation access for <b>${escapeHtml(fullName || user_id)}</b>.<br>
@@ -2124,6 +2143,7 @@ function renderGlassFlipOtp(user_id, fullName = '') {
           setTimeout(async () => {
             const token = res.session_token || res.token;
             if (token) setSessionToken(token);
+            localStorage.setItem('vs-client-registered', 'true');
             if (res.user_id) {
               currentUser = {
                 user_id: res.user_id,
@@ -2207,6 +2227,8 @@ let startupVideoDismissTimeout = null;
 window.__vsDashboardRendered = false;
 
 function initDailyStartupVideo(force = false) {
+  dismissStartupAnimationImmediately();
+  return;
   if (startupVideoHasRun && !force) {
     dismissStartupAnimationImmediately();
     return;
@@ -2412,10 +2434,8 @@ function playExitReverseAnimationAndClose() {
     try { window.close(); } catch (_) {}
   };
 
-  if (!overlay || !video) {
-    doClose();
-    return;
-  }
+  doClose();
+  return;
 
   if (startupVideoDismissTimeout) {
     clearTimeout(startupVideoDismissTimeout);
@@ -2663,6 +2683,313 @@ async function waitForBackend(maxWaitMs = 15000, intervalMs = 350) {
   return false;
 }
 
+function renderSkeletonLoader() {
+  const contentEl = document.querySelector('#content');
+  if (!contentEl) return;
+  contentEl.innerHTML = `
+    <div class="vs-dashboard-skeleton" style="padding:4px 0;animation:fadeIn 0.25s ease;">
+      <!-- Skeleton Search Bar -->
+      <div class="vs-skeleton" style="width:100%;height:46px;border-radius:14px;margin-bottom:16px;"></div>
+
+      <!-- Skeleton 5 Stats Grid -->
+      <div class="grid5" style="margin-bottom:16px;">
+        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+          <div class="vs-skeleton" style="width:50%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:40%;height:28px;border-radius:8px;"></div>
+        </div>
+        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+          <div class="vs-skeleton" style="width:50%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:40%;height:28px;border-radius:8px;"></div>
+        </div>
+        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+          <div class="vs-skeleton" style="width:45%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:50%;height:28px;border-radius:8px;"></div>
+        </div>
+        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+          <div class="vs-skeleton" style="width:60%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:40%;height:28px;border-radius:8px;"></div>
+        </div>
+        <div class="vs-skeleton-card vs-skeleton-stat" style="display:flex;flex-direction:column;justify-content:center;gap:10px;padding:16px;">
+          <div class="vs-skeleton" style="width:65%;height:12px;border-radius:6px;"></div>
+          <div class="vs-skeleton" style="width:30%;height:28px;border-radius:8px;"></div>
+        </div>
+      </div>
+
+      <!-- Skeleton Quick Actions Row -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
+        <div class="vs-skeleton" style="width:115px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:105px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:170px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:130px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:145px;height:38px;border-radius:10px;"></div>
+        <div class="vs-skeleton" style="width:95px;height:38px;border-radius:10px;"></div>
+      </div>
+
+      <!-- Skeleton 2-Column: Activity & Storage -->
+      <div class="two">
+        <div class="vs-skeleton-card" style="min-height:300px;display:flex;flex-direction:column;gap:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="vs-skeleton" style="width:35%;height:20px;border-radius:8px;"></div>
+            <div class="vs-skeleton" style="width:65px;height:24px;border-radius:6px;"></div>
+          </div>
+          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;margin-top:4px;"></div>
+          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;"></div>
+          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;"></div>
+          <div class="vs-skeleton" style="width:100%;height:52px;border-radius:12px;"></div>
+        </div>
+        <div class="vs-skeleton-card" style="min-height:300px;display:flex;flex-direction:column;gap:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="vs-skeleton" style="width:30%;height:20px;border-radius:8px;"></div>
+            <div class="vs-skeleton" style="width:100px;height:24px;border-radius:999px;"></div>
+          </div>
+          <div>
+            <div class="vs-skeleton" style="width:40%;height:14px;border-radius:6px;margin-bottom:8px;"></div>
+            <div class="vs-skeleton" style="width:100%;height:10px;border-radius:999px;margin-bottom:8px;"></div>
+            <div class="vs-skeleton" style="width:70%;height:12px;border-radius:6px;"></div>
+          </div>
+          <div style="border-top:1px solid rgba(226,232,240,0.6);padding-top:14px;">
+            <div class="vs-skeleton" style="width:45%;height:14px;border-radius:6px;margin-bottom:8px;"></div>
+            <div class="vs-skeleton" style="width:100%;height:10px;border-radius:999px;margin-bottom:8px;"></div>
+            <div class="vs-skeleton" style="width:60%;height:12px;border-radius:6px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ==============================================================================
+// SOFTWARE UPDATE NOTIFICATION & MODAL ENGINE
+// ==============================================================================
+
+/**
+ * Resolves relative or absolute download URLs.
+ */
+function resolveDownloadUrl(rawDl) {
+  if (!rawDl) return '';
+  if (rawDl.startsWith('http://') || rawDl.startsWith('https://')) return rawDl;
+  const base = (window.TauriBridge && typeof window.TauriBridge.getBaseUrl === 'function')
+    ? window.TauriBridge.getBaseUrl()
+    : ((typeof getHostServerUrl === 'function' ? getHostServerUrl() : '') || window.location.origin || 'http://127.0.0.1:8768');
+  return `${base.replace(/\/$/, '')}${rawDl.startsWith('/') ? '' : '/'}${rawDl}`;
+}
+
+/**
+ * Dismisses an active update modal smoothly.
+ */
+function dismissUpdateModal() {
+  const overlay = document.getElementById('vs-update-modal-overlay');
+  if (!overlay) return;
+  overlay.classList.add('vs-modal-closing');
+  setTimeout(() => {
+    try { overlay.remove(); } catch (_) {}
+  }, 200);
+}
+
+/**
+ * Renders and displays the glassmorphic "Update Available" modal.
+ * @param {Object} res - Response from /api/system/check-updates
+ */
+function showUpdateAvailableModal(res) {
+  if (!res || !res.update_available) return;
+
+  const existing = document.getElementById('vs-update-modal-overlay');
+  if (existing) existing.remove();
+
+  const curVer = res.current_version || window.APP_VERSION || '2.2.1';
+  const latestVer = res.latest_version || '2.2.2';
+
+  let notesHtml = '';
+  if (res.release_notes && typeof res.release_notes === 'string' && res.release_notes.trim()) {
+    const cleanNotes = escapeHtml(res.release_notes.trim());
+    notesHtml = `
+      <div class="vs-update-notes-box">
+        <div class="vs-update-notes-title">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <span>What's New in v${escapeHtml(latestVer)}</span>
+        </div>
+        <div class="vs-update-notes-content">${cleanNotes}</div>
+      </div>
+    `;
+  }
+
+  const modalHtml = `
+    <div id="vs-update-modal-overlay" class="vs-update-overlay" role="dialog" aria-modal="true" aria-labelledby="vs-update-modal-title">
+      <div class="vs-update-card glass">
+        <button type="button" class="vs-update-close" id="vs-update-btn-close" aria-label="Close update notification" title="Later">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+
+        <div class="vs-update-header">
+          <div class="vs-update-icon-glow">
+            <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <h3 id="vs-update-modal-title" class="vs-update-title">Update Available</h3>
+              <span class="vs-update-badge-pill">v${escapeHtml(latestVer)}</span>
+            </div>
+            <p class="vs-update-subtitle">A newer version of VS Database is ready to install</p>
+          </div>
+        </div>
+
+        <div class="vs-update-body">
+          <div class="vs-update-diff-bar">
+            <div class="vs-update-diff-item">
+              <span class="diff-lbl">Installed:</span>
+              <span class="diff-val">v${escapeHtml(curVer)}</span>
+            </div>
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" style="color:#6366f1;flex-shrink:0;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <div class="vs-update-diff-item">
+              <span class="diff-lbl">Latest:</span>
+              <span class="diff-val highlight">v${escapeHtml(latestVer)}</span>
+            </div>
+          </div>
+
+          <p class="vs-update-desc">
+            A new production update is available on GitHub featuring performance enhancements, stability improvements, and enhanced database features.
+          </p>
+
+          ${notesHtml}
+
+          <div id="vs-update-progress-area" style="display:none;"></div>
+        </div>
+
+        <div class="vs-update-footer">
+          <button type="button" id="vs-update-btn-later" class="btn vs-update-btn-secondary">
+            <span>Later</span>
+          </button>
+          <button type="button" id="vs-update-btn-now" class="btn p vs-update-btn-primary">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Update Now</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  const overlay = document.getElementById('vs-update-modal-overlay');
+  const btnClose = document.getElementById('vs-update-btn-close');
+  const btnLater = document.getElementById('vs-update-btn-later');
+  const btnNow = document.getElementById('vs-update-btn-now');
+  const progArea = document.getElementById('vs-update-progress-area');
+
+  let keyHandler = null;
+  const handleLater = () => {
+    try {
+      sessionStorage.setItem('vs_update_snooze_' + latestVer, 'true');
+    } catch (_) {}
+    if (keyHandler) document.removeEventListener('keydown', keyHandler);
+    dismissUpdateModal();
+  };
+
+  keyHandler = (e) => {
+    if (e.key === 'Escape') {
+      handleLater();
+    }
+  };
+  document.addEventListener('keydown', keyHandler);
+
+  if (btnClose) btnClose.onclick = handleLater;
+  if (btnLater) btnLater.onclick = handleLater;
+
+  if (btnNow) {
+    btnNow.onclick = async () => {
+      btnNow.disabled = true;
+      if (btnLater) btnLater.disabled = true;
+      btnNow.innerHTML = `
+        <svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px;margin-right:6px;stroke:currentColor;fill:none;animation:spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="32" stroke-linecap="round"></circle></svg>
+        <span>Downloading / Opening Installer...</span>
+      `;
+
+      let isClient = false;
+      try {
+        if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+          isClient = await window.TauriBridge.isClientMode();
+        } else if (window.__vsIsClientMode !== undefined) {
+          isClient = !!window.__vsIsClientMode;
+        }
+      } catch (_) {}
+
+      const rawDl = isClient
+        ? (res.client_download_url || res.lan_client_download_url || res.html_url)
+        : (res.host_download_url || res.lan_host_download_url || res.html_url);
+      const dlUrl = resolveDownloadUrl(rawDl);
+
+      if (progArea) {
+        progArea.style.display = 'block';
+        progArea.innerHTML = `
+          <div class="vs-update-launch-card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+              <span class="vs-pulse-dot"></span>
+              <strong style="color:#0f172a;font-size:13px;">Installer is downloading & launching...</strong>
+            </div>
+            <p style="margin:0 0 8px 0;font-size:12px;color:#475569;line-height:1.45;">
+              The installer package has been triggered. You can close VS Database at any time to proceed with the update installation.
+            </p>
+            <div style="font-size:11.5px;color:#64748b;">
+              If setup does not launch automatically, <a href="${escapeHtml(dlUrl)}" target="_blank" style="color:#4f46e5;font-weight:700;text-decoration:underline;">click here to download manually</a>.
+            </div>
+          </div>
+        `;
+      }
+
+      if (dlUrl) {
+        if (window.TauriBridge && typeof window.TauriBridge.openPath === 'function') {
+          try {
+            await window.TauriBridge.openPath(dlUrl);
+          } catch (_) {
+            window.open(dlUrl, '_blank');
+          }
+        } else {
+          window.open(dlUrl, '_blank');
+        }
+      }
+
+      if (btnLater) {
+        btnLater.disabled = false;
+        btnLater.textContent = 'Close Dialog';
+        btnLater.onclick = () => dismissUpdateModal();
+      }
+      btnNow.disabled = false;
+      btnNow.innerHTML = `<span>Installer Launched</span>`;
+    };
+  }
+}
+
+/**
+ * Checks for software updates against GitHub releases.
+ * @param {boolean} isManual - true if initiated by the user in Settings
+ */
+async function checkForAppUpdates(isManual = false) {
+  const curVer = window.APP_VERSION || '2.2.1';
+  try {
+    const res = await api(`/api/system/check-updates?version=${encodeURIComponent(curVer)}`);
+    window.__vsUpdateData = res;
+
+    if (res && res.update_available) {
+      const isSnoozed = sessionStorage.getItem('vs_update_snooze_' + res.latest_version) === 'true';
+      if (isManual || !isSnoozed) {
+        showUpdateAvailableModal(res);
+      }
+    }
+    return res;
+  } catch (err) {
+    if (isManual) throw err;
+    console.warn('[Update Check] Background check failed or network unavailable:', err);
+    return null;
+  }
+}
+
+window.showUpdateAvailableModal = showUpdateAvailableModal;
+window.dismissUpdateModal = dismissUpdateModal;
+window.checkForAppUpdates = checkForAppUpdates;
+
 async function load() {
   initDesktopWindowControls();
   initDailyStartupVideo();
@@ -2674,6 +3001,7 @@ async function load() {
       isClient = await window.TauriBridge.isClientMode();
     }
   } catch (_) {}
+  window.__vsIsClientMode = isClient;
 
   // If in Host mode, wait for backend to be ready (prevents startup race condition)
   if (!isClient) {
@@ -2685,7 +3013,9 @@ async function load() {
     if (!authStatus.authenticated) {
       clearSessionToken();
       if (isClient) {
-        showAuthModal(authStatus.initialized ? 'login' : 'otp');
+        // If workstation previously registered, show login; else show register/access request
+        const hasRegistered = !!localStorage.getItem('vs-client-registered');
+        showAuthModal(hasRegistered ? 'login' : 'register');
       } else {
         showAuthModal(authStatus.initialized ? 'host-login' : 'host-setup');
       }
@@ -2722,6 +3052,8 @@ async function load() {
       navUsersBtn.style.display = (!isClient && currentUser?.role === 'host') ? 'flex' : 'none';
     }
 
+    renderSkeletonLoader();
+
     try { settings = await api('/api/settings'); } catch (_) { settings = {}; }
     try { clients = await api('/api/clients'); } catch (_) { clients = []; }
     try { rules = await api('/api/rules'); } catch (_) { rules = { services: [], periods: [] }; }
@@ -2753,6 +3085,11 @@ async function load() {
     }).catch(() => {
       updateUnifiedStatus(true, false, 'Server online', 'Drive offline');
     });
+
+    // Check for updates automatically when app initializes / loads dashboard (non-blocking)
+    setTimeout(() => {
+      checkForAppUpdates(false);
+    }, 2000);
   } catch (e) {
     console.error('[Load Error]:', e);
     window.__vsDashboardRendered = false;
@@ -2789,7 +3126,7 @@ async function load() {
 
     content.innerHTML = `
       <div class="glass card" style="max-width:580px;margin:40px auto;padding:32px;text-align:center;">
-        <div style="font-size:42px;margin-bottom:14px;">🔌</div>
+        <div style="display:flex;justify-content:center;margin-bottom:14px;"><svg class="i" style="width:42px;height:42px;stroke:var(--er);"><use href="#alert"/></svg></div>
         <h2 style="margin:0 0 8px;font-size:20px;">Unable to Connect to Database Server</h2>
         <p class="muted" style="margin:0 0 20px;font-size:13px;line-height:1.5;">
           ${escapeHtml(e.message || 'Server connection failed.')}<br>
@@ -2855,16 +3192,16 @@ function setup() {
     ${isLockedStaff ? `
     <div class="glass card" style="background:rgba(254,243,199,0.92);border:1.5px solid rgba(245,158,11,0.7);margin-bottom:18px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
       <div>
-        <b style="color:#92400e;font-size:14px;display:flex;align-items:center;gap:6px;">🔒 System Configuration Locked</b>
+        <b style="color:#92400e;font-size:14px;display:flex;align-items:center;gap:6px;"><svg class="i" style="width:15px;height:15px;stroke:#92400e;" aria-hidden="true"><use href="#lock"/></svg> System Configuration Locked</b>
         <p style="margin:4px 0 0;font-size:12.5px;color:#78350f;">Staff cannot modify storage paths, Google Drive sync, or firm parameters without Host Authorization.</p>
       </div>
       <button type="button" class="btn p btn-sm" id="btn-request-settings-unlock" style="font-weight:700;">
-        🔑 Unlock with Host PIN
+        <svg class="i" style="width:14px;height:14px;stroke:currentColor;margin-right:4px;" aria-hidden="true"><use href="#key"/></svg>Unlock with Host PIN
       </button>
     </div>
     ` : (sessionStorage.getItem('vs-settings-unlock-token') ? `
     <div class="glass card" style="background:rgba(236,253,245,0.92);border:1.5px solid rgba(16,185,129,0.7);margin-bottom:18px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;">
-      <b style="color:#065f46;font-size:13px;display:flex;align-items:center;gap:6px;">🔓 Settings Unlocked via Host Authorization PIN (Session Active)</b>
+      <b style="color:#065f46;font-size:13px;display:flex;align-items:center;gap:6px;"><svg class="i" style="width:15px;height:15px;stroke:#065f46;" aria-hidden="true"><use href="#unlock"/></svg> Settings Unlocked via Host Authorization PIN (Session Active)</b>
       <span class="chip" style="background:#10b981;color:#fff;">Authorized</span>
     </div>
     ` : '')}
@@ -2944,13 +3281,23 @@ function setup() {
         <div class="grid2" id="path-fields-grid" style="gap:16px;">
           <div id="local-root-wrapper">
             <label style="font-weight:700;font-size:13px;">Local Storage Root Folder</label>
-            <input id="local" class="input" placeholder="D:\\Code Trial" value="${escapeHtml(localVal)}">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="local" class="input" style="flex:1;" placeholder="D:\\Code Trial" value="${escapeHtml(localVal)}">
+              <button type="button" class="btn secondary" id="btn-browse-local" style="white-space:nowrap;padding:7px 13px;font-size:12px;display:inline-flex;align-items:center;gap:6px;" title="Browse local storage folder">
+                <svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#folder"/></svg> Browse...
+              </button>
+            </div>
             <p class="muted" style="margin-top:4px;font-size:11px;">Primary local disk location for office files and Client Access Link PDFs.</p>
           </div>
 
           <div id="drive-base-wrapper">
             <label style="font-weight:700;font-size:13px;">Google Drive Synced Root Path (G: Drive)</label>
-            <input id="drive-path" class="input" placeholder="G:\\My Drive\\VS Database" value="${escapeHtml(driveVal)}">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="drive-path" class="input" style="flex:1;" placeholder="G:\\My Drive\\VS Database" value="${escapeHtml(driveVal)}">
+              <button type="button" class="btn secondary" id="btn-browse-drive" style="white-space:nowrap;padding:7px 13px;font-size:12px;display:inline-flex;align-items:center;gap:6px;" title="Browse Google Drive mirror folder">
+                <svg class="i" style="width:14px;height:14px;" aria-hidden="true"><use href="#folder"/></svg> Browse...
+              </button>
+            </div>
             <p class="muted" style="margin-top:4px;font-size:11px;">Local mirror path for instant G: drive disk speed saving.</p>
           </div>
         </div>
@@ -2984,8 +3331,8 @@ function setup() {
             </label>
             <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
               <span style="font-size:13px;color:#475569;">Release Channel:</span>
-              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.1 (Production)</span>
-              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.1]</span>
+              <span id="system-version-pill" class="badge active" style="font-size:11px;padding:3px 10px;border-radius:8px;">v2.2.2 (Production)</span>
+              <span id="system-commit-badge" style="font-size:11.5px;color:#64748b;font-family:monospace;font-weight:600;">[v2.2.2]</span>
             </div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
@@ -2996,6 +3343,9 @@ function setup() {
             <button type="button" id="btn-apply-update" class="btn p" style="display:none;">
               <svg class="i" aria-hidden="true"><use href="#refresh"/></svg>
               <span>Update Now</span>
+            </button>
+            <button type="button" id="btn-snooze-update" class="btn" style="display:none;">
+              <span>Later</span>
             </button>
           </div>
         </div>
@@ -3196,6 +3546,7 @@ function setup() {
   // Software Update Event Handlers
   const btnCheckUpdates = document.getElementById('btn-check-updates');
   const btnApplyUpdate = document.getElementById('btn-apply-update');
+  const btnSnoozeUpdate = document.getElementById('btn-snooze-update');
   const updateMsg = document.getElementById('update-status-msg');
   const commitBadge = document.getElementById('system-commit-badge');
 
@@ -3211,11 +3562,14 @@ function setup() {
         window.__vsUpdateData = res;
         if (res.current_version) commitBadge.textContent = `[v${res.current_version}]`;
         if (res.update_available) {
-          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New version available (v${res.latest_version})! Click "Update Now" to install.</span>`;
+          updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#16a34a;"><use href="#check"/></svg>New version available (v${res.latest_version})! Click "Update Now" to install or "Later" to postpone.</span>`;
           btnApplyUpdate.style.display = 'inline-flex';
+          if (btnSnoozeUpdate) btnSnoozeUpdate.style.display = 'inline-flex';
+          showUpdateAvailableModal(res);
         } else {
-          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date (v${res.current_version || '2.2.0'}).</span>`;
+          updateMsg.innerHTML = `<span style="color:#2563eb;font-weight:600;display:inline-flex;align-items:center;gap:6px;"><svg class="i" style="width:14px;height:14px;stroke:#2563eb;"><use href="#check"/></svg>Your VS Database software is completely up-to-date (v${res.current_version || curVer}).</span>`;
           btnApplyUpdate.style.display = 'none';
+          if (btnSnoozeUpdate) btnSnoozeUpdate.style.display = 'none';
         }
       } catch (err) {
         updateMsg.innerHTML = `<span style="color:#dc2626;">Error checking updates: ${escapeHtml(err.message)}</span>`;
@@ -3226,29 +3580,46 @@ function setup() {
     };
   }
 
+  if (btnSnoozeUpdate) {
+    btnSnoozeUpdate.onclick = () => {
+      const uData = window.__vsUpdateData || {};
+      if (uData.latest_version) {
+        try {
+          sessionStorage.setItem('vs_update_snooze_' + uData.latest_version, 'true');
+        } catch (_) {}
+      }
+      btnApplyUpdate.style.display = 'none';
+      btnSnoozeUpdate.style.display = 'none';
+      updateMsg.innerHTML = '<span style="color:#64748b;font-size:12px;">Update postponed for this session. You can check again or update anytime.</span>';
+    };
+  }
+
   if (btnApplyUpdate) {
     btnApplyUpdate.onclick = async () => {
       btnApplyUpdate.disabled = true;
-      btnApplyUpdate.textContent = 'Preparing Update...';
+      if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = true;
+      btnApplyUpdate.textContent = 'Preparing Installer...';
       const uData = window.__vsUpdateData || {};
       let isClient = false;
       try {
         if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
           isClient = await window.TauriBridge.isClientMode();
+        } else if (window.__vsIsClientMode !== undefined) {
+          isClient = !!window.__vsIsClientMode;
         }
       } catch (_) {}
 
-      const rawDl = isClient ? (uData.lan_client_download_url || uData.client_download_url || uData.html_url) : (uData.lan_host_download_url || uData.host_download_url || uData.html_url);
-      const hostUrl = typeof getHostServerUrl === 'function' ? getHostServerUrl() : '';
-      const dlUrl = rawDl && rawDl.startsWith('/') ? (hostUrl ? `${hostUrl.replace(/\/$/, '')}${rawDl}` : rawDl) : rawDl;
+      const rawDl = isClient ? (uData.client_download_url || uData.lan_client_download_url || uData.html_url) : (uData.host_download_url || uData.lan_host_download_url || uData.html_url);
+      const dlUrl = resolveDownloadUrl(rawDl);
       if (dlUrl) {
-        updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">Opening update installer: <a href="${dlUrl}" target="_blank" style="color:var(--pc);text-decoration:underline;">Click here to download if it does not start automatically</a></span>`;
+        updateMsg.innerHTML = `<span style="color:#16a34a;font-weight:700;">Downloading & launching installer... <a href="${dlUrl}" target="_blank" style="color:var(--pc);text-decoration:underline;">Click here to download manually if it does not start automatically</a>. You may close VS Database to proceed with installation.</span>`;
         if (window.TauriBridge && typeof window.TauriBridge.openPath === 'function') {
-          try { window.TauriBridge.openPath(dlUrl); } catch (_) { window.open(dlUrl, '_blank'); }
+          try { await window.TauriBridge.openPath(dlUrl); } catch (_) { window.open(dlUrl, '_blank'); }
         } else {
           window.open(dlUrl, '_blank');
         }
         btnApplyUpdate.disabled = false;
+        if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = false;
         btnApplyUpdate.textContent = 'Update Now';
         return;
       }
@@ -3262,10 +3633,12 @@ function setup() {
         } else {
           updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(res.error || 'Unknown error')}</span>`;
           btnApplyUpdate.disabled = false;
+          if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = false;
         }
       } catch (err) {
         updateMsg.innerHTML = `<span style="color:#dc2626;">Update failed: ${escapeHtml(err.message)}</span>`;
         btnApplyUpdate.disabled = false;
+        if (btnSnoozeUpdate) btnSnoozeUpdate.disabled = false;
       }
     };
   }
@@ -3345,6 +3718,36 @@ function setup() {
   }
 
   // Clean Fresh Start Handler
+  const handleBrowseFolder = async (targetInputId) => {
+    try {
+      if (window.TauriBridge && typeof window.TauriBridge.openFileDialog === 'function') {
+        const selected = await window.TauriBridge.openFileDialog({ directory: true });
+        if (selected) {
+          const inputEl = document.querySelector('#' + targetInputId);
+          if (inputEl) {
+            inputEl.value = Array.isArray(selected) ? selected[0] : selected;
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return;
+        }
+      }
+      const res = await api('/api/system/browse-folder', { method: 'POST', body: JSON.stringify({ title: 'Select Storage Folder' }) });
+      if (res && res.path) {
+        const inputEl = document.querySelector('#' + targetInputId);
+        if (inputEl) {
+          inputEl.value = res.path;
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+    } catch (err) {
+      console.warn('Browse folder failed:', err);
+      showNativeToast('Could not open folder picker: ' + (err.message || 'Cancelled'), 'error');
+    }
+  };
+
+  document.querySelector('#btn-browse-local')?.addEventListener('click', () => handleBrowseFolder('local'));
+  document.querySelector('#btn-browse-drive')?.addEventListener('click', () => handleBrowseFolder('drive-path'));
+
   document.getElementById('btn-fresh-start').onclick = () => {
     if (typeof showFreshStartModal === 'function') {
       showFreshStartModal();
@@ -3688,9 +4091,10 @@ function clientsPage() {
         <input type="text" id="clients-table-filter" placeholder="Search by name, file no., mobile, firm type or group" aria-label="Search clients">
       </label>
       <input id="client-file" type="file" accept=".csv,.xlsx" multiple style="display:none;">
-      <button class="btn" id="btn-trigger-import"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Import</button>
+      <button class="btn" id="btn-export-excel" title="Export all client records to Excel spreadsheet (.xlsx)"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Export</button>
+      <button class="btn" id="btn-trigger-import" title="Import clients from CSV or Excel"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Import</button>
+      <button class="btn" id="btn-download-sample-excel" title="Download formatted Sample Clients Import template spreadsheet (.xlsx)"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Sample Excel</button>
       <button class="primary" id="import" style="display:none;">Import</button>
-      <a class="btn" href="/api/clients/export?format=xlsx" download="VS_Database_Clients.xlsx" id="btn-export-excel"><svg class="i" aria-hidden="true"><use href="#dl"/></svg>Export</a>
       <button class="btn p" id="btn-toggle-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
       <button class="btn" id="btn-open-ft-mgmt"><svg class="i" aria-hidden="true"><use href="#setup"/></svg>Firm types</button>
       <a class="secondary" href="/api/template.csv" style="display:none;" id="btn-download-template">Download CSV template</a>
@@ -3708,7 +4112,23 @@ function clientsPage() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;">
         <div><label>Practive File No. (optional)</label><input id="manual-file-no" placeholder="V-0001"></div>
         <div><label>Client name *</label><input id="manual-name" placeholder="XYZ Traders" required></div>
-        <div><label>Mobile *</label><input id="manual-mobile" placeholder="9999999999" required></div>
+        <div>
+          <label>Mobile *</label>
+          <div class="vs-phone-group">
+            <div class="vs-phone-prefix">
+              <select id="manual-mobile-cc" class="vs-phone-select" aria-label="Country Code">
+                <option value="+91" selected>+91</option>
+                <option value="+1">+1</option>
+                <option value="+44">+44</option>
+                <option value="+971">+971</option>
+                <option value="+61">+61</option>
+                <option value="+65">+65</option>
+              </select>
+              <svg class="vs-phone-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <input id="manual-mobile" class="vs-phone-input" type="tel" maxlength="10" placeholder="10-digit number" required>
+          </div>
+        </div>
         <div>
           <label>Firm Type *</label>
           <select id="manual-type" required>
@@ -3828,7 +4248,12 @@ function clientsPage() {
   }
 
   if (filterInput) {
-    filterInput.oninput = (e) => filterClientTable(e.target.value);
+    let clientFilterDebounceTimer = null;
+    filterInput.oninput = (e) => {
+      const val = e.target.value;
+      clearTimeout(clientFilterDebounceTimer);
+      clientFilterDebounceTimer = setTimeout(() => filterClientTable(val), 150);
+    };
   }
 
   const addPanel = field('add-client-panel');
@@ -3929,12 +4354,86 @@ function clientsPage() {
     }
   };
 
+  const handleClientFileDownload = async (url, fallbackName) => {
+    try {
+      showNativeToast('Generating download...', 'info', 2000);
+      const resolved = (window.TauriBridge && typeof window.TauriBridge.resolveApiUrl === 'function')
+        ? window.TauriBridge.resolveApiUrl(url)
+        : url;
+      const resp = await fetch(resolved, {
+        headers: {
+          'X-VS-Device-Id': getDeviceId(),
+          'X-VS-App-Mode': (window.__vsIsClientMode === true) ? 'client' : 'host',
+          ...(getSessionToken() ? { 'X-VS-Session-Token': getSessionToken(), 'Authorization': `Bearer ${getSessionToken()}` } : {})
+        }
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = fallbackName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 30000);
+      showNativeToast(`Downloaded ${fallbackName} successfully!`, 'success');
+    } catch (err) {
+      console.error('Download failed:', err);
+      showNativeToast(`Download failed: ${err.message}`, 'error');
+    }
+  };
+
+  document.querySelector('#btn-export-excel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    handleClientFileDownload('/api/clients/export?format=xlsx', 'VS_Database_Clients.xlsx');
+  });
+
+  document.querySelector('#btn-download-sample-excel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    handleClientFileDownload('/api/clients/sample-template', 'Sample_Clients_Import_Template.xlsx');
+  });
+
+  // Mobile number 10-digit enforcement & +91 paste normalization
+  const mobileInputEl = field('manual-mobile');
+  if (mobileInputEl) {
+    const sanitizePhoneDigits = (raw) => {
+      let digits = String(raw || '').replace(/\D/g, '');
+      if (digits.length > 10 && digits.startsWith('91')) {
+        digits = digits.slice(2);
+      } else if (digits.length > 10 && digits.startsWith('0')) {
+        digits = digits.slice(1);
+      }
+      return digits.slice(0, 10);
+    };
+
+    mobileInputEl.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+      mobileInputEl.value = sanitizePhoneDigits(text);
+    });
+
+    mobileInputEl.addEventListener('input', () => {
+      mobileInputEl.value = sanitizePhoneDigits(mobileInputEl.value);
+    });
+
+    mobileInputEl.addEventListener('keypress', (e) => {
+      if (!/\d/.test(e.key) || mobileInputEl.value.length >= 10) {
+        e.preventDefault();
+      }
+    });
+  }
+
   field('add-client').onclick = async () => {
     try {
       const typeVal = field('manual-type').value;
       if (!typeVal || typeVal === '__add_new__') throw Error('Select a valid Firm Type.');
       const nameVal = field('manual-name').value.trim();
       if (!nameVal) throw Error('Client name is required.');
+      const mobileVal = field('manual-mobile').value.trim();
+      if (!mobileVal || mobileVal.length !== 10) {
+        throw Error('Mobile number must be exactly 10 digits (excluding country code).');
+      }
 
       const pb = showGlassProgressBar({ title: 'Adding Client', subtitle: `Registering "${nameVal}"...` });
       pb.simulate(700);
@@ -3965,6 +4464,10 @@ function clientsPage() {
       manualResult.innerHTML = message(e.message, true);
     }
   };
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 function showImportConflictModal(newClients, conflicts, invalidRows, newFirmTypes = []) {
@@ -4216,9 +4719,8 @@ function folders() {
     } catch (e) { reconcileResult.innerHTML = message(e.message, true); }
     finally { btn.disabled = false; btn.innerHTML = '<svg class="i" style="stroke:#fff;" aria-hidden="true"><use href="#refresh"/></svg>Scan & Reconcile'; }
   };
-  if (window.GlassUI && window.GlassUI.createDropdown) {
-    const orderSel = field('order');
-    if (orderSel) window.GlassUI.createDropdown(orderSel);
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
   }
 }
 
@@ -4269,7 +4771,7 @@ if (!(window.TauriBridge && window.TauriBridge.isTauri) && typeof window.pywebvi
 let titleFlashTimer = null;
 const originalDocTitle = document.title || 'VS Database';
 
-function flashTabTitle(text = '✅ Task Complete!') {
+function flashTabTitle(text = 'Task Complete!') {
   if (titleFlashTimer) clearInterval(titleFlashTimer);
   let isOriginal = false;
   titleFlashTimer = setInterval(() => {
@@ -4295,12 +4797,12 @@ function notifyTaskComplete({ title = 'Task Completed', message = 'Operation com
   playCompletionChime();
   
   if (document.hidden) {
-    flashTabTitle(`(1) ✅ ${title}`);
+    flashTabTitle(`(1) ${title}`);
     
     if ('Notification' in window) {
       if (Notification.permission === 'granted') {
         try {
-          const notif = new Notification(`✅ ${title}`, {
+          const notif = new Notification(`${title}`, {
             body: message,
             icon: 'logo Monogram.png',
             badge: 'logo Monogram.png',
@@ -4316,7 +4818,7 @@ function notifyTaskComplete({ title = 'Task Completed', message = 'Operation com
         Notification.requestPermission().then(perm => {
           if (perm === 'granted') {
             try {
-              const notif = new Notification(`✅ ${title}`, { body: message, icon: 'logo Monogram.png' });
+              const notif = new Notification(`${title}`, { body: message, icon: 'logo Monogram.png' });
               notif.onclick = () => { window.focus(); notif.close(); };
             } catch (e) {}
           }
@@ -4748,12 +5250,12 @@ class BackgroundFileSaveQueue {
         `;
       } else if (activeJobs.length > 0) {
         btn.innerHTML = `
-          <span>⏳</span>
+          <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <span>${activeJobs.length} Job(s) in Queue</span>
         `;
       } else {
         btn.innerHTML = `
-          <span>✅</span>
+          <svg class="i" style="width:14px;height:14px;stroke:#10b981;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
           <span>Queue Finished (${this.jobs.length})</span>
         `;
       }
@@ -4825,14 +5327,14 @@ class BackgroundFileSaveQueue {
             </div>
 
             <div class="vs-queue-target-path">
-              <span>📁</span>
+              <svg class="i" style="width:14px;height:14px;color:#2563eb;" aria-hidden="true"><use href="#folder"/></svg>
               <span>Folder: <code>/${escapeHtml(job.target_folder || 'Client Root')}</code></span>
               <span class="muted">• ${job.period}</span>
             </div>
 
             <div class="vs-queue-status-line">
               <span class="muted" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px;" title="${escapeHtml(statusText)}">
-                ${isProc ? '⏳ ' : (isComp ? '✅ ' : (isCanc ? '🚫 ' : '📄 '))}${statusText}
+                ${isProc ? '<svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' : (isComp ? '<svg class="i" style="width:11px;height:11px;stroke:#10b981;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>' : (isCanc ? '<svg class="i" style="width:11px;height:11px;stroke:#ef4444;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>' : '<svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'))} ${statusText}
               </span>
               <strong style="font-size:11.5px;color:#1e1b4b;">${pct}%</strong>
             </div>
@@ -5107,7 +5609,9 @@ function save() {
     returnedBannerHtml = `
       <div class="stg-banner-returned" id="stg-banner-returned">
         <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:20px;">✅</span>
+          <span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#d1fae5;color:#059669;">
+            <svg style="width:14px;height:14px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><polyline stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="20 6 9 17 4 12"/></svg>
+          </span>
           <div>
             <div style="font-weight:700;color:#065f46;">Processed PDF returned to staging: <u>${escapeHtml(resFile.filename || 'document.pdf')}</u></div>
             <div style="font-size:11px;color:#047857;margin-top:2px;">Original selected PDF(s) replaced. All other staged files preserved. Ready to save to client.</div>
@@ -5175,9 +5679,12 @@ function save() {
         </div>
 
         <div id="web-folder-navigator" style="border:1px solid var(--line);border-radius:16px;background:var(--glass2);padding:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);gap:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);gap:8px;flex-wrap:wrap;">
             <button id="web-folder-nav-up" type="button" class="btn" style="min-height:30px;font-size:11px;padding:2px 10px;">&larr; Up</button>
             <span id="web-folder-nav-crumb" style="font-size:12px;font-weight:600;color:var(--tx);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/ (Client Root)</span>
+            <button id="web-folder-nav-add-folder" type="button" class="btn secondary" style="min-height:30px;font-size:11px;padding:2px 10px;display:inline-flex;align-items:center;gap:4px;" title="Create new subfolder in current directory">
+              <svg class="i" style="width:13px;height:13px;" aria-hidden="true"><use href="#plus"/></svg>+ Add Folder
+            </button>
             <button id="web-folder-nav-select-this" type="button" class="btn p" style="min-height:30px;font-size:11px;padding:2px 12px;"><svg class="i" aria-hidden="true"><use href="#check"/></svg>Select This Folder</button>
           </div>
           <div id="web-folder-nav-list" style="max-height:200px;overflow-y:auto;">
@@ -5193,18 +5700,18 @@ function save() {
         <span id="save-drive-container" style="position:relative;display:inline-flex;align-items:center;">
           <label class="check" id="save-drive-label"><input type="checkbox" id="save-drive" checked> Copy to Google Drive (Office Storage)</label>
           <div id="save-drive-lock" class="glass-drive-lock-badge" style="display:none;" tabindex="0" role="button" aria-label="Google Drive Office storage is locked in Only Client mode">
-            <span class="lock-icon">🔒</span>
+            <span class="lock-icon"><svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             <span class="lock-text">Copy to Google Drive</span>
             <span class="lock-pill">Only Client</span>
             <div class="glass-drive-lock-tooltip">
               <div style="font-weight:800;color:#93c5fd;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
-                <span>🔒</span> Google Drive Office Storage Locked
+                <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Google Drive Office Storage Locked
               </div>
               <div style="margin-bottom:6px;color:#e2e8f0;">
                 <strong>Reason:</strong> Google Drive is currently configured in <strong>'Only Client'</strong> mode. Internal office files stay strictly on Local Storage.
               </div>
               <div style="border-top:1px solid rgba(255,255,255,0.15);padding-top:6px;font-size:11px;color:#94a3b8;">
-                <strong>💡 How to Unlock:</strong><br>
+                <strong><svg class="i" style="width:12px;height:12px;stroke:#fbbf24;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.5 3 6h8c1.5-1.5 3-3.5 3-6a7 7 0 0 0-7-7z"/></svg>How to Unlock:</strong><br>
                 Go to the <strong>Setup</strong> tab and switch Google Drive mode to <em>'Use Google Drive for backup And Client'</em> or <em>'Only Backup'</em>.<br>
                 <em>(Shared files can still be saved directly to the Client Portal using the per-file checkbox in the list above.)</em>
               </div>
@@ -5267,11 +5774,17 @@ function save() {
     const filtered = clients.filter(c => !q || (c.name || '').toLowerCase().includes(q) || (c.file_no || '').toLowerCase().includes(q));
     clientSelect.innerHTML = '<option value="">Select client…</option>' +
       filtered.map(c => `<option value="${escapeHtml(c.file_no)}">${escapeHtml(c.name)} (${escapeHtml(c.file_no)})</option>`).join('');
+    if (clientSelect._glassDropdown) {
+      clientSelect._glassDropdown.rebuild();
+    }
   }
 
   if (clientSearchFilter) {
+    let clientSearchDebounce = null;
     clientSearchFilter.oninput = (e) => {
-      renderClientOptions(e.target.value);
+      const val = e.target.value;
+      clearTimeout(clientSearchDebounce);
+      clientSearchDebounce = setTimeout(() => renderClientOptions(val), 150);
     };
   }
 
@@ -5578,16 +6091,16 @@ function save() {
 
           let lockBadgeHtml = '';
           if (!isPdf) {
-            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="Non-PDF file">📄 Ready</span>`;
+            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="Non-PDF file"><svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Ready</span>`;
           } else if (file.is_encrypted === null) {
-            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge checking">⏳ Checking...</span>`;
+            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge checking"><svg class="i" style="width:11px;height:11px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Checking...</span>`;
           } else if (!file.is_encrypted || file.is_unlocked) {
             const badgeTitle = file.matched_label ? `Auto-unlocked with: ${file.matched_label}` : 'File is unlocked and ready to save';
-            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="${escapeHtml(badgeTitle)}">🔓 ${file.matched_label ? 'Auto-Unlocked' : 'Unlocked'}</span>`;
+            lockBadgeHtml = `<span class="vs-pdf-status-glass-badge unlocked" title="${escapeHtml(badgeTitle)}"><svg class="i" style="width:11px;height:11px;stroke:#10b981;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>${file.matched_label ? 'Auto-Unlocked' : 'Unlocked'}</span>`;
           } else {
             lockBadgeHtml = `
               <span class="vs-pdf-status-glass-badge locked btn-toggle-unlock-drawer" data-idx="${idx}" title="PDF is locked. Click to enter password">
-                🔒 Locked
+                <svg class="i" style="width:11px;height:11px;stroke:#ef4444;fill:none;vertical-align:middle;margin-right:2px;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Locked
               </span>
             `;
           }
@@ -5660,7 +6173,7 @@ function save() {
               ${(file.show_unlock_panel && isPdf && !file.is_unlocked) ? `
                 <div class="vs-inline-unlock-drawer">
                   <span style="font-size:11.5px;font-weight:700;color:#92400e;display:flex;align-items:center;gap:4px;">
-                    <span>🔑</span> Enter PDF Password:
+                    <svg class="i" style="width:13px;height:13px;stroke:#d97706;fill:none;vertical-align:middle;" viewBox="0 0 24 24"><path d="M21 2l-2 2m-1.5 1.5L16 7l-4 4-2-2-4 4 2 2-2 2-2-2-2 2 3 3 6-6 4-4 1.5-1.5z"/><circle cx="7.5" cy="16.5" r="1.5"/></svg> Enter PDF Password:
                   </span>
                   <input type="password" class="inline-pdf-pw-input" data-idx="${idx}" placeholder="Password for this PDF..." value="${escapeHtml(file.entered_password || '')}" style="flex:1;min-width:140px;padding:4px 8px;font-size:12px;border:1px solid #d97706;border-radius:6px;background:#fff;">
                   <button type="button" class="btn-inline-unlock primary btn-sm" data-idx="${idx}" style="font-size:11px;font-weight:700;padding:4px 12px;background:#d97706;border-color:#b45309;color:#fff;">Unlock & Remember</button>
@@ -5968,7 +6481,7 @@ function save() {
       return `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin:3px 0;border-radius:10px;background:rgba(255,255,255,0.7);border:1px solid var(--line);font-size:12px;">
           <div class="web-folder-name-btn" data-path="${escapeHtml(itemPath)}" style="cursor:pointer;flex:1;display:flex;align-items:center;gap:6px;">
-            <span>📁</span>
+            <svg class="i" style="width:14px;height:14px;color:#2563eb;" aria-hidden="true"><use href="#folder"/></svg>
             <strong>${escapeHtml(f.name)}</strong>
             ${subCount > 0 ? `<small style="color:var(--muted);">(${subCount})</small>` : ''}
           </div>
@@ -6035,6 +6548,127 @@ function save() {
     updateFolderDisplay();
     renderNav();
   };
+
+  function showCreateFolderModal(parentNavPath = '') {
+    return new Promise((resolve) => {
+      let overlay = document.getElementById('vs-create-folder-modal');
+      if (overlay) overlay.remove();
+
+      overlay = document.createElement('div');
+      overlay.id = 'vs-create-folder-modal';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:999999;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
+
+      const displayParent = parentNavPath ? `/${parentNavPath}` : '/ (Client Root)';
+
+      overlay.innerHTML = `
+        <div class="glass card" style="width:100%;max-width:440px;padding:26px 28px;border-radius:22px;background:rgba(255,255,255,0.88);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.95);box-shadow:0 24px 50px rgba(30,27,75,0.22);animation:pop 0.3s cubic-bezier(0.34,1.56,0.64,1);">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+            <div style="width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(168,85,247,0.15));display:flex;align-items:center;justify-content:center;border:1px solid rgba(99,102,241,0.25);">
+              <svg class="i" style="width:22px;height:22px;stroke:#6366f1;fill:none;" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            </div>
+            <div>
+              <h3 style="margin:0;font-size:17px;font-weight:700;color:#1e1b4b;">Create New Folder</h3>
+              <p class="muted" style="margin:2px 0 0;font-size:12px;">Adding inside: <code style="font-weight:700;color:#4338ca;">${escapeHtml(displayParent)}</code></p>
+            </div>
+          </div>
+          <div style="margin:16px 0 20px;">
+            <label style="display:block;font-size:12.5px;font-weight:700;color:#334155;margin-bottom:6px;">Folder Name *</label>
+            <input id="vs-new-folder-input" type="text" placeholder="e.g. Invoices, GST 2026, Statements" style="width:100%;height:42px;padding:0 14px;border-radius:12px;border:1px solid rgba(99,102,241,0.35);background:rgba(255,255,255,0.9);font-size:14px;font-weight:600;color:#1e1b4b;outline:none;box-shadow:inset 0 1px 2px rgba(0,0,0,0.04);transition:all 0.2s ease;">
+            <div id="vs-new-folder-err" style="display:none;color:#dc2626;font-size:11.5px;font-weight:600;margin-top:6px;"></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" class="btn secondary" id="vs-btn-folder-cancel" style="padding:9px 18px;border-radius:12px;font-weight:600;">Cancel</button>
+            <button type="button" class="btn primary" id="vs-btn-folder-create" style="padding:9px 20px;border-radius:12px;font-weight:700;background:linear-gradient(135deg,#6366f1,#8b5cf6);box-shadow:0 4px 14px rgba(99,102,241,0.35);">Create Folder</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      const input = overlay.querySelector('#vs-new-folder-input');
+      const errEl = overlay.querySelector('#vs-new-folder-err');
+      const btnCancel = overlay.querySelector('#vs-btn-folder-cancel');
+      const btnCreate = overlay.querySelector('#vs-btn-folder-create');
+
+      const close = (val) => {
+        overlay.style.opacity = '0';
+        overlay.style.transition = 'opacity 0.15s ease';
+        setTimeout(() => {
+          overlay.remove();
+          resolve(val);
+        }, 150);
+      };
+
+      const submit = () => {
+        const val = input.value.trim();
+        if (!val) {
+          errEl.textContent = 'Please enter a valid folder name.';
+          errEl.style.display = 'block';
+          input.focus();
+          return;
+        }
+        if (/[\\/:*?"<>|]/.test(val)) {
+          errEl.textContent = 'Folder name cannot contain characters: \\ / : * ? " < > |';
+          errEl.style.display = 'block';
+          input.focus();
+          return;
+        }
+        close(val);
+      };
+
+      btnCancel.onclick = () => close(null);
+      btnCreate.onclick = submit;
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          close(null);
+        }
+      };
+      overlay.onclick = (e) => {
+        if (e.target === overlay) close(null);
+      };
+
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 50);
+    });
+  }
+
+  const addFolderBtn = field('web-folder-nav-add-folder');
+  if (addFolderBtn) {
+    addFolderBtn.onclick = async () => {
+      if (!clientSelect.value) {
+        showNativeAlert('Please select a client before adding a folder.', { title: 'No Client Selected', type: 'warning' });
+        return;
+      }
+      const folderName = await showCreateFolderModal(navPath);
+      if (!folderName || !folderName.trim()) return;
+      const cleanName = folderName.trim().replace(/[\\/:*?"<>|]/g, '_');
+      const targetSubPath = navPath ? `${navPath}/${cleanName}` : cleanName;
+      try {
+        const payload = {
+          relative_path: targetSubPath,
+          storage_kind: storageSelect ? storageSelect.value : 'office'
+        };
+        const res = await api(`/api/client-folders/${encodeURIComponent(clientSelect.value)}/folders`, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        showNativeToast(`Folder "${cleanName}" created successfully!`, 'success');
+        await loadTree(clientSelect.value);
+        selectedTargetFolder = targetSubPath;
+        navPath = targetSubPath;
+        updateFolderDisplay();
+        renderNav();
+      } catch (err) {
+        showNativeToast('Failed to create folder: ' + err.message, 'error');
+      }
+    };
+  }
 
   selectThisBtn.onclick = () => {
     selectedTargetFolder = navPath;
@@ -6249,6 +6883,10 @@ function save() {
       window.__isSavingDocument = false;
     }
   };
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 async function drive() {
@@ -6356,6 +6994,10 @@ async function drive() {
       btn.textContent = 'Create client folder links';
     }
   };
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 async function activity() {
@@ -6677,7 +7319,7 @@ async function usersPage() {
         </div>
         <div style="display:flex;gap:8px;">
           <button class="btn secondary btn-sm" id="btn-generate-settings-pin" style="font-weight:700;">
-            🔑 Generate Settings Unlock PIN
+            <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><path d="M21 2l-2 2m-1.5 1.5L16 7l-4 4-2-2-4 4 2 2-2 2-2-2-2 2 3 3 6-6 4-4 1.5-1.5z"/><circle cx="7.5" cy="16.5" r="1.5"/></svg>Generate Settings Unlock PIN
           </button>
         </div>
       </div>
@@ -6823,7 +7465,7 @@ async function usersPage() {
                 Enter these 6 digits on the <strong>Client Workstation</strong> to pair instantly.<br>
                 <span id="pin-countdown-text" style="color:var(--muted);font-size:12px;">PIN expires in: <b>5:00</b></span>
               </p>
-              <button class="btn secondary btn-sm" id="btn-copy-pin">📋 Copy PIN</button>
+              <button class="btn secondary btn-sm" id="btn-copy-pin"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy PIN</button>
             </div>
           `;
 
@@ -6898,7 +7540,7 @@ async function usersPage() {
                 Give this 6-digit Unlock PIN to staff to authorize settings modification on their PC.<br>
                 Valid for 15 minutes (single-use).
               </p>
-              <button class="btn secondary btn-sm" id="btn-copy-settings-unlock-pin">📋 Copy PIN</button>
+              <button class="btn secondary btn-sm" id="btn-copy-settings-unlock-pin"><svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy PIN</button>
             </div>
           `;
           document.querySelector('#btn-copy-settings-unlock-pin')?.addEventListener('click', () => {
@@ -7108,7 +7750,9 @@ async function dashboard() {
     <div class="row" style="margin-top:16px;flex-wrap:wrap;gap:8px;">
       <button class="btn p" id="dash-quick-add-client"><svg class="i" aria-hidden="true"><use href="#plus"/></svg>Add client</button>
       <button class="btn" id="dash-quick-save-file"><svg class="i" aria-hidden="true"><use href="#upload"/></svg>Save file</button>
+      ${(currentUser?.role === 'host' && window.__vsIsClientMode !== true) ? `
       <button class="btn" id="dash-quick-pair-pin" style="border-color:var(--pc);color:var(--pc);font-weight:700;"><svg class="i" aria-hidden="true"><use href="#users"/></svg>Pair Workstation (PIN)</button>
+      ` : ''}
       <button class="btn" id="qa-open-explorer"><svg class="i" aria-hidden="true"><use href="#folder"/></svg>Open explorer</button>
       <button class="btn" id="qa-reconcile"><svg class="i" aria-hidden="true"><use href="#refresh"/></svg>Reconcile folders</button>
       <button class="btn" id="qa-backup"><svg class="i" aria-hidden="true"><use href="#backup"/></svg>Backup</button>
@@ -7707,6 +8351,10 @@ function attachBackupEvents() {
   });
 
   document.querySelector('#btn-refresh-backups')?.addEventListener('click', loadBackupHistory);
+
+  if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+    window.GlassUI.enhanceAllSelects(content);
+  }
 }
 
 async function loadBackupHistory() {
@@ -7945,7 +8593,7 @@ async function pollIncomingStaging() {
     isPollingStaging = false;
   }
 }
-setInterval(pollIncomingStaging, 2500);
+setInterval(pollIncomingStaging, 5000);
 window.addEventListener('focus', pollIncomingStaging);
 
 

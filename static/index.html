@@ -34,15 +34,15 @@
         } catch (e) {
           document.documentElement.classList.add('vs-booting');
         }
-        // Safety boot watchdog: guaranteed unblock after 3.5s under any condition
+        // Instant boot unblock: guaranteed immediate presentation in <150ms
         setTimeout(function() {
           document.documentElement.classList.remove('vs-booting');
           var sp = document.getElementById('vs-daily-startup-splash');
           if (sp && sp.style.display !== 'none' && !window.__vsSplashDismissed) {
             sp.classList.add('fade-out');
-            setTimeout(function() { sp.style.display = 'none'; }, 400);
+            setTimeout(function() { sp.style.display = 'none'; }, 150);
           }
-        }, 3500);
+        }, 150);
       })();
     </script>
     <style id="vs-critical-boot-css">
@@ -104,13 +104,7 @@
     <link rel="stylesheet" href="keyboard.css?v=20261011_v3">
     <link rel="stylesheet" href="automation.css?v=20261013_v1">
 
-    <!-- Google Fonts Collection (Non-blocking async load with print media swap) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap" media="print" onload="this.media='all'">
-    <noscript>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&display=swap">
-    </noscript>
+
 </head>
 
 <body>
@@ -147,6 +141,11 @@
     <symbol id="close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
     <symbol id="tick" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
     <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><path d="M7 11V7a5 5 0 0 1 10 0v4M4 11h16a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"/></symbol>
+    <symbol id="unlock" viewBox="0 0 24 24"><path d="M7 11V7a5 5 0 0 1 9.9-1M4 11h16a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"/></symbol>
+    <symbol id="key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.5 11.5L22 1M18 5l2 2M15 8l2 2"/></symbol>
+    <symbol id="zap" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
   </defs>
 </svg>
 
@@ -156,17 +155,22 @@
 <!-- Universal Desktop Drag & Drop Overlay -->
 <div id="vs-global-drop-overlay" class="vs-global-drop-overlay">
     <div class="vs-global-drop-card glass">
-        <div style="font-size: 48px; margin-bottom: 12px; filter: drop-shadow(0 4px 12px rgba(59,130,246,0.3));">📥</div>
+        <div style="margin-bottom: 12px; filter: drop-shadow(0 4px 12px rgba(59,130,246,0.3)); display:flex; justify-content:center;">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+        </div>
         <h2 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em;">Drop Files to Import</h2>
         <p style="margin: 0; font-size: 13px; color: #64748b; font-weight: 500;">Release to import files directly into VS Database</p>
     </div>
 </div>
 
-<!-- 4K Startup Intro Glassmorphic Splash Screen -->
-<div id="vs-daily-startup-splash" class="startup-splash-overlay">
-    <div class="startup-frosted-glass-card glass">
-        <div class="startup-glass-reflection"></div>
-        <video id="vs-startup-video" src="Startup.mp4?v=20260924_orig" playsinline muted autoplay preload="metadata"></video>
+<!-- Instant Hardware-Accelerated Startup Monogram Splash -->
+<div id="vs-daily-startup-splash" class="startup-splash-overlay" style="display:none;">
+    <div class="startup-frosted-glass-card glass" style="padding: 24px; text-align: center;">
+        <img src="logo Monogram.png" alt="VS" style="width: 56px; height: 56px; object-fit: contain; filter: drop-shadow(0 4px 12px rgba(37,99,235,0.25));">
     </div>
 </div>
 
@@ -180,11 +184,17 @@
         <div style="width:100%;background:rgba(241,245,249,0.7);border-radius:12px;padding:12px 16px;margin-bottom:16px;text-align:left;font-size:12px;display:flex;flex-direction:column;gap:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <span style="color:#475569;font-weight:600;">Database Engine</span>
-                <span id="splash-step-db" style="color:#16a34a;font-weight:700;">✓ Ready</span>
+                <span id="splash-step-db" style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    Ready
+                </span>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <span style="color:#475569;font-weight:600;">Desktop Server</span>
-                <span id="splash-step-srv" style="color:#16a34a;font-weight:700;">✓ Online</span>
+                <span id="splash-step-srv" style="color:#16a34a;font-weight:700;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    Online
+                </span>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <span style="color:#475569;font-weight:600;">Client Vault</span>
@@ -255,7 +265,7 @@
             <button data-page="users" id="nav-users"><svg class="i" aria-hidden="true"><use href="#users"/></svg><span>Users & Devices</span></button>
         </nav>
 
-        <footer class="side-foot">v2.2.1 · Designed by Rudraksh Sikhwal</footer>
+        <footer class="side-foot">v2.2.2 · Designed by Rudraksh Sikhwal</footer>
     </aside>
 
     <!-- Main Workspace Container -->

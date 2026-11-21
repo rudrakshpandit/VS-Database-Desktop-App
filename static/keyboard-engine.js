@@ -786,6 +786,28 @@
       }
 
       // ---------------------------------------------------------------------
+      // TEXT EDITING FAST-PATH GUARD:
+      // If typing in input/textarea/contenteditable and not pressing Ctrl+K / Alt+1..6,
+      // skip heavy modal DOM traversals and return immediately!
+      // ---------------------------------------------------------------------
+      if (editable || isEditable(document.activeElement)) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          const form = target && typeof target.closest === 'function' ? target.closest('form') : null;
+          if (form) {
+            const submitBtn = form.querySelector('[type="submit"], .primary');
+            if (submitBtn) {
+              e.preventDefault();
+              submitBtn.click();
+              return;
+            }
+          }
+        }
+        if (e.key !== 'Escape') {
+          return; // Allow native typing without traversing modal selectors
+        }
+      }
+
+      // ---------------------------------------------------------------------
       // PRIORITY 2: ACTIVE MODAL FOCUS TRAP, DROPDOWNS & ESCAPE HANDLING
       // ---------------------------------------------------------------------
 

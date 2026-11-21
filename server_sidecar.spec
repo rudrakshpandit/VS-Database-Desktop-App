@@ -5,9 +5,7 @@ import sys
 
 block_cipher = None
 
-datas = [
-    ('static', 'static'),
-]
+datas = []
 
 hiddenimports = [
     'staging_manager',

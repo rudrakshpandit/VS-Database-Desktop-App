@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "VS Database - Desktop Extension",
-  "version": "2.1.0",
-  "description": "Dedicated companion extension for VS Database Desktop Application (Port 8767). Auto-detects documents and saves filings directly into Desktop App.",
+  "version": "2.1.1",
+  "description": "Dedicated companion extension for VS Database Desktop Application. Auto-detects documents and saves filings directly into Desktop App.",
   "permissions": [
     "activeTab",
     "storage",
@@ -25,6 +25,14 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "js": ["page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_end",
       "all_frames": true,
@@ -33,7 +41,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["monogram.png", "icon.png", "icon16.png", "icon32.png", "icon48.png", "icon128.png", "logo.png"],
+      "resources": ["page-hook.js", "monogram.png", "icon.png", "icon16.png", "icon32.png", "icon48.png", "icon128.png", "logo.png"],
       "matches": ["<all_urls>"]
     }
   ],

@@ -145,7 +145,7 @@
         return res || { ok: true };
       } catch (_) {}
     }
-    if (window.pywebview?.api?.minimize_window && typeof window.pywebview.api.minimize_window === 'function') {
+    if (!isTauri() && window.pywebview?.api?.minimize_window && typeof window.pywebview.api.minimize_window === 'function') {
       return await window.pywebview.api.minimize_window();
     }
     return { ok: false };
@@ -175,7 +175,7 @@
         return res || { ok: true };
       } catch (_) {}
     }
-    if (window.pywebview?.api?.maximize_window && typeof window.pywebview.api.maximize_window === 'function') {
+    if (!isTauri() && window.pywebview?.api?.maximize_window && typeof window.pywebview.api.maximize_window === 'function') {
       return await window.pywebview.api.maximize_window();
     }
     const isMax = document.body.classList.toggle('window-maximized');
@@ -199,10 +199,10 @@
     if (inv) {
       try {
         const res = await inv('is_maximized');
-        return res || { ok: true, maximized: false };
+        return { ok: true, maximized: Boolean(res) };
       } catch (_) {}
     }
-    if (window.pywebview?.api?.is_maximized && typeof window.pywebview.api.is_maximized === 'function') {
+    if (!isTauri() && window.pywebview?.api?.is_maximized && typeof window.pywebview.api.is_maximized === 'function') {
       return await window.pywebview.api.is_maximized();
     }
     return { ok: true, maximized: document.body.classList.contains('window-maximized') };
@@ -238,7 +238,7 @@
         } catch (_) {}
       }
     }
-    if (window.pywebview?.api?.confirm_close && typeof window.pywebview.api.confirm_close === 'function') {
+    if (!isTauri() && window.pywebview?.api?.confirm_close && typeof window.pywebview.api.confirm_close === 'function') {
       return await window.pywebview.api.confirm_close();
     }
     try {
@@ -261,10 +261,11 @@
     const inv = getTauriInvoke();
     if (inv) {
       try {
-        return await inv('start_drag');
+        await inv('start_drag');
+        return { ok: true };
       } catch (_) {}
     }
-    if (window.pywebview?.api?.start_drag && typeof window.pywebview.api.start_drag === 'function') {
+    if (!isTauri() && window.pywebview?.api?.start_drag && typeof window.pywebview.api.start_drag === 'function') {
       return await window.pywebview.api.start_drag();
     }
     return { ok: false };
@@ -397,7 +398,7 @@
         return await inv('open_local_folder', { folderPath });
       } catch (_) {}
     }
-    if (window.pywebview?.api?.open_local_folder && typeof window.pywebview.api.open_local_folder === 'function') {
+    if (!isTauri() && window.pywebview?.api?.open_local_folder && typeof window.pywebview.api.open_local_folder === 'function') {
       return await window.pywebview.api.open_local_folder(folderPath);
     }
     try {
@@ -513,6 +514,37 @@
     saveFileDialog: saveFileDialog,
     saveFileToLocation: saveFileToLocation,
     openLocalFolder: openLocalFolder,
+    openPath: async function(pathOrUrl) {
+      if (!pathOrUrl) return false;
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          return await inv('open_path', { path: pathOrUrl });
+        } catch (_) {
+          try {
+            return await inv('plugin:opener|open_path', { path: pathOrUrl });
+          } catch (_) {
+            try {
+              return await inv('plugin:opener|open_url', { url: pathOrUrl });
+            } catch (_) {}
+          }
+        }
+      }
+      if (window.__TAURI__?.opener?.openPath) {
+        try { return await window.__TAURI__.opener.openPath(pathOrUrl); } catch (_) {}
+      }
+      if (window.__TAURI__?.opener?.openUrl) {
+        try { return await window.__TAURI__.opener.openUrl(pathOrUrl); } catch (_) {}
+      }
+      if (window.__TAURI__?.shell?.open) {
+        try { return await window.__TAURI__.shell.open(pathOrUrl); } catch (_) {}
+      }
+      if (window.pywebview?.api?.open_local_folder && typeof window.pywebview.api.open_local_folder === 'function') {
+        try { return await window.pywebview.api.open_local_folder(pathOrUrl); } catch (_) {}
+      }
+      try { window.open(pathOrUrl, '_blank'); } catch (_) {}
+      return true;
+    },
     applyDragRegions: applyDragRegions,
     isClientMode: async function() {
       const inv = getTauriInvoke();

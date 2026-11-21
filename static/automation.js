@@ -202,7 +202,7 @@
           </div>
           <div style="display:flex;gap:10px;align-items:center;">
             <button type="button" class="btn primary" id="auto-btn-launch-tally" style="display:${(tallyStatus.tally_installed && !tallyStatus.tally_port_open) ? 'inline-flex' : 'none'};font-size:12.5px;padding:6px 12px;align-items:center;gap:5px;">
-              🚀 Open TallyPrime
+              <svg class="i" style="width:13px;height:13px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:4px;" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Open TallyPrime
             </button>
             ${currentSubTab !== 'landing' ? `
               <button type="button" class="btn secondary" id="auto-btn-back-landing">
@@ -259,7 +259,7 @@
         <div class="auto-feature-card">
           <div>
             <div class="auto-feature-top">
-              <div class="auto-feature-icon">🏦</div>
+              <div class="auto-feature-icon"><svg class="i" style="width:24px;height:24px;stroke:var(--pri);fill:none;" viewBox="0 0 24 24" stroke-width="1.8"><path d="M3 21h18M3 10h18M5 10v11M9 10v11M15 10v11M19 10v11M12 3l9 7H3z"/></svg></div>
               <div class="auto-feature-meta">
                 <h3>Bank Statement to ${tallyLogo()}</h3>
                 <p>Convert PDF, Excel (.xlsx/.xls), CSV, or XML statements into validated Tally vouchers. Search, filter, bulk assign ledgers, and post directly to TallyPrime.</p>
@@ -285,7 +285,7 @@
         <div class="auto-feature-card ask-tally">
           <div>
             <div class="auto-feature-top">
-              <div class="auto-feature-icon">💬</div>
+              <div class="auto-feature-icon"><svg class="i" style="width:24px;height:24px;stroke:var(--pri);fill:none;" viewBox="0 0 24 24" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
               <div class="auto-feature-meta">
                 <h3>Ask ${tallyLogo()}</h3>
                 <p>Natural language accounting intelligence grounded entirely in live Tally data. Inspect Trial Balance, Ledger Balances, P&L, and Outstandings without hallucination.</p>
@@ -440,6 +440,12 @@
       selectedBankLedger = 'Bank Account';
       if (hintEl) hintEl.textContent = `Could not query Tally bank accounts: ${e.message}`;
     }
+
+    if (selectEl._glassDropdown) {
+      selectEl._glassDropdown.rebuild();
+    } else if (window.GlassUI && window.GlassUI.createDropdown) {
+      window.GlassUI.createDropdown(selectEl);
+    }
   }
 
   // STEP 1: Select Company & Bank Ledger
@@ -460,7 +466,7 @@
               <label style="font-weight:600;margin:0;">Tally Company *</label>
               <div style="display:flex;gap:6px;align-items:center;">
                 <button type="button" class="btn secondary" id="auto-step1-btn-launch-tally" style="font-size:11.5px;padding:3px 8px;display:${(tallyStatus.tally_installed && !tallyStatus.tally_port_open) ? 'inline-flex' : 'none'};align-items:center;gap:4px;">
-                  🚀 Open Tally
+                  <svg class="i" style="width:12px;height:12px;stroke:currentColor;fill:none;vertical-align:middle;margin-right:3px;" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Open Tally
                 </button>
                 <button type="button" class="btn secondary" id="auto-step1-btn-refresh-companies" style="font-size:11.5px;padding:3px 8px;display:inline-flex;align-items:center;gap:4px;">
                   <svg class="i" style="width:12px;height:12px;"><use href="#refresh"/></svg> Refresh
@@ -574,6 +580,10 @@
       importStep = 2;
       renderAutomationWorkspace();
     });
+
+    if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+      window.GlassUI.enhanceAllSelects(container);
+    }
   }
 
   // STEP 2: Upload Bank Statement
@@ -584,7 +594,7 @@
         <p style="margin:0;font-size:13px;color:var(--tx2);">Supported formats: PDF, Excel (.xlsx/.xls), CSV, XML</p>
 
         <div class="auto-dropzone" id="auto-statement-dropzone">
-          <div style="font-size:38px;">📥</div>
+          <div style="margin-bottom:8px;"><svg class="i" style="width:38px;height:38px;stroke:var(--pri);fill:none;" viewBox="0 0 24 24" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
           <div style="font-weight:700;font-size:15px;color:var(--tx);">Drag & Drop your bank statement here</div>
           <div style="font-size:12.5px;color:var(--tx2);">or click to browse files from your computer</div>
           <input type="file" id="auto-statement-file-input" accept=".pdf,.xlsx,.xls,.csv,.xml" style="display:none;">
@@ -821,8 +831,8 @@
                               </span>
                             </span>
                           </label>
-                          <span style="font-size:12px;font-weight:600;color:#4338ca;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Suggested Head: ${escapeHtml(t.suggested_ledger)} (${escapeHtml(t.suggestion_reason || '')})">
-                            💡 ${escapeHtml(t.suggested_ledger)}
+                          <span style="display:inline-flex;align-items:center;font-size:12px;font-weight:600;color:#4338ca;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Suggested Head: ${escapeHtml(t.suggested_ledger)} (${escapeHtml(t.suggestion_reason || '')})">
+                            <svg style="width:12px;height:12px;flex-shrink:0;margin-right:4px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg> ${escapeHtml(t.suggested_ledger)}
                           </span>
                         </div>
                       ` : `
@@ -1058,6 +1068,10 @@
       importStep = 4;
       renderAutomationWorkspace();
     });
+
+    if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+      window.GlassUI.enhanceAllSelects(container);
+    }
   }
 
   function updateSelectionState(container) {
@@ -1129,6 +1143,10 @@
     `;
     document.body.appendChild(overlay);
 
+    if (window.GlassUI && window.GlassUI.enhanceAllSelects) {
+      window.GlassUI.enhanceAllSelects(overlay);
+    }
+
     const selectEl = overlay.querySelector('#auto-modal-ledger-select');
     const inputEl = overlay.querySelector('#auto-modal-ledger-input');
 
@@ -1199,14 +1217,14 @@
         <div class="auto-step4-kpi-grid">
           <div class="auto-step4-kpi-card">
             <span class="auto-step4-kpi-label">Target Company</span>
-            <span class="auto-step4-kpi-val" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.company_name || activeCompany)}">
-              🏢 ${escapeHtml(val.company_name || activeCompany || 'Default')}
+            <span class="auto-step4-kpi-val" style="display:inline-flex;align-items:center;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.company_name || activeCompany)}">
+              <svg style="width:14px;height:14px;flex-shrink:0;margin-right:5px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg> ${escapeHtml(val.company_name || activeCompany || 'Default')}
             </span>
           </div>
           <div class="auto-step4-kpi-card">
             <span class="auto-step4-kpi-label">Bank Account</span>
-            <span class="auto-step4-kpi-val" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.bank_account_ledger || '')}">
-              🏦 ${escapeHtml(val.bank_account_ledger || 'Not Set')}
+            <span class="auto-step4-kpi-val" style="display:inline-flex;align-items:center;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(val.bank_account_ledger || '')}">
+              <svg style="width:14px;height:14px;flex-shrink:0;margin-right:5px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M3 10h18M5 10v11M9 10v11M15 10v11M19 10v11M12 3L2 10h20L12 3z"/></svg> ${escapeHtml(val.bank_account_ledger || 'Not Set')}
             </span>
           </div>
           <div class="auto-step4-kpi-card">
@@ -1324,8 +1342,8 @@
             <div style="font-size:12px;color:var(--tx2);display:flex;align-items:center;gap:4px;">
               Tally XML Port 9000: <b style="color:${tallyStatus.tally_port_open ? '#10b981' : '#ef4444'}">${tallyStatus.tally_port_open ? 'ONLINE' : 'OFFLINE'}</b>
             </div>
-            <button type="button" class="btn primary" id="auto-step4-confirm-post" ${!val.is_ready_for_posting && !val.has_edu_date_conflicts ? 'disabled' : ''}>
-              Approve & Post ${val.assigned_count || 0} Vouchers to TallyPrime 🚀
+            <button type="button" class="btn primary" id="auto-step4-confirm-post" ${!val.is_ready_for_posting && !val.has_edu_date_conflicts ? 'disabled' : ''} style="display:inline-flex;align-items:center;gap:6px;">
+              Approve & Post ${val.assigned_count || 0} Vouchers to TallyPrime <svg style="width:14px;height:14px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             </button>
           </div>
         </div>
@@ -1737,7 +1755,9 @@
         <!-- Chat Header -->
         <div class="auto-chat-header">
           <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:20px;">💬</span>
+            <span style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;background:rgba(99,102,241,0.1);color:#4f46e5;">
+              <svg style="width:18px;height:18px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            </span>
             <div>
               <div style="font-weight:700;font-size:14px;color:var(--tx);display:flex;align-items:center;gap:4px;">Ask ${tallyLogo()} · Read-Only Copilot</div>
               <div style="font-size:11.5px;color:var(--tx2);" id="auto-chat-company-title">Company: <b>${activeCompany || 'Default Company'}</b></div>
@@ -1754,7 +1774,9 @@
         <div class="auto-chat-messages" id="auto-chat-msg-list">
           ${askTallyMessages.length === 0 ? `
             <div style="text-align:center;padding:40px 20px;color:var(--tx2);">
-              <div style="font-size:36px;margin-bottom:8px;">📊</div>
+              <div style="display:flex;align-items:center;justify-content:center;margin-bottom:12px;color:#6366f1;">
+                <svg style="width:40px;height:40px;stroke:currentColor;fill:none;" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              </div>
               <h4 style="margin:0 0 6px 0;color:var(--tx);display:flex;align-items:center;justify-content:center;gap:4px;">Ask questions about your accounts in Tally</h4>
               <p style="margin:0;font-size:12.5px;max-width:380px;margin:0 auto;">Ask questions like <i>"Show me the Trial Balance"</i>, <i>"What are our total receivables?"</i>, or <i>"How much is the balance in HDFC Bank A/c?"</i></p>
             </div>
