@@ -509,6 +509,7 @@
     isMaximized: isMaximized,
     closeWindow: closeWindow,
     confirmClose: confirmClose,
+    closeApp: confirmClose,
     startDrag: startDrag,
     openFileDialog: openFileDialog,
     saveFileDialog: saveFileDialog,
@@ -588,6 +589,136 @@
         } catch (_) {}
       }
       return 'host';
+    },
+    getClientConnectionState: async function() {
+      if (typeof window !== 'undefined' && window.pywebview?.api?.get_client_connection_state) {
+        try {
+          const res = await window.pywebview.api.get_client_connection_state();
+          if (res) return (typeof res === 'string') ? JSON.parse(res) : res;
+        } catch (_) {}
+      }
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          const raw = await inv('get_client_connection_state');
+          if (raw) return (typeof raw === 'string') ? JSON.parse(raw) : raw;
+        } catch (_) {}
+      }
+      try {
+        const resp = await fetch('/api/client/connection-state', { timeout: 1000 }).catch(() => null);
+        if (resp && resp.ok) {
+          const data = await resp.json();
+          if (data && data.status) return data;
+        }
+      } catch (_) {}
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('vs_client_connection_state') || localStorage.getItem('vs-client-connection-state');
+          if (stored) return JSON.parse(stored);
+        } catch (_) {}
+      }
+      return null;
+    },
+    getClientAutostartStatus: async function() {
+      if (typeof window !== 'undefined' && window.pywebview?.api?.get_client_autostart_status) {
+        try {
+          const res = await window.pywebview.api.get_client_autostart_status();
+          if (typeof res === 'boolean') return res;
+          if (res && typeof res.autostart === 'boolean') return res.autostart;
+        } catch (_) {}
+      }
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          const res = await inv('get_client_autostart_status');
+          if (typeof res === 'boolean') return res;
+        } catch (_) {}
+      }
+      try {
+        const resp = await fetch('/api/client/autostart', { timeout: 1000 }).catch(() => null);
+        if (resp && resp.ok) {
+          const data = await resp.json();
+          if (typeof data.autostart === 'boolean') return data.autostart;
+        }
+      } catch (_) {}
+      if (typeof localStorage !== 'undefined') {
+        return localStorage.getItem('vs_client_daemon_autostart') === 'true';
+      }
+      return false;
+    },
+    setClientAutostart: async function(enabled) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('vs_client_daemon_autostart', enabled ? 'true' : 'false');
+      }
+      if (typeof window !== 'undefined' && window.pywebview?.api?.set_client_autostart) {
+        try {
+          const res = await window.pywebview.api.set_client_autostart(enabled);
+          if (res && res.ok !== undefined) return res;
+        } catch (_) {}
+      }
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          const res = await inv('set_client_autostart', { enabled: !!enabled });
+          return { ok: true, autostart: !!res };
+        } catch (_) {}
+      }
+      try {
+        const resp = await fetch('/api/client/autostart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ autostart: !!enabled })
+        }).catch(() => null);
+        if (resp && resp.ok) {
+          return await resp.json();
+        }
+      } catch (_) {}
+      return { ok: true, autostart: !!enabled };
+    },
+    isAutostartEnabled: async function() {
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          return await inv('is_autostart_enabled');
+        } catch (_) {}
+      }
+      try {
+        const resp = await fetch('/api/system/autostart', { timeout: 1000 }).catch(() => null);
+        if (resp && resp.ok) {
+          const data = await resp.json();
+          if (typeof data.enabled === 'boolean') return data.enabled;
+          if (typeof data.server_autostart === 'boolean') return data.server_autostart;
+        }
+      } catch (_) {}
+      return false;
+    },
+    enableAutostartServer: async function() {
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          return await inv('enable_autostart_server');
+        } catch (_) {}
+      }
+      const resp = await fetch('/api/system/autostart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true })
+      });
+      return await resp.json();
+    },
+    disableAutostartServer: async function() {
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          return await inv('disable_autostart_server');
+        } catch (_) {}
+      }
+      const resp = await fetch('/api/system/autostart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: false })
+      });
+      return await resp.json();
     }
   };
 
@@ -605,7 +736,10 @@
         start_drag: () => TauriBridge.startDrag(),
         start_resize: () => {},
         save_file_to_location: (src, defName, artId) => TauriBridge.saveFileToLocation(src, defName, artId),
-        open_local_folder: (path) => TauriBridge.openLocalFolder(path)
+        open_local_folder: (path) => TauriBridge.openLocalFolder(path),
+        get_client_connection_state: () => TauriBridge.getClientConnectionState(),
+        get_client_autostart_status: () => TauriBridge.getClientAutostartStatus(),
+        set_client_autostart: (enabled) => TauriBridge.setClientAutostart(enabled)
       }
     };
     setTimeout(() => {

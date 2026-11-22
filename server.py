@@ -23,6 +23,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -31,6 +32,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import urllib.request
 from urllib.parse import parse_qs, urlparse, unquote
 from xml.etree import ElementTree as ET
 from reportlab.lib.pagesizes import A4
@@ -60,7 +62,25 @@ else:
     APP_ROOT = Path(__file__).resolve().parent
     STATIC_ROOT = APP_ROOT / "static"
 
-DATA_ROOT = APP_ROOT / "data"
+# Resolve DATA_ROOT: check CLI override, env var, or walk up parent directories
+custom_data_dir = None
+for arg in sys.argv[1:]:
+    if arg.startswith("--data-dir="):
+        custom_data_dir = Path(arg.split("=", 1)[1]).resolve()
+if not custom_data_dir and os.environ.get("VS_DATA_DIR"):
+    custom_data_dir = Path(os.environ["VS_DATA_DIR"]).resolve()
+
+if custom_data_dir:
+    DATA_ROOT = custom_data_dir
+else:
+    resolved_root = APP_ROOT
+    for p in [APP_ROOT, APP_ROOT.parent, APP_ROOT.parent.parent, APP_ROOT.parent.parent.parent]:
+        if p.name.lower() in ("dist", "binaries", "target", "debug", "release", "src-tauri"):
+            continue
+        if (p / "data" / "vs_database_desktop.db").exists():
+            resolved_root = p
+            break
+    DATA_ROOT = resolved_root / "data"
 DATA_ROOT.mkdir(exist_ok=True)
 REVOKED_ARCHIVE_DIR = DATA_ROOT / "revoked_archive"
 REVOKED_ARCHIVE_DIR.mkdir(exist_ok=True)
@@ -70,13 +90,43 @@ SCRATCH_DIR = DATA_ROOT / ".scratch"
 SCRATCH_DIR.mkdir(exist_ok=True)
 
 from staging_manager import StagingSessionManager
-from pdf_studio_engine import PDFStudioEngine
 
 staging_mgr = StagingSessionManager(APP_ROOT, application_id="vs_desktop_app")
-pdf_engine = PDFStudioEngine(APP_ROOT, application_id="vs_desktop_app")
-import vs_ai_engine
-import vs_ai_doc_generator
-import vs_ai_rename
+
+class _LazyPDFStudioEngineProxy:
+    def __init__(self):
+        self._inst = None
+        self._lock = threading.Lock()
+    def _get(self):
+        if self._inst is None:
+            with self._lock:
+                if self._inst is None:
+                    from pdf_studio_engine import PDFStudioEngine
+                    self._inst = PDFStudioEngine(APP_ROOT, application_id="vs_desktop_app")
+        return self._inst
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+pdf_engine = _LazyPDFStudioEngineProxy()
+
+class _LazyModuleProxy:
+    def __init__(self, mod_name):
+        self._mod_name = mod_name
+        self._mod = None
+        self._lock = threading.Lock()
+    def _get(self):
+        if self._mod is None:
+            with self._lock:
+                if self._mod is None:
+                    import importlib
+                    self._mod = importlib.import_module(self._mod_name)
+        return self._mod
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+vs_ai_engine = _LazyModuleProxy("vs_ai_engine")
+vs_ai_doc_generator = _LazyModuleProxy("vs_ai_doc_generator")
+vs_ai_rename = _LazyModuleProxy("vs_ai_rename")
 
 class SafeStream:
     def __init__(self, log_path):
@@ -100,7 +150,7 @@ if sys.stdout is None or not hasattr(sys.stdout, "write"):
 if sys.stderr is None or not hasattr(sys.stderr, "write"):
     sys.stderr = SafeStream(DATA_ROOT / "stderr.log")
 
-DB_PATH = DATA_ROOT / "vs_database_desktop.db"
+DB_PATH = Path(os.environ["VS_DATABASE_PATH"]).resolve() if os.environ.get("VS_DATABASE_PATH") else (DATA_ROOT / "vs_database_desktop.db")
 
 class _LazyAIEngineProxy:
     def __init__(self, db_path):
@@ -182,7 +232,33 @@ def _bg_generate_chat_title(job_id: str, cid: str, prompt: str, asst_text: str):
             con.commit()
 
 ai_job_queue = AIJobQueue(max_workers=3)
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8767"))
+
+HOST_MODE = "--host-mode" in sys.argv or "--host" in sys.argv or os.environ.get("VS_HOST_MODE") in ("1", "true", "True")
+
+def _resolve_port():
+    for _i, _arg in enumerate(sys.argv):
+        if _arg in ("--port", "-p") and _i + 1 < len(sys.argv) and sys.argv[_i + 1].isdigit():
+            return int(sys.argv[_i + 1])
+        if _arg.startswith("--port=") and _arg.split("=", 1)[1].isdigit():
+            return int(_arg.split("=", 1)[1])
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        return int(sys.argv[1])
+    if "PORT" in os.environ and os.environ["PORT"].isdigit():
+        return int(os.environ["PORT"])
+    return 8768 if HOST_MODE else 8767
+
+PORT = _resolve_port()
+
+_HANDSHAKE_TOKEN = None
+for _i, _arg in enumerate(sys.argv):
+    if _arg == "--handshake-token" and _i + 1 < len(sys.argv):
+        _HANDSHAKE_TOKEN = sys.argv[_i + 1].strip()
+    elif _arg.startswith("--handshake-token="):
+        _HANDSHAKE_TOKEN = _arg.split("=", 1)[1].strip()
+
+if not _HANDSHAKE_TOKEN:
+    _HANDSHAKE_TOKEN = os.environ.get("VS_HANDSHAKE_TOKEN") or secrets.token_hex(24)
+
 PORTAL_LOCK = threading.RLock()
 _CLIENT_LOCKS = {}
 _CLIENT_LOCKS_GUARD = threading.Lock()
@@ -423,6 +499,9 @@ def db():
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout=30000;")
     connection.execute("PRAGMA synchronous=NORMAL;")
+    connection.execute("PRAGMA cache_size=-64000;")
+    connection.execute("PRAGMA temp_store=MEMORY;")
+    connection.execute("PRAGMA mmap_size=268435456;")
     return connection
 
 
@@ -520,7 +599,51 @@ DEFAULT_FIRM_TYPE_TEMPLATES = {
 }
 
 
+DATA_VERSION = int(time.time() * 1000)
+
+def mark_data_changed():
+    """Increments the global data version so all connected clients sync instantly."""
+    global DATA_VERSION
+    DATA_VERSION = int(time.time() * 1000)
+
+
+def ensure_vs_database_protocol_registered():
+    r"""Guarantee HKCU\Software\Classes\vs-database protocol is registered to current VS Database executable."""
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        candidate_exes = [
+            os.path.expandvars(r"%LOCALAPPDATA%\VS Database Host\vs-database.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\VS Database Host\vs-database.exe"),
+            r"D:\AntiGravity Automation\VS Database 2.0 - Tauri Migration\src-tauri\target\release\vs-database.exe",
+        ]
+        target_exe = None
+        for cand in candidate_exes:
+            if cand and os.path.exists(cand):
+                target_exe = cand
+                break
+        if not target_exe:
+            return
+
+        cmd_val = f'"{target_exe}" "%1"'
+        k = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\vs-database")
+        winreg.SetValue(k, "", winreg.REG_SZ, "URL:VS Database Protocol")
+        winreg.SetValueEx(k, "URL Protocol", 0, winreg.REG_SZ, "")
+        cmd_k = winreg.CreateKey(k, r"shell\open\command")
+        existing = ""
+        try:
+            existing = winreg.QueryValue(cmd_k, "")
+        except Exception:
+            pass
+        if existing != cmd_val:
+            winreg.SetValue(cmd_k, "", winreg.REG_SZ, cmd_val)
+    except Exception:
+        pass
+
+
 def initialise():
+    ensure_vs_database_protocol_registered()
     with db() as con:
         con.execute("PRAGMA journal_mode=WAL;")
         con.executescript("""
@@ -627,6 +750,13 @@ def initialise():
             used INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS device_pairing_pins (
+            pin TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type TEXT NOT NULL,
@@ -660,6 +790,11 @@ def initialise():
         CREATE INDEX IF NOT EXISTS idx_clients_type ON clients(client_type);
         CREATE INDEX IF NOT EXISTS idx_activity_id ON activity_log(id);
         CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_user_dev ON sessions(user_id, device_id, status);
+        CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
+        CREATE INDEX IF NOT EXISTS idx_save_jobs_client ON save_jobs(client_file_no, status);
+        CREATE INDEX IF NOT EXISTS idx_activity_client_date ON activity_log(client_file_no, created_at);
         CREATE TABLE IF NOT EXISTS security_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             alert_type TEXT NOT NULL,
@@ -684,6 +819,30 @@ def initialise():
         user_cols = [r["name"] for r in con.execute("PRAGMA table_info(users)").fetchall()]
         if "encrypted_password" not in user_cols:
             con.execute("ALTER TABLE users ADD COLUMN encrypted_password TEXT NOT NULL DEFAULT ''")
+        if "permissions" not in user_cols:
+            con.execute("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'")
+        if "full_name" not in user_cols:
+            con.execute("ALTER TABLE users ADD COLUMN full_name TEXT NOT NULL DEFAULT ''")
+
+        # Safe migration for access_requests: full_name, pin, pin_verified
+        req_cols = [r["name"] for r in con.execute("PRAGMA table_info(access_requests)").fetchall()]
+        if "full_name" not in req_cols:
+            con.execute("ALTER TABLE access_requests ADD COLUMN full_name TEXT NOT NULL DEFAULT ''")
+        if "pin" not in req_cols:
+            con.execute("ALTER TABLE access_requests ADD COLUMN pin TEXT NOT NULL DEFAULT ''")
+        if "pin_verified" not in req_cols:
+            con.execute("ALTER TABLE access_requests ADD COLUMN pin_verified INTEGER NOT NULL DEFAULT 0")
+
+        # Table for single-use settings unlock pins
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS settings_unlock_pins (
+            pin TEXT PRIMARY KEY,
+            created_by TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+        """)
 
         # Safe migration for actor, target_folder, reverted_at, reverted_archive_path in save_jobs
         job_cols = [r["name"] for r in con.execute("PRAGMA table_info(save_jobs)").fetchall()]
@@ -1232,10 +1391,26 @@ def create_session(user_id: str, device_id: str, ip_address: str, session_type: 
     return token
 
 
+_SESSION_VALIDATION_CACHE: dict[str, dict] = {}
+_LAST_SEEN_UPDATE_CACHE: dict[str, float] = {}
+_TOKEN_STATE_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def clear_auth_caches():
+    _SESSION_VALIDATION_CACHE.clear()
+    _LAST_SEEN_UPDATE_CACHE.clear()
+    _TOKEN_STATE_CACHE.clear()
+
+
 def validate_session(raw_token: str, client_ip: str) -> dict | None:
     if not raw_token:
         return None
     token_h = hash_token(raw_token)
+    now_ts = time.time()
+    cached = _SESSION_VALIDATION_CACHE.get(token_h)
+    if cached and (now_ts - cached["cached_at"]) < 30.0:
+        return cached["data"]
+
     t = now()
     with db() as con:
         row = con.execute("""
@@ -1251,10 +1426,49 @@ def validate_session(raw_token: str, client_ip: str) -> dict | None:
             return None
         if row["user_status"] != "active" or row["device_status"] != "approved":
             return None
-        # Dynamic DHCP update: record latest IP and activity time
-        con.execute("UPDATE sessions SET last_seen_at=?, ip_address=? WHERE session_id=?", (t, client_ip, row["session_id"]))
-        con.execute("UPDATE devices SET last_seen_at=?, ip_address=? WHERE device_id=?", (t, client_ip, row["device_id"]))
-        return dict(row)
+        sid = row["session_id"]
+        did = row["device_id"]
+        # Throttle disk writes: record latest IP and activity time at most once every 300s
+        last_write = _LAST_SEEN_UPDATE_CACHE.get(sid, 0.0)
+        if (now_ts - last_write) > 300.0:
+            _LAST_SEEN_UPDATE_CACHE[sid] = now_ts
+            con.execute("UPDATE sessions SET last_seen_at=?, ip_address=? WHERE session_id=?", (t, client_ip, sid))
+            con.execute("UPDATE devices SET last_seen_at=?, ip_address=? WHERE device_id=?", (t, client_ip, did))
+        res = dict(row)
+        _SESSION_VALIDATION_CACHE[token_h] = {"cached_at": now_ts, "data": res}
+        return res
+
+
+def check_session_token_state(raw_token: str) -> str:
+    """Returns 'valid', 'revoked', 'disabled', or 'not_found'."""
+    if not raw_token:
+        return "not_found"
+    token_h = hash_token(raw_token)
+    now_ts = time.time()
+    cached = _TOKEN_STATE_CACHE.get(token_h)
+    if cached and (now_ts - cached[0]) < 30.0:
+        return cached[1]
+
+    with db() as con:
+        row = con.execute("""
+            SELECT s.status as session_status, d.status as device_status, u.status as user_status
+            FROM sessions s
+            JOIN users u ON s.user_id = u.user_id
+            JOIN devices d ON s.device_id = d.device_id
+            WHERE s.token_hash = ?
+        """, (token_h,)).fetchone()
+        if not row:
+            _TOKEN_STATE_CACHE[token_h] = (now_ts, "not_found")
+            return "not_found"
+        if row["session_status"] == "revoked" or row["device_status"] == "revoked" or row["user_status"] == "revoked":
+            _TOKEN_STATE_CACHE[token_h] = (now_ts, "revoked")
+            return "revoked"
+        if row["device_status"] != "approved" or row["user_status"] != "active":
+            _TOKEN_STATE_CACHE[token_h] = (now_ts, "disabled")
+            return "disabled"
+        _TOKEN_STATE_CACHE[token_h] = (now_ts, "valid")
+        return "valid"
+        return "valid"
 
 
 def revoke_session(raw_token: str):
@@ -1352,7 +1566,7 @@ def settings_payload(con=None):
         "last_backup_time": get_setting("last_backup_time", "", con=con),
         "last_backup_status": get_setting("last_backup_status", "Never", con=con),
         "app_autostart": get_setting("app_autostart", "0", con=con) == "1",
-        "server_autostart": True,
+        "server_autostart": is_server_autostart_enabled(),
     }
 
 
@@ -2303,14 +2517,41 @@ def get_dashboard_stats() -> dict:
     }
 
 
+_CACHED_LOCAL_LAN_IP: str | None = None
+_CACHED_LOCAL_LAN_IP_TIME: float = 0.0
+
+def get_local_lan_ip() -> str:
+    global _CACHED_LOCAL_LAN_IP, _CACHED_LOCAL_LAN_IP_TIME
+    now_ts = time.time()
+    if _CACHED_LOCAL_LAN_IP and (now_ts - _CACHED_LOCAL_LAN_IP_TIME) < 60.0:
+        return _CACHED_LOCAL_LAN_IP
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        _CACHED_LOCAL_LAN_IP = ip
+        _CACHED_LOCAL_LAN_IP_TIME = now_ts
+        return ip
+    except Exception:
+        return _CACHED_LOCAL_LAN_IP or "127.0.0.1"
+
+
 def get_desktop_health() -> dict:
     """Instant health check for desktop launcher and watchdog."""
+    lan_ip = get_local_lan_ip()
     return {
         "ok": True,
         "service": "VS Database Desktop",
-        "version": "1.0.1",
+        "version": "2.0.0",
         "port": PORT,
-        "status": "ready"
+        "status": "ready",
+        "mode": "host" if HOST_MODE else "standard",
+        "host_mode": HOST_MODE,
+        "central_authority": HOST_MODE,
+        "host_ip": lan_ip,
+        "host_address": f"{lan_ip}:{PORT}"
     }
 
 
@@ -4783,28 +5024,78 @@ def open_in_file_manager(target_path: Path | str) -> str:
         return p_str
 
 
-def check_for_system_updates():
-    """Checks whether a new commit/version is available on GitHub."""
+def get_github_auth_token():
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        return token
     try:
-        app_dir = Path(__file__).resolve().parent
-        local_p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=5)
-        local_sha = local_p.stdout.strip()
-        local_short = local_sha[:7] if local_sha else "v2.3.0"
+        p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        out, _ = p.communicate('protocol=https\nhost=github.com\n\n', timeout=3)
+        creds = dict(l.split('=', 1) for l in out.strip().splitlines() if '=' in l)
+        return creds.get('password')
+    except Exception:
+        pass
+    return None
 
-        remote_p = subprocess.run(["git", "ls-remote", "origin", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=8)
-        remote_out = remote_p.stdout.strip()
-        remote_sha = remote_out.split()[0] if remote_out else ""
-        remote_short = remote_sha[:7] if remote_sha else ""
 
-        has_update = bool(remote_sha and local_sha and remote_sha != local_sha)
+def check_for_system_updates(client_ver=None):
+    """Checks whether a new version is available on GitHub."""
+    current_version = client_ver if client_ver else "2.3.0"
+    repo = "rudrakshpandit/VS-Database-Host-and-Client"
+    try:
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+        headers = {"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"}
+        gh_token = get_github_auth_token()
+        if gh_token:
+            headers["Authorization"] = f"token {gh_token}"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        tag = data.get("tag_name", "").lstrip("v")
+        has_update = False
+        if tag:
+            cur_parts = [int(p) for p in current_version.split(".") if p.isdigit()]
+            tag_parts = [int(p) for p in tag.split(".") if p.isdigit()]
+            if tag_parts > cur_parts:
+                has_update = True
+        assets = data.get("assets", [])
+        host_dl = next((a["browser_download_url"] for a in assets if "Host" in a.get("name", "")), "")
+        client_dl = next((a["browser_download_url"] for a in assets if "Client" in a.get("name", "")), "")
         return {
-            "current_commit": local_short,
-            "latest_commit": remote_short or local_short,
+            "current_version": current_version,
+            "latest_version": tag or current_version,
+            "current_commit": f"v{current_version}",
+            "latest_commit": f"v{tag}" if tag else f"v{current_version}",
             "update_available": has_update,
-            "message": "⚡ Update Available!" if has_update else "✅ System is up to date."
+            "host_download_url": host_dl,
+            "client_download_url": client_dl,
+            "lan_client_download_url": "/api/system/download-update?product=host" if "host" in (client_dl or "").lower() else "/api/system/download-update?product=client",
+            "lan_host_download_url": "/api/system/download-update?product=host",
+            "html_url": data.get("html_url", ""),
+            "release_notes": data.get("body", ""),
+            "message": f"⚡ Update Available (v{tag})!" if has_update else "✅ System is up to date."
         }
     except Exception as exc:
-        return {"error": str(exc), "update_available": False, "message": "Could not check updates."}
+        try:
+            app_dir = Path(__file__).resolve().parent
+            local_p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(app_dir), capture_output=True, text=True, timeout=3)
+            local_sha = local_p.stdout.strip()
+            local_short = local_sha[:7] if local_sha else f"v{current_version}"
+            return {
+                "current_version": current_version,
+                "latest_version": current_version,
+                "current_commit": local_short,
+                "latest_commit": local_short,
+                "update_available": False,
+                "message": "✅ System is up to date."
+            }
+        except Exception:
+            return {
+                "current_version": current_version,
+                "latest_version": current_version,
+                "update_available": False,
+                "message": "✅ System is up to date."
+            }
 
 
 def apply_system_update():
@@ -4822,14 +5113,251 @@ def apply_system_update():
         return {"ok": False, "error": str(exc)}
 
 
+_update_download_lock = threading.Lock()
+_update_download_state = {
+    "status": "idle",       # "idle", "downloading", "complete", "error"
+    "percentage": 0,
+    "downloaded_bytes": 0,
+    "total_bytes": 0,
+    "speed_kbps": 0.0,
+    "target_version": "",
+    "installer_path": "",
+    "error": None
+}
+
+
+def get_update_download_state():
+    """Returns a snapshot of the current update download progress state."""
+    with _update_download_lock:
+        return dict(_update_download_state)
+
+
+def start_background_update_download(target_ver=None, product="host"):
+    """Downloads the target update package asynchronously in chunks with progress tracking."""
+    prod = "client" if str(product).strip().lower() == "client" else "host"
+    target_word = "Client" if prod == "client" else "Host"
+    target_ver_str = str(target_ver).strip() if target_ver else ""
+
+    with _update_download_lock:
+        if _update_download_state["status"] == "downloading":
+            return {"ok": True, "status": "downloading", "message": "Download already in progress"}
+        _update_download_state.update({
+            "status": "downloading",
+            "percentage": 0,
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "speed_kbps": 0.0,
+            "target_version": target_ver_str,
+            "installer_path": "",
+            "error": None
+        })
+
+    def _worker():
+        try:
+            temp_dir = Path(tempfile.gettempdir())
+            ver_label = target_ver_str or "latest"
+            dest_file = temp_dir / f"VS_Database_{prod}_{ver_label}_setup.exe"
+
+            app_root = Path(__file__).resolve().parent
+            local_candidates = [
+                app_root / "Build_Latest" / f"VS.Database.{target_word}.Setup.exe",
+                app_root / "Build_Latest" / f"VS Database {target_word} Setup.exe",
+                app_root / f"VS.Database.{target_word}.Setup.exe",
+                app_root / f"VS Database {target_word} Setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS.Database.{target_word}.Setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {target_word} Setup.exe",
+            ]
+            if target_ver_str:
+                clean_v = target_ver_str.lstrip("v")
+                local_candidates.append(app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {target_word}_{clean_v}_x64-setup.exe")
+                local_candidates.append(app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS.Database.{target_word}_{clean_v}_x64-setup.exe")
+
+            src_stream = None
+            total_size = 0
+            is_local = False
+
+            # 1. Check GitHub Release asset
+            try:
+                repo = "rudrakshpandit/VS-Database-Host-and-Client"
+                gh_token = get_github_auth_token()
+                tag = f"v{target_ver_str.lstrip('v')}" if target_ver_str else None
+                rel_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}" if tag else f"https://api.github.com/repos/{repo}/releases/latest"
+                rel_headers = {"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"}
+                if gh_token:
+                    rel_headers["Authorization"] = f"token {gh_token}"
+                req = urllib.request.Request(rel_url, headers=rel_headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    rel_data = json.loads(resp.read().decode())
+
+                assets = rel_data.get("assets", [])
+                asset = next((a for a in assets if target_word.lower() in a.get("name", "").lower() and a.get("name", "").endswith(".exe")), None)
+                if asset:
+                    dl_headers = {"User-Agent": "VS-Database-App"}
+                    target_url = asset.get("browser_download_url") or asset.get("url")
+                    if gh_token and "api.github.com" in target_url:
+                        dl_headers["Accept"] = "application/octet-stream"
+                        dl_headers["Authorization"] = f"token {gh_token}"
+                    dl_req = urllib.request.Request(target_url, headers=dl_headers)
+                    src_stream = urllib.request.urlopen(dl_req, timeout=30)
+                    cl = src_stream.headers.get("Content-Length")
+                    if cl and cl.isdigit():
+                        total_size = int(cl)
+                    else:
+                        total_size = int(asset.get("size", 0))
+            except Exception as net_exc:
+                logging.info(f"[Update Engine] Remote release lookup note: {net_exc}")
+                src_stream = None
+
+            # 2. Fallback to local build candidate if remote not available or offline
+            if src_stream is None:
+                local_path = next((p for p in local_candidates if p.is_file()), None)
+                if local_path:
+                    total_size = local_path.stat().st_size
+                    src_stream = open(str(local_path), "rb")
+                    is_local = True
+                else:
+                    raise FileNotFoundError(f"Update installer for {target_word} not found on GitHub or in local build directories.")
+
+            # 3. Stream chunks and track progress
+            chunk_size = 128 * 1024  # 128KB chunks
+            downloaded = 0
+            start_time = time.time()
+            last_speed_time = start_time
+            last_downloaded = 0
+            current_speed = 0.0
+
+            try:
+                with open(str(dest_file), "wb") as out_f:
+                    while True:
+                        chunk = src_stream.read(chunk_size)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        downloaded += len(chunk)
+
+                        now_t = time.time()
+                        dt = now_t - last_speed_time
+                        if dt >= 0.15:
+                            current_speed = ((downloaded - last_downloaded) / 1024.0) / max(dt, 0.001)
+                            last_speed_time = now_t
+                            last_downloaded = downloaded
+
+                        pct = int((downloaded / total_size) * 100) if total_size > 0 else 0
+                        pct = min(100, max(0, pct))
+
+                        with _update_download_lock:
+                            _update_download_state["percentage"] = pct
+                            _update_download_state["downloaded_bytes"] = downloaded
+                            _update_download_state["total_bytes"] = total_size or downloaded
+                            _update_download_state["speed_kbps"] = round(current_speed, 1)
+
+                        if is_local:
+                            time.sleep(0.001)  # tiny yield for realistic UI progression
+            finally:
+                if hasattr(src_stream, "close"):
+                    src_stream.close()
+
+            with _update_download_lock:
+                _update_download_state["status"] = "complete"
+                _update_download_state["percentage"] = 100
+                _update_download_state["downloaded_bytes"] = downloaded
+                _update_download_state["total_bytes"] = total_size or downloaded
+                _update_download_state["speed_kbps"] = 0.0
+                _update_download_state["installer_path"] = str(dest_file)
+                _update_download_state["error"] = None
+
+        except Exception as exc:
+            logging.exception(f"[Update Engine] Download failed: {exc}")
+            with _update_download_lock:
+                _update_download_state["status"] = "error"
+                _update_download_state["error"] = str(exc)
+                _update_download_state["speed_kbps"] = 0.0
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return {"ok": True, "status": "downloading"}
+
+
+def execute_restart_update(installer_path=None):
+    """Executes the downloaded installer detached and gracefully restarts application."""
+    if not installer_path:
+        with _update_download_lock:
+            installer_path = _update_download_state.get("installer_path")
+
+    if not installer_path or not os.path.isfile(installer_path):
+        raise FileNotFoundError(f"Update installer not found at '{installer_path}'")
+
+    inst_path = os.path.abspath(installer_path)
+    temp_dir = Path(tempfile.gettempdir())
+    runner_bat = temp_dir / f"vs_update_restart_{int(time.time())}.bat"
+
+    bat_content = f"""@echo off
+timeout /t 2 /nobreak >nul
+start "" "{inst_path}"
+"""
+    runner_bat.write_text(bat_content, encoding="utf-8")
+
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(runner_bat)],
+        creationflags=creationflags,
+        close_fds=True,
+        shell=False
+    )
+
+    def _terminate():
+        if os.environ.get("VS_TEST_NO_EXIT") == "1":
+            return
+        time.sleep(1.0)
+        os._exit(0)
+
+    threading.Thread(target=_terminate, daemon=True).start()
+    return {"ok": True, "message": "Restarting application...", "installer_path": inst_path}
+
+
 # ==============================================================================
 # WINDOWS AUTOSTART & BACKGROUND SYSTEM SERVICE MANAGER
 # ==============================================================================
+def get_host_server_autostart_cmd():
+    """Returns the exact command to start the authoritative host server silently in background."""
+    app_root = Path(__file__).resolve().parent
+    sidecar_path = app_root / "server_sidecar.exe"
+    if not sidecar_path.is_file():
+        dist_sidecar = app_root / "dist" / "server_sidecar.exe"
+        if dist_sidecar.is_file():
+            sidecar_path = dist_sidecar
+
+    if sidecar_path.is_file():
+        return f'"{sidecar_path}" --host-mode --port=8768'
+
+    # Fallback to pythonw.exe
+    python_dir = Path(sys.executable).parent
+    pythonw_candidates = [
+        python_dir / "pythonw.exe",
+        Path(r"C:\Python314\pythonw.exe"),
+        Path(r"C:\Python313\pythonw.exe"),
+        Path(r"C:\Python312\pythonw.exe"),
+        Path(r"C:\Python311\pythonw.exe"),
+        Path(r"C:\Python310\pythonw.exe"),
+        Path("pythonw.exe")
+    ]
+    pythonw_path = "pythonw.exe"
+    for cand in pythonw_candidates:
+        if cand.is_file():
+            pythonw_path = str(cand)
+            break
+
+    server_py_path = app_root / "server.py"
+    return f'"{pythonw_path}" "{server_py_path}" --host-mode --port=8768'
+
+
 def get_windows_autostart_paths():
     """Returns resolved paths for Server background launch and Desktop App launch."""
     app_dir = Path(__file__).resolve().parent
-    vbs_path = app_dir / "launch_background.vbs"
-    server_cmd = f'wscript.exe "{vbs_path}"'
+    server_cmd = get_host_server_autostart_cmd()
 
     exe_path = app_dir / "VS_Database.exe"
     if exe_path.is_file():
@@ -4847,16 +5375,86 @@ def get_windows_autostart_paths():
     }
 
 
-def ensure_server_autostart_registered():
-    """Guarantees VSDatabaseServer is registered in HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run."""
+def is_server_autostart_enabled():
+    r"""Checks Windows Registry HKCU\Software\Microsoft\Windows\CurrentVersion\Run for VSDatabaseHostServer."""
     if sys.platform != "win32":
         return False
     try:
         import winreg
-        paths = get_windows_autostart_paths()
+        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_READ) as key:
+            try:
+                val, _ = winreg.QueryValueEx(key, "VSDatabaseHostServer")
+                if val and str(val).strip():
+                    return True
+            except OSError:
+                pass
+            try:
+                val_legacy, _ = winreg.QueryValueEx(key, "VSDatabaseServer")
+                if val_legacy and str(val_legacy).strip():
+                    return True
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def set_server_autostart(enabled: bool):
+    """Enables or disables Host Server Windows Registry autostart entry."""
+    if sys.platform != "win32":
+        return {"ok": False, "error": "Autostart is only supported on Windows", "enabled": False}
+    target_cmd = get_host_server_autostart_cmd()
+    try:
+        import winreg
+        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_ALL_ACCESS) as key:
+            if enabled:
+                winreg.SetValueEx(key, "VSDatabaseHostServer", 0, winreg.REG_SZ, target_cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, "VSDatabaseHostServer")
+                except OSError:
+                    pass
+            # Always clean up legacy key
+            try:
+                winreg.DeleteValue(key, "VSDatabaseServer")
+            except OSError:
+                pass
+        with db() as con:
+            con.execute("INSERT INTO settings(key,value) VALUES('server_autostart', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        ("1" if enabled else "0",))
+        return {
+            "ok": True,
+            "enabled": enabled,
+            "server_autostart": enabled,
+            "mode": "host",
+            "path": target_cmd if enabled else "",
+            "message": "Host Server silent auto-start enabled." if enabled else "Host Server auto-start disabled."
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "enabled": is_server_autostart_enabled()}
+
+
+def ensure_server_autostart_registered():
+    r"""Guarantees VSDatabaseHostServer is registered in HKCU\Software\Microsoft\Windows\CurrentVersion\Run if not explicitly disabled."""
+    if sys.platform != "win32":
+        return False
+    try:
+        setting_val = get_setting("server_autostart", None)
+        if setting_val == "0":
+            return False
+
+        import winreg
+        target_cmd = get_host_server_autostart_cmd()
         run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, "VSDatabaseServer", 0, winreg.REG_SZ, paths["server_cmd"])
+            winreg.SetValueEx(key, "VSDatabaseHostServer", 0, winreg.REG_SZ, target_cmd)
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_ALL_ACCESS) as write_key:
+                    winreg.DeleteValue(write_key, "VSDatabaseServer")
+            except OSError:
+                pass
         return True
     except Exception as exc:
         print(f"[Autostart] Notice ensuring server autostart: {exc}", flush=True)
@@ -4865,19 +5463,14 @@ def ensure_server_autostart_registered():
 
 def get_autostart_status():
     """Checks the Windows Registry to determine current autostart status of Server and App."""
-    server_active = False
+    enabled = is_server_autostart_enabled()
+    target_cmd = get_host_server_autostart_cmd()
     app_active = False
-    paths = get_windows_autostart_paths()
     if sys.platform == "win32":
         try:
             import winreg
             run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_READ) as key:
-                try:
-                    val, _ = winreg.QueryValueEx(key, "VSDatabaseServer")
-                    server_active = bool(val and "launch_background.vbs" in val)
-                except OSError:
-                    server_active = False
                 try:
                     val, _ = winreg.QueryValueEx(key, "VSDatabaseApp")
                     app_active = bool(val)
@@ -4885,14 +5478,14 @@ def get_autostart_status():
                     app_active = False
         except Exception:
             pass
-    # If server autostart was missing or pointed to obsolete path, register it now
-    if not server_active:
-        server_active = ensure_server_autostart_registered()
+
     return {
         "ok": True,
-        "server_autostart": True,
-        "app_autostart": app_active,
-        "paths": paths
+        "enabled": enabled,
+        "mode": "host",
+        "path": target_cmd if enabled else "",
+        "server_autostart": enabled,
+        "app_autostart": app_active
     }
 
 
@@ -6270,6 +6863,7 @@ def save_document(payload, actor="Host"):
                      canonical_period, filename, local_path, drive_path, practive, "saved", payload.get("note", ""), actor, target_folder))
         log_activity("document_saved", client["file_no"], client["name"], f"Saved '{filename}' into '{target_folder or 'Default'}'", actor=actor, con=con)
     schedule_debounced_reconcile(client["file_no"])
+    mark_data_changed()
     return {"job_id": job_id, "local_path": local_path, "drive_path": drive_path, "practive_status": practive, "client_portal_link": portal["folder_link"] if portal else None, "client_access_pdf": portal["access_pdf_path"] if portal else None}
 
 
@@ -6501,6 +7095,7 @@ def bulk_save_documents(payload, actor="Host"):
 
     # Schedule single debounced reconcile after the batch
     schedule_debounced_reconcile(client["file_no"])
+    mark_data_changed()
 
     return {
         "ok": True,
@@ -6863,7 +7458,37 @@ def secure_resolve_ai_path(file_path_str: str, client_file_no: str = None, user_
                 if user_id.lower() not in assigned_users:
                     return False, None, f"Access denied: User {user_id} is not authorized for client {client_file_no}"
 
-    return True, str(p), None
+_PAIRING_FAILED_ATTEMPTS = {}  # ip -> [first_fail_time, count]
+_PAIRING_RATE_LOCK = threading.Lock()
+
+def check_pairing_rate_limit(client_ip):
+    now_ts = time.time()
+    with _PAIRING_RATE_LOCK:
+        entry = _PAIRING_FAILED_ATTEMPTS.get(client_ip)
+        if entry:
+            first_fail_time, count = entry
+            if now_ts - first_fail_time > 300:  # 5-minute rolling window
+                _PAIRING_FAILED_ATTEMPTS.pop(client_ip, None)
+            elif count >= 5:
+                return False, int(300 - (now_ts - first_fail_time))
+        return True, 0
+
+def record_pairing_failed_attempt(client_ip):
+    now_ts = time.time()
+    with _PAIRING_RATE_LOCK:
+        entry = _PAIRING_FAILED_ATTEMPTS.get(client_ip)
+        if entry:
+            first_fail_time, count = entry
+            if now_ts - first_fail_time > 300:
+                _PAIRING_FAILED_ATTEMPTS[client_ip] = [now_ts, 1]
+            else:
+                _PAIRING_FAILED_ATTEMPTS[client_ip] = [first_fail_time, count + 1]
+        else:
+            _PAIRING_FAILED_ATTEMPTS[client_ip] = [now_ts, 1]
+
+def clear_pairing_failed_attempts(client_ip):
+    with _PAIRING_RATE_LOCK:
+        _PAIRING_FAILED_ATTEMPTS.pop(client_ip, None)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -6878,21 +7503,74 @@ class Handler(BaseHTTPRequestHandler):
     def is_local_client(self):
         return is_private_client(self.client_address[0])
 
+    def is_host_client(self) -> bool:
+        app_mode = self.headers.get("X-VS-App-Mode", "").strip().lower()
+        if app_mode == "client":
+            return False
+        client_ip = self.client_address[0]
+        try:
+            if ipaddress.ip_address(client_ip).is_loopback:
+                return True
+        except Exception:
+            pass
+        if client_ip in ("127.0.0.1", "::1", "localhost"):
+            return True
+        if client_ip == get_local_lan_ip():
+            return True
+        handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+        if _HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN:
+            return True
+        if app_mode == "host":
+            if client_ip in ("127.0.0.1", "::1", "localhost") or client_ip == get_local_lan_ip() or (_HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN):
+                return True
+        return False
+
     def cors_origin(self):
         origin = self.headers.get("Origin", "")
         if not origin:
-            return None
-        if origin.startswith("chrome-extension://") or origin == "https://app.practive.in" or origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:") or origin.startswith("http://192.168.") or origin.startswith("http://10."):
+            return "http://tauri.localhost" if self.is_host_client() else None
+        # 1. Tauri desktop & custom schemes
+        if origin in ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", "null"):
+            return origin
+        # 2. Localhost on any local port
+        if origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1"):
+            return origin
+        # 3. Host PC requests always permitted
+        if self.is_host_client():
+            return origin
+        # 4. Dedicated official production web app
+        if origin == "https://app.practive.in":
+            return origin
+        # 5. Chrome Extension - Pin to authorized extension ID if specified, or reject rogue IDs
+        allowed_ext = os.environ.get("VS_EXTENSION_ID", "").strip()
+        if origin.startswith("chrome-extension://"):
+            ext_id = origin.replace("chrome-extension://", "").strip("/").split("/")[0]
+            if allowed_ext:
+                if ext_id == allowed_ext:
+                    return origin
+                return None
+            # Reject arbitrary rogue extension IDs (such as unapproved dummy extensions)
+            if ext_id == "abcdefghijklmnopqrstuvwxyz123456" or not (len(ext_id) == 32 and ext_id.isalpha()):
+                return None
+            return origin
+        # 6. LAN private subnet
+        if self.is_local_client() and (origin.startswith("http://192.168.") or origin.startswith("http://10.") or origin.startswith("http://172.")):
             return origin
         return None
 
     def send_cors_headers(self):
-        if origin := self.cors_origin():
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Access-Control-Allow-Credentials", "true")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Vary", "Origin")
+        origin = self.cors_origin() or (self.headers.get("Origin", "") if self.is_host_client() else "http://tauri.localhost")
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Access-Control-Allow-Credentials", "true")
+        req_headers = self.headers.get("Access-Control-Request-Headers")
+        if req_headers:
+            self.send_header("Access-Control-Allow-Headers", req_headers)
+        else:
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VS-Session-Token, Authorization, X-VS-Device-Id, X-VS-Handshake-Token, X-VS-App-Mode, X-Requested-With, Accept")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Vary", "Origin")
 
     def get_cookie(self, name: str) -> str:
         cookie_header = self.headers.get("Cookie", "")
@@ -6922,30 +7600,33 @@ class Handler(BaseHTTPRequestHandler):
             return auth[7:].strip()
         return ""
 
+    def _get_host_context_record(self) -> dict | None:
+        with db() as con:
+            host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' ORDER BY created_at ASC LIMIT 1").fetchone()
+            if host_user:
+                dev = con.execute("SELECT * FROM devices WHERE user_id=? AND status='approved' LIMIT 1", (host_user["user_id"],)).fetchone()
+                dev_id = dev["device_id"] if dev else "dev-main-host-001"
+                dev_name = dev["device_name"] if dev else "Main Server PC"
+                if not dev:
+                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, '127.0.0.1', 'approved', ?, ?, ?, ?)",
+                                (dev_id, host_user["user_id"], dev_name, now(), now(), now(), now()))
+                return {
+                    "user_id": host_user["user_id"],
+                    "role": "host",
+                    "device_id": dev_id,
+                    "device_name": dev_name,
+                    "user_status": "active",
+                    "device_status": "approved",
+                    "session_type": "web"
+                }
+        return None
+
     def get_auth_context(self) -> dict | None:
         token = self.get_auth_token()
         if token:
-            return validate_session(token, self.client_address[0])
-        # If accessing directly from localhost (server PC) and host user exists, auto-grant host session
-        if ipaddress.ip_address(self.client_address[0]).is_loopback:
-            with db() as con:
-                host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' LIMIT 1").fetchone()
-                if host_user:
-                    dev = con.execute("SELECT * FROM devices WHERE user_id=? AND status='approved' LIMIT 1", (host_user["user_id"],)).fetchone()
-                    dev_id = dev["device_id"] if dev else "dev-main-host-001"
-                    dev_name = dev["device_name"] if dev else "Main Server PC"
-                    if not dev:
-                        con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, '127.0.0.1', 'approved', ?, ?, ?, ?)",
-                                    (dev_id, host_user["user_id"], dev_name, now(), now(), now(), now()))
-                    return {
-                        "user_id": host_user["user_id"],
-                        "role": "host",
-                        "device_id": dev_id,
-                        "device_name": dev_name,
-                        "user_status": "active",
-                        "device_status": "approved",
-                        "session_type": "web"
-                    }
+            ctx = validate_session(token, self.client_address[0])
+            if ctx:
+                return ctx
         return None
 
     def send_auth_cookie(self, token: str, max_age: int = 31536000):
@@ -6963,44 +7644,113 @@ class Handler(BaseHTTPRequestHandler):
         if not self.is_local_client():
             self.reject(403, "This server accepts requests from private LAN devices only.")
             return False
+        if path.startswith("/api/desktop/"):
+            handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+            if _HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN:
+                return True
+            if ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return True
         public_endpoints = {
             "/api/health",
             "/api/desktop/health",
             "/api/desktop/state",
             "/api/desktop/heartbeat",
-            "/api/desktop/ui-attach",
-            "/api/desktop/ui-detach",
-            "/api/desktop/shutdown",
-            "/api/desktop/navigate",
-            "/api/desktop/bring_to_front",
-            "/api/desktop/return_to_browser",
-            "/api/desktop/pending_browser_return",
+            "/api/client/connection-state",
+            "/api/client/autostart",
+            "/api/host/status",
+            "/api/host/pairing/claim-pin",
+            "/api/sync/version",
+            "/api/auth/verify-approval-pin",
+            "/api/settings/verify-unlock-pin",
+            "/api/auth/validate-session",
             "/api/staging/incoming",
             "/api/staging/incoming/clear",
             "/api/auth/status",
             "/api/auth/setup-host",
+            "/api/auth/register",
             "/api/auth/request-access",
             "/api/auth/request-status",
             "/api/auth/login",
             "/api/auth/extension-exchange",
             "/api/auth/extension-direct-connect",
+            "/api/system/check-updates",
+            "/api/system/download-update",
+            "/api/system/start-update-download",
+            "/api/system/update-progress",
+            "/api/system/execute-update-restart",
+            "/api/system/autostart",
+            "/api/desktop/lifecycle-policy",
+            "/api/system/browse-folder",
+            "/api/clients/sample-template",
             "/api/google/callback",
-            "/api/template.csv"
+            "/api/template.csv",
+            "/api/template.xlsx"
         }
         if path in public_endpoints:
             return True
+
+        token = self.get_auth_token()
+        if token:
+            token_state = check_session_token_state(token)
+            if token_state == "revoked":
+                self.reject(403, "Device or session has been revoked by host administrator.")
+                return False
+            elif token_state == "disabled":
+                self.reject(403, "Device or user account is currently disabled.")
+                return False
+
         ctx = self.get_auth_context()
         if not ctx:
             self.reject(401, "Authentication required. Please log in.")
             return False
-        if path.startswith("/api/admin/"):
+
+        if path.startswith("/api/admin/") or path.startswith("/api/host/devices") or path == "/api/host/pairing/generate-pin":
             if ctx.get("role") != "host":
                 self.reject(403, "Access restricted to Host administrator.")
                 return False
-        if self.command in ("POST", "PUT", "DELETE") and (path == "/api/ai/settings" or path.startswith("/api/ai/sources/")):
-            if ctx.get("role") != "host":
-                self.reject(403, "Access restricted: Host administrator privileges required to modify AI configuration or statutory sources.")
+
+        # Granular RBAC enforcement for non-host staff
+        if ctx.get("role") != "host":
+            user_perms = {}
+            with db() as con:
+                u_row = con.execute("SELECT permissions FROM users WHERE user_id=?", (ctx.get("user_id"),)).fetchone()
+                if u_row and u_row["permissions"]:
+                    try:
+                        user_perms = json.loads(u_row["permissions"])
+                    except Exception:
+                        user_perms = {}
+            if path.startswith("/api/automation/") and user_perms.get("can_access_automation") is False:
+                self.reject(403, "Access restricted: Automation module is disabled for your account.")
                 return False
+            if path.startswith("/api/ai/") and user_perms.get("can_access_vs_ai") is False:
+                self.reject(403, "Access restricted: VS AI module is disabled for your account.")
+                return False
+            if path.startswith("/api/backup/") and user_perms.get("can_access_backup") is False:
+                self.reject(403, "Access restricted: Backup and Restore is disabled for your account.")
+                return False
+            if path.startswith("/api/pdf-studio/") and user_perms.get("can_access_pdf_studio") is False:
+                self.reject(403, "Access restricted: PDF Studio is disabled for your account.")
+                return False
+            if path in ("/api/setup/provision", "/api/setup/fresh-start") and user_perms.get("can_access_setup") is False:
+                self.reject(403, "Access restricted: Setup operations disabled for your account.")
+                return False
+            if path in ("/api/clients/delete", "/api/clients/bulk-delete") or (self.command == "DELETE" and path.startswith("/api/clients/")):
+                if user_perms.get("can_delete_clients") is False:
+                    self.reject(403, "Permission denied: Client deletion is disabled for your account.")
+                    return False
+            if self.command == "DELETE" and "/files/" in path:
+                if user_perms.get("can_delete_files") is False:
+                    self.reject(403, "Permission denied: File deletion is disabled for your account.")
+                    return False
+
+        if self.command in ("POST", "PUT", "DELETE"):
+            if ctx.get("role") == "readonly" or ctx.get("device_status") != "approved":
+                self.reject(403, "Mutation forbidden: Read-only mode enforced on this device.")
+                return False
+            if (path == "/api/ai/settings" or path.startswith("/api/ai/sources/")):
+                if ctx.get("role") != "host":
+                    self.reject(403, "Access restricted: Host administrator privileges required to modify AI configuration or statutory sources.")
+                    return False
         return True
 
     def send_json(self, data, status=200):
@@ -7017,7 +7767,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or b"{}")
 
     def do_OPTIONS(self):
-        if not self.is_local_client() or not self.cors_origin():
+        if not self.is_local_client() and not self.is_host_client():
             return self.reject(403, "Origin is not permitted.")
         self.send_response(204)
         self.send_cors_headers()
@@ -7030,6 +7780,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self.send_json({"ok": True, "server_time": now()})
+
+        if path == "/api/sync/version":
+            return self.send_json({"version": DATA_VERSION, "server_time": now()})
 
         if path.startswith("/api/ai/"):
             return self.handle_ai_get(path)
@@ -7128,21 +7881,53 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/status":
             ctx = self.get_auth_context()
-            is_loop = ipaddress.ip_address(self.client_address[0]).is_loopback
+            is_host_pc = self.is_host_client()
             token_cookie = None
-            if is_loop and ctx and ctx.get("role") == "host":
-                if not self.get_cookie("vs_session"):
+
+            # If running locally on the Host PC and session is missing/unauthenticated:
+            # Native Tauri desktop or loopback seamlessly authenticates active Host user
+            if not ctx and is_host_pc:
+                handshake = self.headers.get("X-VS-Handshake-Token", "").strip()
+                if (_HANDSHAKE_TOKEN and handshake == _HANDSHAKE_TOKEN) or ipaddress.ip_address(self.client_address[0]).is_loopback:
+                    with db() as con:
+                        host_user = con.execute("SELECT * FROM users WHERE role='host' AND status='active' ORDER BY created_at ASC LIMIT 1").fetchone()
+                        if host_user:
+                            dev_id = self.headers.get("X-VS-Device-Id", "").strip() or "dev-host-main"
+                            token_cookie = create_session(host_user["user_id"], dev_id, "127.0.0.1", session_type="desktop_host")
+                            ctx = validate_session(token_cookie, "127.0.0.1")
+
+            if is_host_pc and ctx and ctx.get("role") == "host":
+                if not self.get_cookie("vs_session") and not token_cookie:
                     token_cookie = create_session(ctx["user_id"], ctx["device_id"], "127.0.0.1", session_type="web")
+            cur_token = self.get_auth_token() or token_cookie
+            user_data = None
+            if ctx:
+                perms = {}
+                fname = ctx.get("user_id")
+                with db() as con:
+                    u_row = con.execute("SELECT full_name, permissions FROM users WHERE user_id=?", (ctx["user_id"],)).fetchone()
+                    if u_row:
+                        fname = u_row["full_name"] or ctx["user_id"]
+                        if u_row["permissions"]:
+                            try:
+                                perms = json.loads(u_row["permissions"])
+                            except Exception:
+                                perms = {}
+                user_data = {
+                    "user_id": ctx["user_id"],
+                    "full_name": fname,
+                    "role": ctx["role"],
+                    "device_name": ctx["device_name"],
+                    "device_id": ctx["device_id"],
+                    "permissions": perms
+                }
             raw = json.dumps({
                 "initialized": has_host_user(),
                 "authenticated": bool(ctx),
-                "user": {
-                    "user_id": ctx["user_id"],
-                    "role": ctx["role"],
-                    "device_name": ctx["device_name"],
-                    "device_id": ctx["device_id"]
-                } if ctx else None,
-                "is_loopback": is_loop
+                "user": user_data,
+                "session_token": cur_token if ctx else None,
+                "token": cur_token if ctx else None,
+                "is_loopback": is_host_pc
             }).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -7158,11 +7943,17 @@ class Handler(BaseHTTPRequestHandler):
             device_id = query.get("device_id", [""])[0]
             user_id = query.get("user_id", [""])[0]
             with db() as con:
-                row = con.execute("SELECT status FROM access_requests WHERE device_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1", (device_id, user_id)).fetchone()
+                row = con.execute("SELECT status, pin, pin_verified, user_id, full_name FROM access_requests WHERE device_id=? AND user_id=? ORDER BY created_at DESC LIMIT 1", (device_id, user_id)).fetchone()
                 if not row and device_id:
-                    row = con.execute("SELECT status FROM access_requests WHERE device_id=? ORDER BY created_at DESC LIMIT 1", (device_id,)).fetchone()
-            status = row["status"] if row else "none"
-            return self.send_json({"status": status})
+                    row = con.execute("SELECT status, pin, pin_verified, user_id, full_name FROM access_requests WHERE device_id=? ORDER BY created_at DESC LIMIT 1", (device_id,)).fetchone()
+            if not row:
+                return self.send_json({"status": "none"})
+            if row["status"] == "approved":
+                if row["pin_verified"] == 0:
+                    return self.send_json({"status": "approved_pending_pin", "user_id": row["user_id"], "full_name": row["full_name"]})
+                else:
+                    return self.send_json({"status": "approved", "user_id": row["user_id"]})
+            return self.send_json({"status": row["status"]})
 
         if path == "/api/auth/extension-status":
             ctx = self.get_auth_context()
@@ -7179,7 +7970,7 @@ class Handler(BaseHTTPRequestHandler):
             ctx = self.get_auth_context()
             is_host = bool(ctx and ctx.get("role") == "host")
             with db() as con:
-                raw_users = [dict(r) for r in con.execute("SELECT user_id, role, status, encrypted_password, created_at, updated_at FROM users ORDER BY created_at ASC")]
+                raw_users = [dict(r) for r in con.execute("SELECT user_id, full_name, role, status, encrypted_password, permissions, created_at, updated_at FROM users ORDER BY created_at ASC")]
                 users = []
                 for u in raw_users:
                     pwd_text = ""
@@ -7188,16 +7979,24 @@ class Handler(BaseHTTPRequestHandler):
                             pwd_text = vault_decrypt(u["encrypted_password"])
                         except Exception:
                             pwd_text = ""
+                    perms = {}
+                    if u.get("permissions"):
+                        try:
+                            perms = json.loads(u["permissions"])
+                        except Exception:
+                            perms = {}
                     users.append({
                         "user_id": u["user_id"],
+                        "full_name": u.get("full_name") or u["user_id"],
                         "role": u["role"],
                         "status": u["status"],
+                        "permissions": perms,
                         "password_text": pwd_text if is_host else "",
                         "created_at": u["created_at"],
                         "updated_at": u["updated_at"]
                     })
                 devices = [dict(r) for r in con.execute("SELECT device_id, user_id, device_name, ip_address, status, created_at, approved_at, last_seen_at FROM devices ORDER BY last_seen_at DESC")]
-                requests = [dict(r) for r in con.execute("SELECT request_id, user_id, device_id, device_name, ip_address, status, created_at FROM access_requests ORDER BY created_at DESC LIMIT 50")]
+                requests = [dict(r) for r in con.execute("SELECT request_id, user_id, full_name, device_id, device_name, ip_address, status, pin, pin_verified, created_at FROM access_requests ORDER BY created_at DESC LIMIT 50")]
             return self.send_json({"users": users, "devices": devices, "requests": requests})
 
         if path == "/api/settings":
@@ -7338,8 +8137,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(rows)
 
         if path == "/api/clients":
+            ctx = self.get_auth_context()
+            restricted = set()
+            if ctx and ctx.get("role") != "host":
+                with db() as con:
+                    u_row = con.execute("SELECT permissions FROM users WHERE user_id=?", (ctx.get("user_id"),)).fetchone()
+                    if u_row and u_row["permissions"]:
+                        try:
+                            perms = json.loads(u_row["permissions"])
+                            restricted = set(str(x).strip().upper() for x in perms.get("restricted_clients", []))
+                        except Exception:
+                            pass
             with db() as con:
                 rows = [dict(r) for r in con.execute("SELECT * FROM clients ORDER BY name")]
+            if restricted:
+                rows = [r for r in rows if str(r.get("file_no", "")).strip().upper() not in restricted]
             return self.send_json(rows)
 
         if path == "/api/clients/export":
@@ -7376,6 +8188,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
                 self.send_header("Content-Disposition", f'attachment; filename="VS_Database_Clients_Export_{today_str}.csv"')
                 self.send_header("Content-Length", str(len(csv_bytes)))
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(csv_bytes)
                 return
@@ -7385,12 +8199,109 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 self.send_header("Content-Disposition", f'attachment; filename="VS_Database_Clients_Export_{today_str}.xlsx"')
                 self.send_header("Content-Length", str(len(xlsx_bytes)))
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(xlsx_bytes)
                 return
 
+        if path in ("/api/clients/sample-template", "/api/template.xlsx"):
+            headers = ["File No.", "Name", "Mobile", "Firm Type", "Group", "Status"]
+            sample_rows = [
+                ["V-0001", "Shree Ram Textiles", "9829012345", "Partnership", "Trading", "Active"],
+                ["V-0002", "Rudraksh Tech Solutions", "9414012345", "Private Limited", "IT Services", "Active"],
+                ["V-0003", "Vimal & Associates", "9460222319", "Proprietorship", "Legal", "Active"]
+            ]
+            xlsx_bytes = generate_xlsx(headers, sample_rows)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", 'attachment; filename="Sample_Clients_Import_Template.xlsx"')
+            self.send_header("Content-Length", str(len(xlsx_bytes)))
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(xlsx_bytes)
+            return
+
         if path == "/api/system/check-updates":
-            return self.send_json(check_for_system_updates())
+            query_params = parse_qs(urlparse(self.path).query)
+            c_ver = query_params.get("version", [None])[0]
+            return self.send_json(check_for_system_updates(client_ver=c_ver))
+
+        if path == "/api/system/update-progress":
+            return self.send_json(get_update_download_state())
+
+        if path == "/api/system/download-update":
+            query_params = parse_qs(urlparse(self.path).query)
+            prod = query_params.get("product", ["client"])[0].lower()
+            fname = "VS Database Client Setup.exe" if prod == "client" else "VS Database Host Setup.exe"
+            dot_fname = f"VS.Database.{'Client' if prod == 'client' else 'Host'}.Setup.exe"
+            app_root = Path(__file__).resolve().parent
+            candidates = [
+                app_root / "Build_Latest" / fname,
+                app_root / "Build_Latest" / dot_fname,
+                app_root / fname,
+                app_root / dot_fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / dot_fname,
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.3.0_x64-setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.5_x64-setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.2_x64-setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.1_x64-setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.2.0_x64-setup.exe",
+                app_root / "src-tauri" / "target" / "release" / "bundle" / "nsis" / f"VS Database {'Client' if prod == 'client' else 'Host'}_2.1.0_x64-setup.exe",
+            ]
+            fpath = next((p for p in candidates if p.exists()), None)
+            if fpath:
+                fsize = fpath.stat().st_size
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                self.send_header("Content-Length", str(fsize))
+                self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                self.send_cors_headers()
+                self.end_headers()
+                with open(str(fpath), "rb") as f:
+                    try:
+                        shutil.copyfileobj(f, self.wfile)
+                    except (ConnectionResetError, BrokenPipeError):
+                        pass
+                return
+
+            # Fallback: stream installer directly from GitHub Releases via API token
+            try:
+                repo = "rudrakshpandit/VS-Database-Host-and-Client"
+                gh_token = get_github_auth_token()
+                rel_url = f"https://api.github.com/repos/{repo}/releases/latest"
+                rel_headers = {"User-Agent": "VS-Database-App", "Accept": "application/vnd.github+json"}
+                if gh_token:
+                    rel_headers["Authorization"] = f"token {gh_token}"
+                rel_req = urllib.request.Request(rel_url, headers=rel_headers)
+                with urllib.request.urlopen(rel_req, timeout=6) as rel_resp:
+                    rel_data = json.loads(rel_resp.read().decode())
+                target_word = "Host" if prod == "host" else "Client"
+                asset = next((a for a in rel_data.get("assets", []) if target_word in a.get("name", "")), None)
+                if asset and asset.get("url"):
+                    dl_headers = {"User-Agent": "VS-Database-App", "Accept": "application/octet-stream"}
+                    if gh_token:
+                        dl_headers["Authorization"] = f"token {gh_token}"
+                    dl_req = urllib.request.Request(asset["url"], headers=dl_headers)
+                    with urllib.request.urlopen(dl_req, timeout=30) as dl_resp:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/octet-stream")
+                        self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                        cl = dl_resp.headers.get("Content-Length")
+                        if cl:
+                            self.send_header("Content-Length", cl)
+                        self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+                        self.send_cors_headers()
+                        self.end_headers()
+                        shutil.copyfileobj(dl_resp, self.wfile)
+                    return
+            except Exception as exc:
+                print(f"[Update Stream Error] {exc}")
+
+            return self.send_error(404, "Installer setup package not found on host or GitHub.")
 
         if path == "/api/system/autostart":
             return self.send_json(get_autostart_status())
@@ -7561,8 +8472,111 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/desktop/health":
             return self.send_json(get_desktop_health())
 
+        if path == "/api/client/connection-state":
+            appdata = os.environ.get("APPDATA") or os.path.expanduser("~\\AppData\\Roaming")
+            state_p = Path(appdata) / "VS Database" / "client_connection_state.json"
+            if state_p.is_file():
+                try:
+                    with open(state_p, "r", encoding="utf-8") as f:
+                        return self.send_json(json.load(f))
+                except Exception:
+                    pass
+            return self.send_json({"connected": False, "status": "offline"})
+
+        if path == "/api/client/autostart":
+            is_active = False
+            cmd_str = ""
+            if sys.platform == "win32":
+                try:
+                    import winreg
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ) as key:
+                        cmd_str, _ = winreg.QueryValueEx(key, "VSDatabaseClientAgent")
+                        is_active = bool(cmd_str)
+                except Exception:
+                    pass
+            return self.send_json({"ok": True, "autostart": is_active, "cmd": cmd_str})
+
+        if path == "/api/host/status":
+            with db() as con:
+                active_s = con.execute("SELECT COUNT(*) FROM sessions WHERE status = 'active'").fetchone()[0]
+                dev_count = con.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+            lan_ip = get_local_lan_ip()
+            return self.send_json({
+                "ok": True,
+                "host_mode": HOST_MODE,
+                "port": PORT,
+                "central_authority": True,
+                "active_sessions": active_s,
+                "registered_devices": dev_count,
+                "host_ip": lan_ip,
+                "host_address": f"{lan_ip}:{PORT}",
+                "server_time": now()
+            })
+
+        if path == "/api/host/devices":
+            ctx = self.get_auth_context()
+            if not ctx or ctx.get("role") != "host":
+                return self.reject(403, "Access restricted to Host administrator.")
+            with db() as con:
+                rows = con.execute("SELECT device_id, user_id, device_name, ip_address, status, created_at, approved_at, last_seen_at FROM devices ORDER BY created_at DESC").fetchall()
+            return self.send_json({"ok": True, "devices": [dict(r) for r in rows]})
+
+        if path == "/api/auth/validate-session":
+            token = self.get_auth_token()
+            if not token:
+                return self.send_json({"ok": False, "valid": False, "error": "No session token provided."}, 401)
+            ctx = validate_session(token, self.client_address[0])
+            if not ctx:
+                return self.send_json({"ok": False, "valid": False, "error": "Session is invalid or device has been revoked."}, 403)
+            return self.send_json({
+                "ok": True,
+                "valid": True,
+                "user_id": ctx["user_id"],
+                "role": ctx["role"],
+                "device_id": ctx["device_id"],
+                "device_name": ctx["device_name"],
+                "device_status": ctx.get("device_status", "approved")
+            })
+
         if path == "/api/desktop/state":
             return self.send_json(get_desktop_state())
+
+        if path == "/api/desktop/lifecycle-policy":
+            with db() as con:
+                t = now()
+                # Count active non-loopback sessions (LAN workstations)
+                active_lan_sessions = con.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE status = 'active' AND ip_address != '127.0.0.1' AND session_type != 'extension'"
+                ).fetchone()[0]
+                # Check if LAN server mode is explicitly enabled
+                lan_setting = con.execute(
+                    "SELECT value FROM settings WHERE key = 'lan_server_mode' LIMIT 1"
+                ).fetchone()
+                lan_enabled = bool(lan_setting and lan_setting[0] in ("true", "1", "enabled"))
+
+            autostart_active = is_server_autostart_enabled()
+
+            if autostart_active:
+                can_terminate = False
+                reason = "autostart_enabled"
+            elif lan_enabled:
+                can_terminate = False
+                reason = "lan_server_mode_enabled"
+            elif active_lan_sessions > 0:
+                can_terminate = False
+                reason = "active_lan_sessions"
+            else:
+                can_terminate = True
+                reason = "no_blocking_policy"
+
+            return self.send_json({
+                "ok": True,
+                "lan_server_mode": lan_enabled,
+                "autostart_enabled": autostart_active,
+                "active_lan_sessions": active_lan_sessions,
+                "can_terminate": can_terminate,
+                "reason": reason
+            })
 
         if path == "/api/desktop/navigate":
             global _PENDING_DESKTOP_ROUTE
@@ -7733,12 +8747,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.handle_automation_post(path, payload)
 
             if path == "/api/auth/setup-host":
-                if has_host_user():
-                    raise ValueError("Host user is already configured.")
-                user_id = str(payload.get("user_id", "")).strip()
+                client_ip = self.client_address[0]
+                if not self.is_host_client() and has_host_user():
+                    raise ValueError("Host administrator can only be configured or reset locally on the Host PC.")
+                user_id = str(payload.get("user_id", "")).strip() or "Rudra_Dev"
                 password = str(payload.get("password", "")).strip()
+                full_name = str(payload.get("full_name", "")).strip() or "Rudraksh Sikhwal"
                 device_id = str(payload.get("device_id", "")).strip() or str(uuid.uuid4())
-                device_name = str(payload.get("device_name", "")).strip() or "Host PC"
+                device_name = str(payload.get("device_name", "")).strip() or "Host Server PC"
                 if not user_id or not password:
                     raise ValueError("User ID and password are required.")
                 if len(password) < 6:
@@ -7746,14 +8762,18 @@ class Handler(BaseHTTPRequestHandler):
                 pwd_hash, salt = hash_password(password)
                 enc_pwd = vault_encrypt(password)
                 t = now()
-                client_ip = self.client_address[0]
                 with db() as con:
-                    con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password) VALUES (?, ?, ?, 'host', 'active', ?, ?, ?)",
-                                (user_id, pwd_hash, salt, t, t, enc_pwd))
-                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+                    existing = con.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+                    if existing:
+                        con.execute("UPDATE users SET password_hash=?, salt=?, role='host', status='active', updated_at=?, encrypted_password=?, full_name=? WHERE user_id=?",
+                                    (pwd_hash, salt, t, enc_pwd, full_name, user_id))
+                    else:
+                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password, full_name, permissions) VALUES (?, ?, ?, 'host', 'active', ?, ?, ?, ?, '{}')",
+                                    (user_id, pwd_hash, salt, t, t, enc_pwd, full_name))
+                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status='approved', updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
                                 (device_id, user_id, device_name, client_ip, t, t, t, t))
                 token = create_session(user_id, device_id, client_ip, session_type="web")
-                raw = json.dumps({"ok": True, "user_id": user_id, "role": "host", "device_id": device_id, "device_name": device_name}).encode()
+                raw = json.dumps({"ok": True, "user_id": user_id, "role": "host", "device_id": device_id, "device_name": device_name, "token": token, "session_token": token, "message": "Host Administrator configured and signed in successfully."}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_auth_cookie(token)
@@ -7762,37 +8782,81 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return self.wfile.write(raw)
 
-            if path == "/api/auth/request-access":
+            if path in ("/api/auth/register", "/api/auth/request-access"):
                 user_id = str(payload.get("user_id", "")).strip()
                 password = str(payload.get("password", "")).strip()
-                device_id = str(payload.get("device_id", "")).strip()
+                full_name = str(payload.get("full_name", "")).strip() or user_id
+                device_id = str(payload.get("device_id", "")).strip() or str(uuid.uuid4())
                 device_name = str(payload.get("device_name", "")).strip() or "Office PC"
-                if not user_id or not password or not device_id:
-                    raise ValueError("User ID, password, and device identifier are required.")
+                pin = str(payload.get("pin", "")).strip()
+                if not user_id or not password:
+                    raise ValueError("User ID and password are required.")
                 if len(password) < 6:
                     raise ValueError("Password must be at least 6 characters.")
                 client_ip = self.client_address[0]
+                is_from_host = self.is_host_client()
+                is_first_user = not has_host_user()
                 t = now()
                 req_id = str(uuid.uuid4())
+
+                pin_approved = False
+                if pin:
+                    with db() as con:
+                        pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=?", (pin,)).fetchone()
+                        if pin_row and pin_row["used"] == 0 and pin_row["expires_at"] >= t:
+                            con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
+                            pin_approved = True
+
+                # If registration is on the Host PC or if setting up first host user:
+                # Immediate Host Administrator authorization with zero approval wait!
+                if is_from_host or is_first_user:
+                    is_auto_approved = True
+                    role = "host"
+                    user_status = "active"
+                    device_status = "approved"
+                else:
+                    is_auto_approved = pin_approved
+                    role = "staff"
+                    user_status = "active" if is_auto_approved else "pending"
+                    device_status = "approved" if is_auto_approved else "pending"
+
                 with db() as con:
                     existing_user = con.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
                     if existing_user:
                         if not verify_password(password, existing_user["password_hash"], existing_user["salt"]):
                             raise ValueError("Incorrect password for existing User ID.")
                         enc_pwd = vault_encrypt(password)
-                        con.execute("UPDATE users SET encrypted_password=? WHERE user_id=?", (enc_pwd, user_id))
+                        if is_auto_approved:
+                            con.execute("UPDATE users SET full_name=?, encrypted_password=?, status='active' WHERE user_id=?", (full_name, enc_pwd, user_id))
+                        else:
+                            con.execute("UPDATE users SET full_name=?, encrypted_password=? WHERE user_id=?", (full_name, enc_pwd, user_id))
+                        role = existing_user["role"]
                     else:
                         pwd_hash, salt = hash_password(password)
                         enc_pwd = vault_encrypt(password)
-                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password) VALUES (?, ?, ?, 'staff', 'pending', ?, ?, ?)",
-                                    (user_id, pwd_hash, salt, t, t, enc_pwd))
+                        con.execute("INSERT INTO users (user_id, password_hash, salt, role, status, created_at, updated_at, encrypted_password, full_name, permissions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')",
+                                    (user_id, pwd_hash, salt, role, user_status, t, t, enc_pwd, full_name))
 
-                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, NULL, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status='pending', updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
-                                (device_id, user_id, device_name, client_ip, t, t, t))
+                    con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id, device_name=excluded.device_name, ip_address=excluded.ip_address, status=excluded.status, updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at",
+                                (device_id, user_id, device_name, client_ip, device_status, t, t, t if is_auto_approved else None, t))
 
-                    con.execute("INSERT INTO access_requests (request_id, user_id, device_id, device_name, ip_address, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-                                (req_id, user_id, device_id, device_name, client_ip, t, t))
-                return self.send_json({"request_id": req_id, "status": "pending", "message": "Access request submitted. Waiting for Host approval."})
+                    if not is_auto_approved:
+                        con.execute("INSERT INTO access_requests (request_id, user_id, full_name, device_id, device_name, ip_address, status, pin, pin_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', '', 0, ?, ?)",
+                                    (req_id, user_id, full_name, device_id, device_name, client_ip, t, t))
+
+                mark_data_changed()
+                if is_auto_approved:
+                    token = create_session(user_id, device_id, client_ip, session_type="web" if role == "host" else "workstation")
+                    raw = json.dumps({"ok": True, "status": "approved", "user_id": user_id, "role": role, "device_id": device_id, "device_name": device_name, "token": token, "session_token": token, "message": "Registered and signed in successfully."}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_auth_cookie(token)
+                    self.send_header("Content-Length", len(raw))
+                    self.send_cors_headers()
+                    self.end_headers()
+                    return self.wfile.write(raw)
+                else:
+                    return self.send_json({"ok": True, "request_id": req_id, "status": "pending", "message": "Registration submitted. Waiting for Host approval."})
 
             if path == "/api/auth/login":
                 user_id = str(payload.get("user_id", "")).strip()
@@ -7811,11 +8875,20 @@ class Handler(BaseHTTPRequestHandler):
                     if user["status"] == "pending":
                         raise ValueError("Account access is pending Host approval.")
 
+                    client_ip = self.client_address[0]
+                    is_from_host = self.is_host_client()
                     if not device_id:
-                        raise ValueError("Device identifier required.")
+                        device_id = str(uuid.uuid4())
                     dev = con.execute("SELECT * FROM devices WHERE device_id=? AND user_id=?", (device_id, user_id)).fetchone()
                     if not dev:
-                        raise ValueError("Device not registered. Please submit an access request.")
+                        if user["role"] == "host" or is_from_host:
+                            t_dev = now()
+                            dev_name = "Host Server PC" if user["role"] == "host" else "Office Workstation"
+                            con.execute("INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+                                        (device_id, user_id, dev_name, client_ip, t_dev, t_dev, t_dev, t_dev))
+                            dev = {"device_name": dev_name, "status": "approved"}
+                        else:
+                            raise ValueError("Device not registered. Please submit an access request.")
                     if dev["status"] == "pending":
                         raise ValueError("Device approval is pending Host approval.")
                     if dev["status"] in ("disabled", "revoked", "rejected"):
@@ -7823,7 +8896,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 client_ip = self.client_address[0]
                 token = create_session(user_id, device_id, client_ip, session_type="web")
-                raw = json.dumps({"ok": True, "user_id": user_id, "role": user["role"], "device_name": dev["device_name"], "device_id": device_id}).encode()
+                raw = json.dumps({"ok": True, "user_id": user_id, "role": user["role"], "device_name": dev["device_name"], "device_id": device_id, "token": token, "session_token": token}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_auth_cookie(token)
@@ -7897,17 +8970,229 @@ class Handler(BaseHTTPRequestHandler):
                     "status": "approved"
                 })
 
+            if path == "/api/host/pairing/generate-pin":
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to generate pairing PIN.")
+                pin = f"{secrets.randbelow(900000) + 100000}"
+                t = now()
+                expires_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 300, timezone.utc).isoformat(timespec="seconds")
+                user_id = ctx.get("user_id", "admin")
+                with db() as con:
+                    con.execute(
+                        "INSERT INTO device_pairing_pins (pin, user_id, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                        (pin, user_id, expires_at, t)
+                    )
+                return self.send_json({
+                    "ok": True,
+                    "pin": pin,
+                    "expires_in_seconds": 300,
+                    "expires_at": expires_at,
+                    "created_at": t
+                })
+
+            if path == "/api/host/pairing/claim-pin":
+                client_ip = self.client_address[0]
+                allowed, wait_sec = check_pairing_rate_limit(client_ip)
+                if not allowed:
+                    return self.send_json({"ok": False, "error": f"Too many failed pairing attempts. Please wait {wait_sec} seconds before trying again."}, 429)
+                pin = str(payload.get("pin", "")).strip()
+                device_id = str(payload.get("device_id", "")).strip()
+                device_name = str(payload.get("device_name", "")).strip() or f"Workstation-{device_id[-6:]}"
+                if not pin or not device_id:
+                    raise ValueError("PIN and device_id are required.")
+                t = now()
+                with db() as con:
+                    pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=?", (pin,)).fetchone()
+                    if not pin_row:
+                        record_pairing_failed_attempt(client_ip)
+                        return self.send_json({"ok": False, "error": "Invalid pairing PIN."}, 400)
+                    if pin_row["used"] != 0:
+                        record_pairing_failed_attempt(client_ip)
+                        return self.send_json({"ok": False, "error": "Pairing PIN has already been used."}, 400)
+                    if pin_row["expires_at"] < t:
+                        record_pairing_failed_attempt(client_ip)
+                        return self.send_json({"ok": False, "error": "Pairing PIN has expired."}, 400)
+                    
+                    clear_pairing_failed_attempts(client_ip)
+                    user_id = pin_row["user_id"]
+                    # Mark PIN used
+                    con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
+                    
+                    # Approve device
+                    dev = con.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+                    if not dev:
+                        con.execute(
+                            "INSERT INTO devices (device_id, user_id, device_name, ip_address, status, created_at, updated_at, approved_at, last_seen_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+                            (device_id, user_id, device_name, client_ip, t, t, t, t)
+                        )
+                    else:
+                        con.execute(
+                            "UPDATE devices SET status='approved', ip_address=?, last_seen_at=?, updated_at=?, approved_at=? WHERE device_id=?",
+                            (client_ip, t, t, t, device_id)
+                        )
+                    # Get user role
+                    u_row = con.execute("SELECT role FROM users WHERE user_id=?", (user_id,)).fetchone()
+                    user_role = u_row["role"] if u_row else "staff"
+
+                token = create_session(user_id, device_id, client_ip, session_type="workstation")
+                return self.send_json({
+                    "ok": True,
+                    "session_token": token,
+                    "user_id": user_id,
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "status": "approved",
+                    "role": user_role
+                })
+
+            if path in ("/api/host/devices/revoke", "/api/admin/devices/revoke"):
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to revoke devices.")
+                device_id = str(payload.get("device_id", "")).strip()
+                if not device_id:
+                    raise ValueError("Device ID is required.")
+                revoke_device(device_id)
+                return self.send_json({"ok": True, "device_id": device_id, "status": "revoked"})
+
             if path == "/api/admin/requests/approve":
                 req_id = str(payload.get("request_id", "")).strip()
                 t = now()
+                pin = f"{secrets.randbelow(900000) + 100000}"
+                expires_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 600, timezone.utc).isoformat(timespec="seconds")
                 with db() as con:
                     req = con.execute("SELECT * FROM access_requests WHERE request_id=?", (req_id,)).fetchone()
                     if not req:
                         raise ValueError("Request not found.")
-                    con.execute("UPDATE access_requests SET status='approved', updated_at=? WHERE request_id=?", (t, req_id))
-                    con.execute("UPDATE users SET status='active', updated_at=? WHERE user_id=?", (t, req["user_id"]))
-                    con.execute("UPDATE devices SET status='approved', approved_at=?, updated_at=? WHERE device_id=?", (t, t, req["device_id"]))
-                return self.send_json({"ok": True, "request_id": req_id, "status": "approved"})
+                    con.execute("UPDATE access_requests SET status='approved', pin=?, pin_verified=0, updated_at=? WHERE request_id=?", (pin, t, req_id))
+                    con.execute("INSERT OR REPLACE INTO device_pairing_pins (pin, user_id, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                                (pin, req["user_id"], expires_at, t))
+                mark_data_changed()
+                staff_name = req["full_name"] if ("full_name" in req.keys() and req["full_name"]) else req["user_id"]
+                return self.send_json({
+                    "ok": True,
+                    "request_id": req_id,
+                    "status": "approved",
+                    "pin": pin,
+                    "user_id": req["user_id"],
+                    "full_name": staff_name,
+                    "expires_in_seconds": 600
+                })
+
+            if path == "/api/auth/verify-approval-pin":
+                pin = str(payload.get("pin", "")).strip()
+                device_id = str(payload.get("device_id", "")).strip()
+                user_id = str(payload.get("user_id", "")).strip()
+                if not pin or not device_id:
+                    raise ValueError("PIN and device_id are required.")
+                t = now()
+                client_ip = self.client_address[0]
+                with db() as con:
+                    req = None
+                    if user_id:
+                        req = con.execute("SELECT * FROM access_requests WHERE pin=? AND device_id=? AND user_id=? AND status='approved' AND pin_verified=0 ORDER BY updated_at DESC LIMIT 1", (pin, device_id, user_id)).fetchone()
+                    if not req:
+                        req = con.execute("SELECT * FROM access_requests WHERE pin=? AND device_id=? AND status='approved' AND pin_verified=0 ORDER BY updated_at DESC LIMIT 1", (pin, device_id)).fetchone()
+                    if not req:
+                        pin_row = con.execute("SELECT * FROM device_pairing_pins WHERE pin=? AND used=0 AND expires_at>=?", (pin, t)).fetchone()
+                        if not pin_row:
+                            raise ValueError("Invalid, expired, or already used 6-digit PIN.")
+                        target_user_id = pin_row["user_id"]
+                    else:
+                        target_user_id = req["user_id"]
+                        con.execute("UPDATE access_requests SET pin_verified=1, updated_at=? WHERE request_id=?", (t, req["request_id"]))
+
+                    con.execute("UPDATE device_pairing_pins SET used=1 WHERE pin=?", (pin,))
+                    con.execute("UPDATE users SET status='active', updated_at=? WHERE user_id=?", (t, target_user_id))
+                    con.execute("UPDATE devices SET status='approved', ip_address=?, approved_at=?, updated_at=?, last_seen_at=? WHERE device_id=?",
+                                (client_ip, t, t, t, device_id))
+                    u_row = con.execute("SELECT user_id, full_name, role, permissions FROM users WHERE user_id=?", (target_user_id,)).fetchone()
+                    dev_row = con.execute("SELECT device_name FROM devices WHERE device_id=?", (device_id,)).fetchone()
+                    d_name = dev_row["device_name"] if dev_row else "Workstation"
+
+                token = create_session(target_user_id, device_id, client_ip, session_type="workstation")
+                mark_data_changed()
+                perms = {}
+                if u_row and u_row["permissions"]:
+                    try:
+                        perms = json.loads(u_row["permissions"])
+                    except Exception:
+                        pass
+                user_full = u_row["full_name"] if (u_row and "full_name" in u_row.keys() and u_row["full_name"]) else target_user_id
+                raw = json.dumps({
+                    "ok": True,
+                    "session_token": token,
+                    "token": token,
+                    "user_id": target_user_id,
+                    "full_name": user_full,
+                    "role": u_row["role"] if u_row else "staff",
+                    "device_id": device_id,
+                    "device_name": d_name,
+                    "permissions": perms
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_auth_cookie(token)
+                self.send_header("Content-Length", len(raw))
+                self.send_cors_headers()
+                self.end_headers()
+                return self.wfile.write(raw)
+
+            if path == "/api/admin/users/permissions":
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to configure permissions.")
+                target_user = str(payload.get("user_id", "")).strip()
+                perms = payload.get("permissions", {})
+                if not target_user:
+                    raise ValueError("Target user_id is required.")
+                perms_json = json.dumps(perms)
+                with db() as con:
+                    con.execute("UPDATE users SET permissions=?, updated_at=? WHERE user_id=?", (perms_json, now(), target_user))
+                mark_data_changed()
+                return self.send_json({"ok": True, "user_id": target_user, "permissions": perms})
+
+            if path == "/api/admin/settings/generate-unlock-pin":
+                ctx = self.get_auth_context()
+                if not ctx or ctx.get("role") != "host":
+                    raise ValueError("Host administrator privileges required to generate Settings Unlock PIN.")
+                pin = f"{secrets.randbelow(900000) + 100000}"
+                t = now()
+                expires_at = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 900, timezone.utc).isoformat(timespec="seconds")
+                with db() as con:
+                    con.execute(
+                        "INSERT INTO settings_unlock_pins (pin, created_by, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)",
+                        (pin, ctx.get("user_id", "admin"), expires_at, t)
+                    )
+                mark_data_changed()
+                return self.send_json({
+                    "ok": True,
+                    "pin": pin,
+                    "expires_in_seconds": 900,
+                    "expires_at": expires_at
+                })
+
+            if path == "/api/settings/verify-unlock-pin":
+                pin = str(payload.get("pin", "")).strip()
+                if not pin:
+                    raise ValueError("6-digit Unlock PIN is required.")
+                t = now()
+                with db() as con:
+                    pin_row = con.execute("SELECT * FROM settings_unlock_pins WHERE pin=?", (pin,)).fetchone()
+                    if not pin_row:
+                        return self.send_json({"ok": False, "error": "Invalid Unlock PIN."}, 400)
+                    if pin_row["used"] != 0:
+                        return self.send_json({"ok": False, "error": "Unlock PIN has already been used."}, 400)
+                    if pin_row["expires_at"] < t:
+                        return self.send_json({"ok": False, "error": "Unlock PIN has expired."}, 400)
+                    con.execute("UPDATE settings_unlock_pins SET used=1 WHERE pin=?", (pin,))
+                unlock_token = f"unlock_{secrets.token_hex(16)}"
+                return self.send_json({
+                    "ok": True,
+                    "unlock_token": unlock_token,
+                    "message": "Host Authorization granted. Settings editing unlocked."
+                })
 
             if path == "/api/admin/requests/reject":
                 req_id = str(payload.get("request_id", "")).strip()
@@ -7919,13 +9204,6 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("UPDATE access_requests SET status='rejected', updated_at=? WHERE request_id=?", (t, req_id))
                     con.execute("UPDATE devices SET status='rejected', updated_at=? WHERE device_id=?", (t, req["device_id"]))
                 return self.send_json({"ok": True, "request_id": req_id, "status": "rejected"})
-
-            if path == "/api/admin/devices/revoke":
-                device_id = str(payload.get("device_id", "")).strip()
-                if not device_id:
-                    raise ValueError("Device ID is required.")
-                revoke_device(device_id)
-                return self.send_json({"ok": True, "device_id": device_id, "status": "revoked"})
 
             if path == "/api/admin/devices/status":
                 device_id = str(payload.get("device_id", "")).strip()
@@ -7974,6 +9252,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "user_id": user_id, "message": f"Password updated for {user_id}"})
 
             if path == "/api/settings":
+                ctx = self.get_auth_context()
+                if ctx and ctx.get("role") != "host":
+                    unlock_token = str(payload.get("unlock_token", "")).strip() or self.headers.get("X-VS-Settings-Unlock-Token", "").strip()
+                    unlock_pin = str(payload.get("unlock_pin", "")).strip()
+                    authorized = False
+                    if unlock_pin:
+                        with db() as con:
+                            pin_row = con.execute("SELECT * FROM settings_unlock_pins WHERE pin=? AND used=0 AND expires_at>=?", (unlock_pin, now())).fetchone()
+                            if pin_row:
+                                con.execute("UPDATE settings_unlock_pins SET used=1 WHERE pin=?", (unlock_pin,))
+                                authorized = True
+                    elif unlock_token and unlock_token.startswith("unlock_"):
+                        authorized = True
+                    if not authorized:
+                        raise ValueError("Host authorization required to modify system settings. Enter the 6-digit Unlock PIN provided by Host administrator.")
+
                 for key in ("local_root", "drive_root", "google_drive_mode", "office_root", "client_portal_root",
                             "office_folder_name", "client_folder_name", "google_portal_root_name",
                             "firm_name", "firm_title", "firm_city", "firm_phone", "firm_upi_id", "host_pin",
@@ -7987,6 +9281,7 @@ class Handler(BaseHTTPRequestHandler):
                 
                 # Auto-provision workspace directories and update passes
                 provision_res = provision_workspace()
+                mark_data_changed()
                 return self.send_json({**settings_payload(), "provision_result": provision_res})
 
             if path == "/api/setup/provision":
@@ -8432,6 +9727,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                     threading.Thread(target=generate_client_portal_pdf_background, args=(client, not bool(existing)), daemon=True).start()
+                mark_data_changed()
                 return self.send_json(client, 201)
 
             if path == "/api/clients/rename":
@@ -8451,6 +9747,7 @@ class Handler(BaseHTTPRequestHandler):
                     con.execute("INSERT INTO clients VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(file_no) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
                                 (new_fno, new_name, client["mobile"], client["client_type"], client["client_group"], client["tags"], client["status"], client["users"], now()))
                     log_activity("client_renamed", new_fno, new_name, f"Renamed client from '{old_name}' to '{new_name}'", con=con)
+                mark_data_changed()
                 return self.send_json({"ok": True, "file_no": new_fno, "name": new_name, "old_name": old_name})
 
             if path == "/api/security-alerts/dismiss":
@@ -8571,6 +9868,7 @@ class Handler(BaseHTTPRequestHandler):
                         deleted_count += 1
                         deleted_fnos.append(fno)
 
+                mark_data_changed()
                 return self.send_json({
                     "status": "success",
                     "deleted": deleted_count,
@@ -8799,9 +10097,97 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/system/apply-update":
                 return self.send_json(apply_system_update())
 
+            if path == "/api/system/start-update-download":
+                target_ver = payload.get("version")
+                product = payload.get("product", "host")
+                res = start_background_update_download(target_ver=target_ver, product=product)
+                return self.send_json(res)
+
+            if path == "/api/system/execute-update-restart":
+                installer_path = payload.get("installer_path")
+                try:
+                    res = execute_restart_update(installer_path=installer_path)
+                    return self.send_json(res)
+                except Exception as exc:
+                    return self.send_json({"ok": False, "error": str(exc)}, 400)
+
             if path == "/api/system/autostart":
-                app_autostart = bool(payload.get("app_autostart", False))
-                return self.send_json(set_app_autostart(app_autostart))
+                if "enabled" in payload:
+                    enabled = bool(payload.get("enabled", False))
+                    return self.send_json(set_server_autostart(enabled))
+                elif "server_autostart" in payload:
+                    enabled = bool(payload.get("server_autostart", False))
+                    return self.send_json(set_server_autostart(enabled))
+                elif "app_autostart" in payload:
+                    app_autostart = bool(payload.get("app_autostart", False))
+                    return self.send_json(set_app_autostart(app_autostart))
+                else:
+                    enabled = bool(payload.get("enabled", False))
+                    return self.send_json(set_server_autostart(enabled))
+
+            if path == "/api/client/autostart":
+                enabled = bool(payload.get("autostart", payload.get("enabled", False)))
+                if sys.platform != "win32":
+                    return self.send_json({"ok": False, "error": "Windows only"})
+                try:
+                    import winreg
+                    app_dir = Path(__file__).resolve().parent
+                    daemon_p = app_dir / "client_daemon.pyw"
+                    pyw = Path(sys.executable).parent / "pythonw.exe"
+                    if not pyw.is_file():
+                        pyw = Path("pythonw.exe")
+                    cmd = f'"{pyw}" "{daemon_p}"'
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE) as key:
+                        if enabled:
+                            winreg.SetValueEx(key, "VSDatabaseClientAgent", 0, winreg.REG_SZ, cmd)
+                        else:
+                            try:
+                                winreg.DeleteValue(key, "VSDatabaseClientAgent")
+                            except OSError:
+                                pass
+                    return self.send_json({"ok": True, "autostart": enabled})
+                except Exception as exc:
+                    return self.send_json({"ok": False, "error": str(exc)}, 500)
+
+            if path == "/api/system/browse-folder":
+                initial = str(payload.get("current") or "").strip()
+                if not initial or not os.path.isdir(initial):
+                    initial = os.path.expanduser("~")
+                chosen = [None]
+                def _browse():
+                    # Try tkinter filedialog
+                    try:
+                        import tkinter as tk
+                        from tkinter import filedialog
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)
+                        folder = filedialog.askdirectory(initialdir=initial, title="Select Storage Folder")
+                        root.destroy()
+                        if folder:
+                            chosen[0] = os.path.normpath(folder)
+                    except Exception:
+                        pass
+                    # If tkinter did not yield a result, fallback to Windows PowerShell FolderBrowserDialog
+                    if not chosen[0] and sys.platform == "win32":
+                        try:
+                            ps_cmd = (
+                                "Add-Type -AssemblyName System.Windows.Forms; "
+                                "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                                "$f.Description = 'Select Storage Folder'; "
+                                f"$f.SelectedPath = '{initial}'; "
+                                "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"
+                            )
+                            res = subprocess.check_output(["powershell", "-NoProfile", "-Command", ps_cmd], text=True, timeout=30).strip()
+                            if res and os.path.isdir(res):
+                                chosen[0] = os.path.normpath(res)
+                        except Exception:
+                            pass
+
+                th = threading.Thread(target=_browse)
+                th.start()
+                th.join(timeout=45)
+                return self.send_json({"ok": True, "path": chosen[0] or ""})
 
             if path == "/api/desktop/close":
                 threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
@@ -11420,6 +12806,18 @@ def stop_server():
     _BACKEND_STATE = "STOPPED"
 
 
+class FastThreadingHTTPServer(ThreadingHTTPServer):
+    def get_request(self):
+        sock, addr = super().get_request()
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            sock.settimeout(20.0)
+        except Exception:
+            pass
+        return sock, addr
+
+
 def start_server_background(port: int = None, host: str = "0.0.0.0"):
     """Starts the VS Database backend server in background threads."""
     global PORT, _SERVER_INSTANCE, _BACKGROUND_TIMERS, _BACKEND_STATE
@@ -11441,7 +12839,8 @@ def start_server_background(port: int = None, host: str = "0.0.0.0"):
     
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True
-    main_server = ThreadingHTTPServer((host, PORT), Handler)
+    ThreadingHTTPServer.request_queue_size = 128
+    main_server = FastThreadingHTTPServer((host, PORT), Handler)
     main_server.daemon_threads = True
     _SERVER_INSTANCE = main_server
     _BACKEND_STATE = "READY"
@@ -11473,7 +12872,8 @@ if __name__ == "__main__":
         t.start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True
-    main_server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    ThreadingHTTPServer.request_queue_size = 128
+    main_server = FastThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     main_server.daemon_threads = True
     _SERVER_INSTANCE = main_server
     _BACKEND_STATE = "READY"

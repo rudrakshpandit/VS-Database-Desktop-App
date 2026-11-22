@@ -797,6 +797,54 @@ class DesktopBridge:
         except Exception as exc:
             return {"error": str(exc)}
 
+    def get_client_connection_state(self):
+        try:
+            appdata = os.environ.get("APPDATA") or os.path.expanduser("~\\AppData\\Roaming")
+            p = os.path.join(appdata, "VS Database", "client_connection_state.json")
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {"connected": False, "status": "offline"}
+
+    def get_client_autostart_status(self):
+        if sys.platform != "win32":
+            return {"ok": True, "autostart": False}
+        try:
+            import winreg
+            run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_READ) as key:
+                val, _ = winreg.QueryValueEx(key, "VSDatabaseClientAgent")
+                return {"ok": True, "autostart": bool(val), "cmd": str(val)}
+        except Exception:
+            return {"ok": True, "autostart": False}
+
+    def set_client_autostart(self, enabled: bool):
+        if sys.platform != "win32":
+            return {"ok": False, "error": "Windows only"}
+        try:
+            app_dir = Path(__file__).resolve().parent
+            daemon_script = app_dir / "client_daemon.pyw"
+            pythonw_path = Path(sys.executable).parent / "pythonw.exe"
+            if not pythonw_path.is_file():
+                pythonw_path = Path("pythonw.exe")
+            cmd = f'"{pythonw_path}" "{daemon_script}"'
+            
+            import winreg
+            run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
+                if enabled:
+                    winreg.SetValueEx(key, "VSDatabaseClientAgent", 0, winreg.REG_SZ, cmd)
+                else:
+                    try:
+                        winreg.DeleteValue(key, "VSDatabaseClientAgent")
+                    except OSError:
+                        pass
+            return {"ok": True, "autostart": bool(enabled)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def save_file_to_location(self, source_filename: str, default_name: str = None, artifact_id: int | str = None):
         """Opens native Windows Save File Dialog and saves the generated artifact (PDF, DOCX, XLSX, etc.)."""
         if not self._window:

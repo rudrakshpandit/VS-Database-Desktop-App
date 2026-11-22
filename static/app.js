@@ -577,8 +577,53 @@ const VSOfflineManager = {
       if (contentEl && (!contentEl.firstElementChild || contentEl.innerHTML.trim() === '' || !window.__vsDashboardRendered)) {
         renderSkeletonLoader(true);
       }
+
+      // Hot Cached Connection State Check
+      let isHotOnline = false;
+      let hotState = null;
+      try {
+        if (window.TauriBridge && typeof window.TauriBridge.getClientConnectionState === 'function') {
+          hotState = await window.TauriBridge.getClientConnectionState();
+        } else if (window.pywebview?.api?.get_client_connection_state) {
+          hotState = await window.pywebview.api.get_client_connection_state();
+        }
+      } catch (_) {}
+
+      if (!hotState) {
+        try {
+          const raw = localStorage.getItem('vs_client_connection_state') || localStorage.getItem('vs-client-connection-state');
+          if (raw) hotState = JSON.parse(raw);
+        } catch (_) {}
+      }
+      if (typeof hotState === 'string') {
+        try { hotState = JSON.parse(hotState); } catch (_) {}
+      }
+
+      const nowSec = Date.now() / 1000;
+      if (hotState && (hotState.connected === true || hotState.status === 'online') && (!hotState.last_ping || (nowSec - hotState.last_ping) < 60)) {
+        isHotOnline = true;
+        if (hotState.host_url && window.TauriBridge && typeof window.TauriBridge.setHostUrl === 'function') {
+          window.TauriBridge.setHostUrl(hotState.host_url);
+        }
+        try {
+          localStorage.setItem('vs_client_connection_state', JSON.stringify(hotState));
+        } catch (_) {}
+      }
+
+      if (isHotOnline) {
+        this.currentState = this.STATE_ONLINE;
+        this.consecutiveFailures = 0;
+        this.hideBanners();
+        this.unlockMutations();
+        console.log('[OfflineManager] Hot connection state verified! Instant ONLINE connect in <100ms.');
+        window.dispatchEvent(new CustomEvent('vsofflinechanged', { detail: { state: this.STATE_ONLINE, hot: true } }));
+        this.startHeartbeat(false);
+      } else {
+        this.startHeartbeat(true);
+      }
+    } else {
+      this.startHeartbeat(false);
     }
-    this.startHeartbeat(isClient);
     console.log('[OfflineManager] Initialized. Monitoring Host reachability...');
   },
 
@@ -3592,6 +3637,7 @@ async function load() {
 }
 
 function setup() {
+  const isClient = (window.__vsIsClientMode === true || currentUser?.role !== 'host');
   const curMode = settings.google_drive_mode || 'backup_and_client';
   const localVal = settings.local_root || 'D:\\Code Trial';
   const driveVal = settings.drive_root || 'G:\\My Drive\\VS Database';
@@ -3789,7 +3835,7 @@ function setup() {
                 <input type="checkbox" id="toggle-app-autostart" role="switch" aria-label="Autostart App at startup" style="position:absolute;opacity:0;pointer-events:none;" ${settings.app_autostart ? 'checked' : ''}>
                 <div class="sw-track" style="width:52px;height:28px;background:${settings.app_autostart ? '#10b981' : '#cbd5e1'};border-radius:14px;position:relative;transition:background 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:inset 0 2px 4px rgba(0,0,0,0.1);">
                   <div class="sw-knob" style="width:22px;height:22px;background:#ffffff;border-radius:50%;position:absolute;top:3px;left:${settings.app_autostart ? '27px' : '3px'};transition:all 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:0 2px 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;">
-                    <span class="sw-icon" style="font-size:11px;line-height:1;color:${settings.app_autostart ? '#10b981' : '#94a3b8'};font-weight:900;">${settings.app_autostart ? '✓' : ''}</span>
+                    <span class="sw-icon" style="display:flex;align-items:center;justify-content:center;">${settings.app_autostart ? '<svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:#10b981;fill:none;stroke-width:2.5;"><path d="M5 13l4 4L19 7"/></svg>' : ''}</span>
                   </div>
                 </div>
                 <span class="sw-text" style="margin-left:12px;font-size:13px;font-weight:700;color:${settings.app_autostart ? '#059669' : '#64748b'};min-width:40px;">${settings.app_autostart ? 'Yes' : 'No'}</span>
@@ -3797,24 +3843,58 @@ function setup() {
             </div>
           </div>
 
-          <!-- Card B: Server Background Service (Always Active) -->
+          ${isClient ? `
+          <!-- Card B (Client Mode): Auto-Connect on Windows Boot (Silent Background Agent) -->
           <div style="background:#fff;border:1px solid rgba(226,232,240,0.9);border-radius:14px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
             <div>
               <div style="font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;">
-                <svg class="i" style="width:18px;height:18px;color:#16a34a;" aria-hidden="true"><use href="#refresh"/></svg>
-                <span>Backend Server Service</span>
+                <svg class="i" style="width:18px;height:18px;color:#0ea5e9;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+                <span>Auto-Connect on Windows Boot (Silent Background Agent)</span>
               </div>
               <p class="muted" style="margin:4px 0 0 0;font-size:12px;line-height:1.4;">
-                Starts silently on PC boot on Port 8767 for instant app launch, LAN devices, and extensions.
+                Ultra-low-RAM background daemon (~15-25 MB RAM) keeps this Client linked to Host for instant zero-delay connection.
               </p>
             </div>
             <div style="flex-shrink:0;">
-              <span class="badge active" style="font-size:11.5px;padding:6px 12px;border-radius:99px;font-weight:700;background:rgba(31,207,147,0.15);color:#059669;border:1px solid rgba(31,207,147,0.4);display:inline-flex;align-items:center;gap:6px;">
-                <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;box-shadow:0 0 8px #10b981;"></span>
-                <span>Auto-Starts on Boot</span>
-              </span>
+              <label class="vs-glass-switch" id="sw-client-agent-autostart-label" title="Toggle Silent Background Agent autostart" style="display:inline-flex;align-items:center;cursor:pointer;position:relative;">
+                <input type="checkbox" id="toggle-client-agent-autostart" role="switch" aria-label="Auto-Connect on Windows Boot (Silent Background Agent)" style="position:absolute;opacity:0;pointer-events:none;">
+                <div class="sw-track" style="width:52px;height:28px;background:#cbd5e1;border-radius:14px;position:relative;transition:background 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:inset 0 2px 4px rgba(0,0,0,0.1);">
+                  <div class="sw-knob" style="width:22px;height:22px;background:#ffffff;border-radius:50%;position:absolute;top:3px;left:3px;transition:all 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:0 2px 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;">
+                    <span class="sw-icon" style="display:flex;align-items:center;justify-content:center;"></span>
+                  </div>
+                </div>
+                <span class="sw-text" style="margin-left:12px;font-size:13px;font-weight:700;color:#64748b;min-width:40px;">No</span>
+              </label>
             </div>
           </div>
+          ` : `
+          <!-- Card B (Host Mode): Windows Auto-Start & Background Server -->
+          <div style="background:#fff;border:1px solid rgba(226,232,240,0.9);border-radius:14px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+            <div>
+              <div style="font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px;">
+                <svg class="i" style="width:18px;height:18px;color:#10b981;" aria-hidden="true"><use href="#check"/></svg>
+                <span>Auto-Start Server on Windows Boot (Silent Background Service)</span>
+                <span id="pill-server-autostart-status" class="badge active" style="font-size:11px;padding:3px 9px;border-radius:99px;font-weight:700;background:${settings.server_autostart ? 'rgba(31,207,147,0.15)' : 'rgba(100,116,139,0.15)'};color:${settings.server_autostart ? '#059669' : '#64748b'};border:1px solid ${settings.server_autostart ? 'rgba(31,207,147,0.4)' : 'rgba(100,116,139,0.3)'};">
+                  ${settings.server_autostart ? 'Active at Windows Logon' : 'Disabled'}
+                </span>
+              </div>
+              <p class="muted" style="margin:4px 0 0 0;font-size:12px;line-height:1.4;">
+                Starts the authoritative server silently when Windows starts. When you launch VS Database, it connects instantly in &lt;1ms without starting a new server process.
+              </p>
+            </div>
+            <div style="flex-shrink:0;">
+              <label class="vs-glass-switch" id="sw-server-autostart-label" title="Toggle Windows Server Auto-Start" style="display:inline-flex;align-items:center;cursor:pointer;position:relative;">
+                <input type="checkbox" id="toggle-server-autostart" role="switch" aria-label="Auto-Start Server on Windows Boot" style="position:absolute;opacity:0;pointer-events:none;" ${settings.server_autostart ? 'checked' : ''}>
+                <div class="sw-track" style="width:52px;height:28px;background:${settings.server_autostart ? '#10b981' : '#cbd5e1'};border-radius:14px;position:relative;transition:background 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:inset 0 2px 4px rgba(0,0,0,0.1);">
+                  <div class="sw-knob" style="width:22px;height:22px;background:#ffffff;border-radius:50%;position:absolute;top:3px;left:${settings.server_autostart ? '27px' : '3px'};transition:all 0.25s cubic-bezier(0.4,0,0.2,1);box-shadow:0 2px 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;">
+                    <span class="sw-icon" style="font-size:11px;line-height:1;color:${settings.server_autostart ? '#10b981' : '#94a3b8'};font-weight:900;">${settings.server_autostart ? '✓' : ''}</span>
+                  </div>
+                </div>
+                <span class="sw-text" style="margin-left:12px;font-size:13px;font-weight:700;color:${settings.server_autostart ? '#059669' : '#64748b'};min-width:40px;">${settings.server_autostart ? 'Yes' : 'No'}</span>
+              </label>
+            </div>
+          </div>
+          `}
         </div>
       </div>
 
@@ -4028,8 +4108,7 @@ function setup() {
       if (track) track.style.background = checked ? '#10b981' : '#cbd5e1';
       if (knob) knob.style.left = checked ? '27px' : '3px';
       if (icon) {
-        icon.textContent = checked ? '✓' : '';
-        icon.style.color = checked ? '#10b981' : '#94a3b8';
+        icon.innerHTML = checked ? '<svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:#10b981;fill:none;stroke-width:2.5;"><path d="M5 13l4 4L19 7"/></svg>' : '';
       }
       if (text) {
         text.textContent = checked ? 'Yes' : 'No';
@@ -4053,7 +4132,11 @@ function setup() {
           }
         } catch (_) {}
         if (isClient || (currentUser && currentUser.role !== 'host')) {
-          alert('This option is disabled from Host side.');
+          if (typeof showGlassToast === 'function') {
+            showGlassToast('Host manages central server autostart. Use Client Agent toggle below.', 'info');
+          } else if (typeof toast === 'function') {
+            toast('Host manages central server autostart. Use Client Agent toggle below.');
+          }
           return;
         }
 
@@ -4087,6 +4170,182 @@ function setup() {
         }
       };
     }
+  }
+
+  // Windows Host Server Silent Autostart Toggle Handler
+  const serverAutostartToggle = document.getElementById('toggle-server-autostart');
+  const serverAutostartLabel = document.getElementById('sw-server-autostart-label');
+  const serverAutostartPill = document.getElementById('pill-server-autostart-status');
+
+  if (serverAutostartToggle) {
+    const updateServerSwitchUI = (checked) => {
+      serverAutostartToggle.checked = checked;
+      const track = serverAutostartLabel?.querySelector('.sw-track');
+      const knob = serverAutostartLabel?.querySelector('.sw-knob');
+      const icon = serverAutostartLabel?.querySelector('.sw-icon');
+      const text = serverAutostartLabel?.querySelector('.sw-text');
+      if (track) track.style.background = checked ? '#10b981' : '#cbd5e1';
+      if (knob) knob.style.left = checked ? '27px' : '3px';
+      if (icon) {
+        icon.textContent = checked ? '✓' : '';
+        icon.style.color = checked ? '#10b981' : '#94a3b8';
+      }
+      if (text) {
+        text.textContent = checked ? 'Yes' : 'No';
+        text.style.color = checked ? '#059669' : '#64748b';
+      }
+      if (serverAutostartPill) {
+        serverAutostartPill.textContent = checked ? 'Active at Windows Logon' : 'Disabled';
+        serverAutostartPill.style.background = checked ? 'rgba(31,207,147,0.15)' : 'rgba(100,116,139,0.15)';
+        serverAutostartPill.style.color = checked ? '#059669' : '#64748b';
+        serverAutostartPill.style.borderColor = checked ? 'rgba(31,207,147,0.4)' : 'rgba(100,116,139,0.3)';
+      }
+    };
+
+    const queryHostAutostart = async () => {
+      try {
+        if (window.TauriBridge && typeof window.TauriBridge.isAutostartEnabled === 'function') {
+          const enabled = await window.TauriBridge.isAutostartEnabled();
+          updateServerSwitchUI(!!enabled);
+          return;
+        }
+      } catch (_) {}
+      api('/api/system/autostart').then(res => {
+        if (res && typeof res.enabled === 'boolean') {
+          updateServerSwitchUI(res.enabled);
+        } else if (res && typeof res.server_autostart === 'boolean') {
+          updateServerSwitchUI(res.server_autostart);
+        }
+      }).catch(() => {});
+    };
+    queryHostAutostart();
+
+    if (serverAutostartLabel) {
+      serverAutostartLabel.onclick = async (e) => {
+        e.preventDefault();
+        let isClient = false;
+        try {
+          if (window.TauriBridge && typeof window.TauriBridge.isClientMode === 'function') {
+            isClient = await window.TauriBridge.isClientMode();
+          }
+        } catch (_) {}
+        if (isClient || (currentUser && currentUser.role !== 'host')) {
+          alert('This option is available only on the Host machine.');
+          return;
+        }
+
+        const newChecked = !serverAutostartToggle.checked;
+        updateServerSwitchUI(newChecked);
+
+        try {
+          let success = false;
+          let msg = '';
+          if (window.TauriBridge && (newChecked ? typeof window.TauriBridge.enableAutostartServer === 'function' : typeof window.TauriBridge.disableAutostartServer === 'function')) {
+            try {
+              if (newChecked) {
+                await window.TauriBridge.enableAutostartServer();
+              } else {
+                await window.TauriBridge.disableAutostartServer();
+              }
+              success = true;
+            } catch (bridgeErr) {
+              console.warn('[Autostart] TauriBridge fallback to API:', bridgeErr);
+            }
+          }
+
+          const resp = await api('/api/system/autostart', {
+            method: 'POST',
+            body: JSON.stringify({ enabled: newChecked })
+          });
+
+          if (resp && resp.ok) {
+            success = true;
+            msg = resp.message || (newChecked ? 'Host Server silent auto-start enabled' : 'Host Server auto-start disabled');
+          } else if (!success) {
+            throw new Error((resp && resp.error) || 'Failed to update server autostart setting');
+          }
+
+          if (typeof showGlassToast === 'function') {
+            showGlassToast(msg || (newChecked ? 'Host Server auto-start enabled' : 'Host Server auto-start disabled'), 'success');
+          } else if (typeof toast === 'function') {
+            toast(msg || (newChecked ? 'Host Server auto-start enabled' : 'Host Server auto-start disabled'));
+          }
+        } catch (err) {
+          updateServerSwitchUI(!newChecked);
+          const errMsg = err.message || 'Error updating autostart';
+          if (typeof showGlassToast === 'function') {
+            showGlassToast(errMsg, 'error');
+          } else if (typeof toast === 'function') {
+            toast(errMsg, true);
+          }
+        }
+      };
+    }
+  }
+
+  // Client Background Agent Autostart Toggle Handler
+  const clientAgentToggle = document.getElementById('toggle-client-agent-autostart');
+  const clientAgentLabel = document.getElementById('sw-client-agent-autostart-label');
+  if (clientAgentToggle && clientAgentLabel) {
+    const checkSvg = '<svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke:#10b981;fill:none;stroke-width:2.5;"><path d="M5 13l4 4L19 7"/></svg>';
+    const updateClientSwitchUI = (checked) => {
+      clientAgentToggle.checked = checked;
+      const track = clientAgentLabel.querySelector('.sw-track');
+      const knob = clientAgentLabel.querySelector('.sw-knob');
+      const icon = clientAgentLabel.querySelector('.sw-icon');
+      const text = clientAgentLabel.querySelector('.sw-text');
+      if (track) track.style.background = checked ? '#10b981' : '#cbd5e1';
+      if (knob) knob.style.left = checked ? '27px' : '3px';
+      if (icon) icon.innerHTML = checked ? checkSvg : '';
+      if (text) {
+        text.textContent = checked ? 'Yes' : 'No';
+        text.style.color = checked ? '#059669' : '#64748b';
+      }
+    };
+
+    if (window.TauriBridge && typeof window.TauriBridge.getClientAutostartStatus === 'function') {
+      window.TauriBridge.getClientAutostartStatus().then(active => {
+        updateClientSwitchUI(!!active);
+      }).catch(() => {});
+    }
+
+    clientAgentLabel.onclick = async (e) => {
+      e.preventDefault();
+      const newChecked = !clientAgentToggle.checked;
+      updateClientSwitchUI(newChecked);
+
+      try {
+        let ok = false;
+        if (window.TauriBridge && typeof window.TauriBridge.setClientAutostart === 'function') {
+          const res = await window.TauriBridge.setClientAutostart(newChecked);
+          ok = !!(res && (res.ok || res.autostart !== undefined));
+        } else {
+          const resp = await api('/api/client/autostart', {
+            method: 'POST',
+            body: JSON.stringify({ autostart: newChecked })
+          });
+          ok = !!(resp && resp.ok);
+        }
+
+        const msg = newChecked
+          ? 'Silent background agent enabled for automatic Windows startup'
+          : 'Silent background agent autostart disabled';
+
+        if (typeof showGlassToast === 'function') {
+          showGlassToast(msg, 'success');
+        } else if (typeof toast === 'function') {
+          toast(msg);
+        }
+      } catch (err) {
+        updateClientSwitchUI(!newChecked);
+        const errMsg = err.message || 'Error updating client agent autostart';
+        if (typeof showGlassToast === 'function') {
+          showGlassToast(errMsg, 'error');
+        } else if (typeof toast === 'function') {
+          toast(errMsg, true);
+        }
+      }
+    };
   }
 
   // Clean Fresh Start Handler
