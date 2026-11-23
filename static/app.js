@@ -9221,13 +9221,68 @@ window.addEventListener('message', async (event) => {
     if (typeof dismissStartupAnimationImmediately === 'function') {
       dismissStartupAnimationImmediately();
     }
+  } else if (urlParams.get('launch_pdf') === '1' || window.location.hash === '#pdf-studio' || window.location.hash === '#studio') {
+    current = 'pdf-studio';
+    if (typeof dismissStartupAnimationImmediately === 'function') {
+      dismissStartupAnimationImmediately();
+    }
   }
 })();
 
-load().then(() => {
+load().then(async () => {
   if (window.location.hash) {
     applyHashRoute();
   }
+
+  // Windows Default PDF Viewer Startup Check
+  try {
+    let launchPdf = null;
+    if (window.TauriBridge && typeof window.TauriBridge.getLaunchPdfPath === 'function') {
+      launchPdf = await window.TauriBridge.getLaunchPdfPath();
+    } else if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_launch_pdf_path === 'function') {
+      launchPdf = await window.pywebview.api.get_launch_pdf_path();
+    } else if (typeof window !== 'undefined' && window.__VS_LAUNCH_PDF__) {
+      launchPdf = window.__VS_LAUNCH_PDF__;
+    }
+
+    if (launchPdf) {
+      console.log('[Startup] Native PDF association launched with file:', launchPdf);
+      current = 'pdf-studio';
+      window.location.hash = 'pdf-studio';
+      if (typeof safeNavigate === 'function') {
+        safeNavigate('pdf-studio');
+      } else if (typeof nav === 'function') {
+        nav();
+      }
+      if (typeof window.openPdfFilePathInStudio === 'function') {
+        await window.openPdfFilePathInStudio(launchPdf);
+      }
+    }
+  } catch (err) {
+    console.warn('[Startup] Launch PDF check notice:', err);
+  }
+});
+
+// Listener for pywebviewready event in legacy desktop container
+window.addEventListener('pywebviewready', async () => {
+  try {
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_launch_pdf_path === 'function') {
+      const launchPdf = await window.pywebview.api.get_launch_pdf_path();
+      if (launchPdf) {
+        console.log('[pywebviewready] Launch PDF found:', launchPdf);
+        current = 'pdf-studio';
+        window.location.hash = 'pdf-studio';
+        if (typeof safeNavigate === 'function') {
+          safeNavigate('pdf-studio');
+        } else if (typeof nav === 'function') {
+          nav();
+        }
+        if (typeof window.openPdfFilePathInStudio === 'function') {
+          await window.openPdfFilePathInStudio(launchPdf);
+        }
+      }
+    }
+  } catch (_) {}
 });
 
 // Periodic staging poller: detects incoming files from Chrome Extension on Host PC

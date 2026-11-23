@@ -221,6 +221,13 @@ class PDFStudioSession:
                 "image_file": None,
                 "scale": 0.45
             },
+            "metadata": {},
+            "toc": [],
+            "signatures": [],
+            "forms": {
+                "values": {},
+                "flatten": False
+            },
             "compression": {
                 "enabled": False,
                 "level": "balanced"
@@ -261,6 +268,9 @@ class PDFStudioSession:
             "current_size": 0,
             "page_count": 0,
             "is_encrypted": False,
+            "is_signed": False,
+            "has_forms": False,
+            "has_toc": False,
             "created_at": iso_now(),
             "updated_at": iso_now(),
             "history": [],
@@ -300,6 +310,24 @@ class PDFStudioSession:
                 doc = pymupdf.open(stream=raw, filetype="pdf")
                 self.meta["page_count"] = len(doc)
                 self.meta["is_encrypted"] = bool(doc.is_encrypted)
+                has_widgets = False
+                is_signed = False
+                has_toc = False
+                if not doc.is_encrypted:
+                    has_toc = bool(doc.get_toc(simple=True))
+                    for p in doc:
+                        ws = list(p.widgets())
+                        if ws:
+                            has_widgets = True
+                            for w in ws:
+                                if getattr(w, "field_type", None) == 6 or getattr(w, "is_signed", False):
+                                    is_signed = True
+                                    break
+                        if is_signed and has_widgets:
+                            break
+                self.meta["has_forms"] = has_widgets
+                self.meta["has_toc"] = has_toc
+                self.meta["is_signed"] = is_signed
                 doc.close()
             except Exception:
                 pass
@@ -349,6 +377,40 @@ class PDFStudioSession:
                         new_page.set_rotation((new_page.rotation + rot) % 360)
 
             total_pages = len(out_doc)
+
+            # 1.5 Metadata preservation & injection
+            meta_state = state.get("metadata")
+            if meta_state and isinstance(meta_state, dict):
+                try:
+                    clean_meta = {k: str(v) for k, v in meta_state.items() if v is not None}
+                    out_doc.set_metadata(clean_meta)
+                except Exception:
+                    pass
+
+            # 1.6 Signatures overlay
+            sigs = state.get("signatures", [])
+            for sig in sigs:
+                try:
+                    t_uid = sig.get("uid")
+                    target_idx = None
+                    for p_i, p_info in enumerate(seq):
+                        if p_info.get("uid") == t_uid:
+                            target_idx = p_i
+                            break
+                    if target_idx is None and "page" in sig:
+                        target_idx = int(sig["page"]) - 1
+                    if target_idx is not None and 0 <= target_idx < len(out_doc):
+                        target_page = out_doc[target_idx]
+                        sig_img_path = self.session_dir / sig.get("image_file", "")
+                        sig_rect = pymupdf.Rect(*sig["rect"]) if sig.get("rect") else None
+                        if sig_img_path.exists() and sig_rect:
+                            target_page.insert_image(sig_rect, stream=sig_img_path.read_bytes(), keep_proportion=True, overlay=True)
+                        elif sig.get("text") and sig_rect:
+                            f_size = int(sig.get("font_size", 16))
+                            target_page.insert_text(pymupdf.Point(sig_rect.x0, sig_rect.y0 + f_size), str(sig["text"]), fontname="helv", fontsize=f_size, color=(0.1, 0.2, 0.6), overlay=True)
+                            target_page.draw_line(pymupdf.Point(sig_rect.x0, sig_rect.y0 + f_size + 4), pymupdf.Point(sig_rect.x1, sig_rect.y0 + f_size + 4), color=(0.2, 0.3, 0.7), width=1)
+                except Exception:
+                    pass
 
             # 2. Watermark overlay
             wm = state.get("watermark", {})
@@ -514,6 +576,43 @@ class PDFStudioSession:
 
                     page.insert_text(p, text, fontname="helv", fontsize=font_size, color=color_rgb, overlay=True)
 
+            # 3.5 Forms filling and flattening
+            form_state = state.get("forms", {})
+            form_values = form_state.get("values", {})
+            if form_values and isinstance(form_values, dict):
+                try:
+                    for page in out_doc:
+                        for w in page.widgets():
+                            if w.field_name in form_values:
+                                val = form_values[w.field_name]
+                                if getattr(w, "field_type_string", "") == "CheckBox" and isinstance(val, bool):
+                                    w.field_value = "Yes" if val else "Off"
+                                else:
+                                    w.field_value = str(val) if val is not None else ""
+                                w.update()
+                except Exception:
+                    pass
+            if form_state.get("flatten"):
+                try:
+                    out_doc.bake(annots=True, widgets=True)
+                except Exception:
+                    pass
+
+            # 3.6 TOC / Bookmarks injection
+            toc_state = state.get("toc")
+            if toc_state and isinstance(toc_state, list) and len(toc_state) > 0:
+                try:
+                    clean_toc = []
+                    for item in toc_state:
+                        if isinstance(item, (list, tuple)) and len(item) >= 3:
+                            clean_toc.append([int(item[0]), str(item[1]), int(item[2])])
+                        elif isinstance(item, dict) and "level" in item and "title" in item and "page" in item:
+                            clean_toc.append([int(item.get("level", 1)), str(item["title"]), int(item["page"])])
+                    if clean_toc:
+                        out_doc.set_toc(clean_toc)
+                except Exception:
+                    pass
+
             # 4. Compression
             comp = state.get("compression", {})
             if comp.get("enabled"):
@@ -672,6 +771,477 @@ class PDFStudioSession:
         ]
         self.refresh_stats()
         return {"ok": True, "message": "Reset to original successfully.", "meta": self.to_dict()}
+
+    @staticmethod
+    def _detect_page_format(width: float, height: float) -> str:
+        dim = sorted([round(width), round(height)])
+        if abs(dim[0] - 595) <= 6 and abs(dim[1] - 842) <= 6:
+            return "A4"
+        if abs(dim[0] - 612) <= 6 and abs(dim[1] - 792) <= 6:
+            return "Letter"
+        if abs(dim[0] - 612) <= 6 and abs(dim[1] - 1008) <= 6:
+            return "Legal"
+        if abs(dim[0] - 842) <= 6 and abs(dim[1] - 1191) <= 6:
+            return "A3"
+        if abs(dim[0] - 420) <= 6 and abs(dim[1] - 595) <= 6:
+            return "A5"
+        return f"{round(width)}x{round(height)} pt"
+
+    def get_toc(self) -> List[Dict[str, Any]]:
+        """Returns the document Table of Contents / Bookmarks hierarchy."""
+        if not self.working_pdf_path.exists():
+            return []
+        try:
+            doc = self.open_working_doc()
+            raw_toc = doc.get_toc(simple=False)
+            doc.close()
+            result = []
+            for idx, item in enumerate(raw_toc):
+                lvl = item[0]
+                title = item[1]
+                page = item[2]
+                dest = item[3] if len(item) > 3 else {}
+                result.append({
+                    "id": f"toc_{idx + 1}",
+                    "level": int(lvl),
+                    "title": str(title),
+                    "page": int(page),
+                    "dest": dest
+                })
+            return result
+        except Exception as e:
+            return []
+
+    def set_toc(self, toc_items: List[Any]) -> Dict[str, Any]:
+        """Sets table of contents bookmarks and records undo checkpoint."""
+        clean_toc = []
+        for item in toc_items:
+            if isinstance(item, (list, tuple)) and len(item) >= 3:
+                clean_toc.append([int(item[0]), str(item[1]), int(item[2])])
+            elif isinstance(item, dict) and "title" in item and "page" in item:
+                clean_toc.append([int(item.get("level", 1)), str(item["title"]), int(item["page"])])
+
+        state = self.get_editing_state()
+        state["toc"] = clean_toc
+        self.meta["editing_state"] = state
+        self.save_meta()
+
+        self.rebuild_working_pdf()
+        self.push_checkpoint(
+            tool_id="update_toc",
+            title="Update Bookmarks",
+            details=f"Saved {len(clean_toc)} bookmark(s).",
+            stats_diff=f"{len(clean_toc)} bookmarks"
+        )
+        return {"ok": True, "message": f"Updated {len(clean_toc)} bookmarks.", "toc": self.get_toc()}
+
+    def get_document_metadata(self) -> Dict[str, Any]:
+        """Returns comprehensive document metadata, page geometry, encryption and signature state."""
+        if not self.working_pdf_path.exists():
+            return {}
+        try:
+            doc = self.open_working_doc()
+            meta = dict(doc.metadata or {})
+            
+            pages_geo = []
+            for idx, p in enumerate(doc):
+                r = p.rect
+                w, h = round(r.width, 2), round(r.height, 2)
+                pages_geo.append({
+                    "page": idx + 1,
+                    "width": w,
+                    "height": h,
+                    "rotation": p.rotation,
+                    "orientation": "portrait" if h >= w else "landscape",
+                    "format_name": self._detect_page_format(w, h)
+                })
+
+            is_signed = False
+            has_forms = False
+            if not doc.is_encrypted:
+                for p in doc:
+                    ws = list(p.widgets())
+                    if ws:
+                        has_forms = True
+                    for w in ws:
+                        if getattr(w, "field_type", None) == 6 or getattr(w, "is_signed", False):
+                            is_signed = True
+                            break
+                    if is_signed:
+                        break
+
+            doc_info = {
+                "title": meta.get("title", ""),
+                "author": meta.get("author", ""),
+                "subject": meta.get("subject", ""),
+                "keywords": meta.get("keywords", ""),
+                "creator": meta.get("creator", ""),
+                "producer": meta.get("producer", ""),
+                "creation_date": meta.get("creationDate", ""),
+                "mod_date": meta.get("modDate", ""),
+                "format": meta.get("format", "") or "PDF 1.7",
+                "pdf_version": meta.get("format", "") or "PDF 1.7",
+                "page_count": len(doc),
+                "file_size": self.working_pdf_path.stat().st_size,
+                "is_encrypted": bool(doc.is_encrypted),
+                "is_signed": is_signed,
+                "has_forms": has_forms,
+                "has_toc": len(doc.get_toc(simple=True)) > 0 if not doc.is_encrypted else False,
+                "permissions": doc.permissions,
+                "pages": pages_geo
+            }
+            doc.close()
+            return doc_info
+        except Exception as e:
+            return {}
+
+    def update_document_metadata(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Updates PDF metadata fields (Title, Author, Subject, etc.) and records undo checkpoint."""
+        doc = self.open_working_doc()
+        current_meta = dict(doc.metadata or {})
+        doc.close()
+
+        allowed_keys = ["title", "author", "subject", "keywords", "creator", "producer"]
+        changed = []
+        for k in allowed_keys:
+            if k in updates:
+                new_v = str(updates[k])
+                current_meta[k] = new_v
+                changed.append(k)
+
+        state = self.get_editing_state()
+        state["metadata"] = current_meta
+        self.meta["editing_state"] = state
+        self.save_meta()
+
+        self.rebuild_working_pdf()
+        self.push_checkpoint(
+            tool_id="update_metadata",
+            title="Update Metadata",
+            details=f"Updated metadata: {', '.join(changed) if changed else 'no changes'}",
+            stats_diff=f"{len(changed)} fields updated"
+        )
+        return {"ok": True, "message": f"Updated metadata fields: {', '.join(changed)}", "metadata": self.get_document_metadata()}
+
+    def search_text(self, query: str, case_sensitive: bool = False, page_range: Optional[Union[str, List[int]]] = None) -> Dict[str, Any]:
+        """Performs fast text search across pages with bounding boxes and surrounding snippets."""
+        if not str(query).strip():
+            return {"ok": True, "query": "", "match_count": 0, "matched_pages_count": 0, "pages": []}
+
+        query_str = str(query).strip()
+        doc = self.open_working_doc()
+        total_pages = len(doc)
+
+        target_indices = []
+        if page_range:
+            if isinstance(page_range, str):
+                target_indices = [p - 1 for p in parse_page_ranges(page_range, total_pages)]
+            elif isinstance(page_range, list):
+                target_indices = [p - 1 for p in page_range if 1 <= p <= total_pages]
+        if not target_indices:
+            target_indices = list(range(total_pages))
+
+        results = []
+        total_matches = 0
+
+        for idx in target_indices:
+            page = doc[idx]
+            rects = page.search_for(query_str)
+            if not rects:
+                continue
+
+            page_matches = []
+            for r in rects:
+                if case_sensitive:
+                    clip_text = page.get_text("text", clip=r).strip()
+                    if query_str not in clip_text:
+                        continue
+
+                snippet_rect = pymupdf.Rect(max(0, r.x0 - 100), max(0, r.y0 - 15), min(page.rect.width, r.x1 + 100), min(page.rect.height, r.y1 + 15))
+                snippet = " ".join(page.get_text("text", clip=snippet_rect).split())
+
+                page_matches.append({
+                    "bbox": [round(r.x0, 2), round(r.y0, 2), round(r.x1, 2), round(r.y1, 2)],
+                    "snippet": snippet
+                })
+
+            if page_matches:
+                total_matches += len(page_matches)
+                results.append({
+                    "page": idx + 1,
+                    "match_count": len(page_matches),
+                    "matches": page_matches
+                })
+
+        doc.close()
+        return {
+            "ok": True,
+            "query": query_str,
+            "case_sensitive": case_sensitive,
+            "match_count": total_matches,
+            "matched_pages_count": len(results),
+            "pages": results
+        }
+
+    def get_form_fields(self) -> List[Dict[str, Any]]:
+        """Returns interactive AcroForm fields present in the document."""
+        if not self.working_pdf_path.exists():
+            return []
+        try:
+            doc = self.open_working_doc()
+            if doc.is_encrypted:
+                doc.close()
+                return []
+            fields = []
+            for p_idx, page in enumerate(doc):
+                for w in page.widgets():
+                    fields.append({
+                        "page": p_idx + 1,
+                        "name": w.field_name,
+                        "type": w.field_type_string,
+                        "type_id": w.field_type,
+                        "value": w.field_value,
+                        "rect": [round(w.rect.x0, 2), round(w.rect.y0, 2), round(w.rect.x1, 2), round(w.rect.y1, 2)],
+                        "is_signed": getattr(w, "is_signed", False) or w.field_type == 6
+                    })
+            doc.close()
+            return fields
+        except Exception:
+            return []
+
+    def fill_form_fields(self, values: Dict[str, Any], flatten: bool = False) -> Dict[str, Any]:
+        """Populates form field values, optionally bakes/flattens them, and records undo checkpoint."""
+        doc = self.open_working_doc()
+        if doc.is_encrypted:
+            doc.close()
+            raise ValueError("Document is encrypted. Please unlock first.")
+
+        filled_count = 0
+        for page in doc:
+            for w in page.widgets():
+                if w.field_name in values:
+                    val = values[w.field_name]
+                    if getattr(w, "field_type_string", "") == "CheckBox" and isinstance(val, bool):
+                        w.field_value = "Yes" if val else "Off"
+                    else:
+                        w.field_value = str(val) if val is not None else ""
+                    w.update()
+                    filled_count += 1
+
+        if flatten:
+            doc.bake(annots=True, widgets=True)
+
+        new_bytes = doc.tobytes()
+        doc.close()
+
+        state = self.get_editing_state()
+        state.setdefault("forms", {})["values"] = values
+        if flatten:
+            state["forms"]["flatten"] = True
+        self.meta["editing_state"] = state
+        self.save_meta()
+
+        self.update_working_pdf(
+            new_bytes,
+            tool_id="fill_form_fields",
+            title="Fill Form Fields",
+            details=f"Filled {filled_count} form field(s){' (flattened)' if flatten else ''}.",
+            stats_diff=f"{filled_count} fields"
+        )
+        return {
+            "ok": True,
+            "message": f"Successfully updated {filled_count} form field(s){' (flattened)' if flatten else ''}.",
+            "filled_count": filled_count,
+            "flattened": flatten,
+            "fields": self.get_form_fields()
+        }
+
+    def stamp_signature(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Stamps visual signature (image or handwritten text) on a specific page with coordinates."""
+        target_page = int(params.get("page", 1))
+        doc = self.open_working_doc()
+        if target_page < 1 or target_page > len(doc):
+            doc.close()
+            raise ValueError(f"Invalid page number {target_page}. Document has {len(doc)} pages.")
+
+        page = doc[target_page - 1]
+        pw, ph = page.rect.width, page.rect.height
+
+        sig_data = params.get("image_data") or params.get("image_bytes") or params.get("image") or params.get("signature_data")
+        sig_bytes = None
+        if isinstance(sig_data, (bytes, bytearray)):
+            sig_bytes = bytes(sig_data)
+        elif isinstance(sig_data, str) and sig_data.startswith("data:image"):
+            sig_bytes = base64.b64decode(sig_data.split(",", 1)[1])
+        elif isinstance(sig_data, str) and len(sig_data) > 60:
+            try:
+                sig_bytes = base64.b64decode(sig_data)
+            except Exception:
+                if os.path.exists(sig_data):
+                    sig_bytes = Path(sig_data).read_bytes()
+
+        w = float(params.get("width", 150))
+        h = float(params.get("height", 60))
+        x = params.get("x")
+        y = params.get("y")
+        position = str(params.get("position", "")).lower()
+
+        margin = 40
+        if x is None or y is None:
+            if position in ("bottom_right", "signature_line"):
+                x = pw - w - margin
+                y = ph - h - margin
+            elif position == "bottom_left":
+                x = margin
+                y = ph - h - margin
+            elif position == "center":
+                x = (pw - w) / 2
+                y = (ph - h) / 2
+            else:
+                x = pw - w - margin
+                y = ph - h - margin
+        else:
+            x = float(x)
+            y = float(y)
+
+        rect_coords = [round(x, 2), round(y, 2), round(x + w, 2), round(y + h, 2)]
+        rect = pymupdf.Rect(*rect_coords)
+
+        state = self.get_editing_state()
+        seq = state.get("page_sequence", [])
+        page_uid = seq[target_page - 1].get("uid") if target_page <= len(seq) else None
+
+        sig_entry = {
+            "uid": page_uid,
+            "page": target_page,
+            "rect": rect_coords,
+            "text": None,
+            "image_file": None
+        }
+
+        if sig_bytes:
+            sig_img_name = f"sig_{uuid.uuid4().hex[:8]}.png"
+            (self.session_dir / sig_img_name).write_bytes(sig_bytes)
+            page.insert_image(rect, stream=sig_bytes, keep_proportion=True, overlay=True)
+            sig_entry["image_file"] = sig_img_name
+            sig_label = "Signature Image"
+        else:
+            typed_text = str(params.get("text") or params.get("signer_name") or "Digitally Signed").strip()
+            font_size = int(params.get("font_size", 16))
+            p_text = pymupdf.Point(x, y + font_size)
+            page.insert_text(p_text, typed_text, fontname="helv", fontsize=font_size, color=(0.1, 0.2, 0.6), overlay=True)
+            page.draw_line(pymupdf.Point(x, y + font_size + 4), pymupdf.Point(x + w, y + font_size + 4), color=(0.2, 0.3, 0.7), width=1)
+            sig_entry["text"] = typed_text
+            sig_entry["font_size"] = font_size
+            sig_label = f"Signature ({typed_text})"
+
+        new_bytes = doc.tobytes()
+        doc.close()
+
+        state.setdefault("signatures", []).append(sig_entry)
+        self.meta["editing_state"] = state
+        self.save_meta()
+
+        self.update_working_pdf(
+            new_bytes,
+            tool_id="stamp_signature",
+            title="Stamp Signature",
+            details=f"Placed {sig_label} on Page {target_page} at ({x:.0f}, {y:.0f}).",
+            stats_diff=f"Page {target_page}"
+        )
+        return {
+            "ok": True,
+            "message": f"Successfully stamped {sig_label} on Page {target_page}.",
+            "page": target_page,
+            "rect": rect_coords
+        }
+
+    def extract_text(self, format: str = "text", pages: Union[str, List[int]] = "all") -> Dict[str, Any]:
+        """Extracts text, markdown, or block structure from document pages."""
+        doc = self.open_working_doc()
+        total_pages = len(doc)
+
+        target_indices = []
+        if pages != "all":
+            if isinstance(pages, str):
+                target_indices = [p - 1 for p in parse_page_ranges(pages, total_pages)]
+            elif isinstance(pages, list):
+                target_indices = [p - 1 for p in pages if 1 <= p <= total_pages]
+        if not target_indices:
+            target_indices = list(range(total_pages))
+
+        fmt = str(format).lower()
+        extracted_pages = []
+        full_text_parts = []
+
+        for idx in target_indices:
+            page = doc[idx]
+            if fmt == "markdown":
+                blocks = page.get_text("blocks")
+                page_lines = [b[4].strip() for b in blocks if b[4].strip()]
+                p_text = "\n\n".join(page_lines)
+            elif fmt == "blocks":
+                raw_blocks = page.get_text("blocks")
+                p_text = [
+                    {"bbox": [round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)], "text": b[4].strip()}
+                    for b in raw_blocks if b[4].strip()
+                ]
+            else:
+                p_text = page.get_text("text").strip()
+
+            extracted_pages.append({
+                "page": idx + 1,
+                "content": p_text
+            })
+            if isinstance(p_text, str):
+                full_text_parts.append(f"--- Page {idx + 1} ---\n{p_text}")
+
+        doc.close()
+        return {
+            "ok": True,
+            "format": fmt,
+            "page_count": len(extracted_pages),
+            "pages": extracted_pages,
+            "text": "\n\n".join(full_text_parts) if full_text_parts else ""
+        }
+
+    def duplicate_pages(self, pages: Optional[List[int]] = None, page_range: Optional[str] = None) -> Dict[str, Any]:
+        """Duplicates specified pages and updates the working document."""
+        state = self.get_editing_state()
+        seq = state.get("page_sequence", [])
+        total = len(seq)
+
+        pages_to_dup = pages
+        if page_range:
+            pages_to_dup = parse_page_ranges(str(page_range), total)
+        elif isinstance(pages_to_dup, int):
+            pages_to_dup = [pages_to_dup]
+        elif not pages_to_dup:
+            pages_to_dup = [1]
+
+        pages_to_dup = sorted(list(set(p for p in pages_to_dup if 1 <= p <= total)), reverse=True)
+        if not pages_to_dup:
+            raise ValueError("No valid pages selected to duplicate.")
+
+        for p_num in pages_to_dup:
+            orig_item = seq[p_num - 1]
+            new_item = dict(orig_item)
+            new_item["uid"] = f"p_dup_{uuid.uuid4().hex[:6]}"
+            seq.insert(p_num, new_item)
+
+        for idx, item in enumerate(seq):
+            item["fixed_number"] = idx + 1
+
+        self.meta["editing_state"] = state
+        self.save_meta()
+        self.rebuild_working_pdf()
+        self.push_checkpoint("duplicate_pages", "Duplicate Pages", f"Duplicated {len(pages_to_dup)} page(s).", stats_diff=f"+{len(pages_to_dup)} pages")
+        return {
+            "ok": True,
+            "message": f"Successfully duplicated {len(pages_to_dup)} page(s).",
+            "duplicated_pages": pages_to_dup,
+            "new_page_count": len(seq)
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.meta)
@@ -1018,6 +1588,141 @@ class PDFToolRegistry:
                 }
             },
             handler=self._handle_convert_to_images
+        )
+
+        # 13. DUPLICATE PAGES
+        self.register(
+            tool_id="duplicate_pages",
+            name="Duplicate Pages",
+            description="Clone or duplicate specific pages in the document.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pages": {"type": "array", "items": {"type": "integer"}, "description": "1-based page numbers to duplicate."},
+                    "page_range": {"type": "string", "description": "Page range string, e.g. '1, 3-5'."}
+                }
+            },
+            handler=self._handle_duplicate_pages
+        )
+
+        # 14. EXTRACT TEXT
+        self.register(
+            tool_id="extract_text",
+            name="Extract Text",
+            description="Extract raw text, markdown, or text blocks from document pages.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "format": {"type": "string", "enum": ["text", "markdown", "blocks"], "description": "Output format."},
+                    "pages": {
+                        "oneOf": [
+                            {"type": "string", "enum": ["all"]},
+                            {"type": "array", "items": {"type": "integer"}}
+                        ],
+                        "description": "'all' or list of 1-based page numbers."
+                    }
+                }
+            },
+            handler=self._handle_extract_text
+        )
+
+        # 15. SEARCH TEXT
+        self.register(
+            tool_id="search_text",
+            name="Search Text",
+            description="Search text across document pages and return matching bounding boxes and snippets.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search keyword or phrase."},
+                    "case_sensitive": {"type": "boolean", "description": "Whether search is case-sensitive."},
+                    "page_range": {"type": "string", "description": "Optional page range to search."}
+                },
+                "required": ["query"]
+            },
+            handler=self._handle_search_text
+        )
+
+        # 16. UPDATE METADATA
+        self.register(
+            tool_id="update_metadata",
+            name="Update Metadata",
+            description="View and update document metadata fields (Title, Author, Subject, Keywords, Creator).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Document Title."},
+                    "author": {"type": "string", "description": "Document Author."},
+                    "subject": {"type": "string", "description": "Document Subject."},
+                    "keywords": {"type": "string", "description": "Comma-separated keywords."},
+                    "creator": {"type": "string", "description": "Document Creator Application."}
+                }
+            },
+            handler=self._handle_update_metadata
+        )
+
+        # 17. UPDATE TOC / BOOKMARKS
+        self.register(
+            tool_id="update_toc",
+            name="Update Bookmarks (TOC)",
+            description="Set or replace Table of Contents bookmarks and outline structure.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "toc": {
+                        "type": "array",
+                        "description": "List of bookmarks, each with level (1-4), title, and 1-based page number.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "level": {"type": "integer"},
+                                "title": {"type": "string"},
+                                "page": {"type": "integer"}
+                            },
+                            "required": ["title", "page"]
+                        }
+                    }
+                },
+                "required": ["toc"]
+            },
+            handler=self._handle_update_toc
+        )
+
+        # 18. FILL FORM FIELDS
+        self.register(
+            tool_id="fill_form_fields",
+            name="Fill Form Fields",
+            description="Populate interactive form fields and optionally bake/flatten into static page graphics.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "values": {"type": "object", "description": "Key-value dictionary mapping field names to field values."},
+                    "flatten": {"type": "boolean", "description": "Permanently bake form fields into page content."}
+                },
+                "required": ["values"]
+            },
+            handler=self._handle_fill_form_fields
+        )
+
+        # 19. STAMP SIGNATURE
+        self.register(
+            tool_id="stamp_signature",
+            name="Stamp Signature",
+            description="Stamp a visual signature (image, drawn canvas data, or typed signature line) onto a specific page.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "page": {"type": "integer", "description": "1-based target page number."},
+                    "image_data": {"type": "string", "description": "Base64 data URL or file path of signature image."},
+                    "text": {"type": "string", "description": "Typed signature text (if image not provided)."},
+                    "x": {"type": "number", "description": "X coordinate in points."},
+                    "y": {"type": "number", "description": "Y coordinate in points."},
+                    "width": {"type": "number", "description": "Width in points (default 150)."},
+                    "height": {"type": "number", "description": "Height in points (default 60)."},
+                    "position": {"type": "string", "enum": ["bottom_right", "bottom_left", "center", "signature_line"], "description": "Preset placement if x/y not specified."}
+                }
+            },
+            handler=self._handle_stamp_signature
         )
 
     # =========================================================================
@@ -1550,6 +2255,27 @@ class PDFToolRegistry:
         }
 
 
+    def _handle_duplicate_pages(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.duplicate_pages(pages=params.get("pages"), page_range=params.get("page_range"))
+
+    def _handle_extract_text(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.extract_text(format=params.get("format", "text"), pages=params.get("pages", "all"))
+
+    def _handle_search_text(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.search_text(query=params.get("query", ""), case_sensitive=params.get("case_sensitive", False), page_range=params.get("page_range"))
+
+    def _handle_update_metadata(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.update_document_metadata(params)
+
+    def _handle_update_toc(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.set_toc(params.get("toc", []))
+
+    def _handle_fill_form_fields(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.fill_form_fields(values=params.get("values", {}), flatten=bool(params.get("flatten", False)))
+
+    def _handle_stamp_signature(self, session: PDFStudioSession, params: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        return session.stamp_signature(params)
+
 class PDFStudioEngine:
     """Core PDF Studio Subsystem Engine managing sessions and operations."""
 
@@ -1559,6 +2285,47 @@ class PDFStudioEngine:
         self.sessions_dir = self.base_dir / "data" / "pdf_studio_sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.registry = PDFToolRegistry(base_dir=self.base_dir)
+
+    def open_path(self, file_path: Union[str, Path], name: Optional[str] = None) -> PDFStudioSession:
+        """Instantly opens a local PDF file without base64 encoding overhead (ideal for desktop / Tauri)."""
+        p = Path(file_path).resolve()
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(f"PDF file not found at path: {file_path}")
+        doc_name = name or p.name
+        session_id = f"pdf_sess_{uuid.uuid4().hex[:12]}"
+        sdir = self.sessions_dir / session_id
+        sdir.mkdir(parents=True, exist_ok=True)
+        session = PDFStudioSession(sdir, session_id, self.application_id)
+
+        safe_copy_file(p, session.original_pdf_path)
+        safe_copy_file(p, session.working_pdf_path)
+
+        session.meta["original_name"] = doc_name
+        session.meta["current_name"] = doc_name
+        session.meta["source_files"] = [{"name": doc_name, "path": str(p), "size": p.stat().st_size}]
+        session.refresh_stats()
+
+        try:
+            doc = pymupdf.open(str(session.working_pdf_path))
+            if not doc.is_encrypted:
+                state = session.get_editing_state()
+                state["metadata"] = dict(doc.metadata or {})
+                state["toc"] = doc.get_toc(simple=True)
+                session.save_meta()
+            doc.close()
+        except Exception:
+            pass
+
+        session.meta["history"].append({
+            "id": f"hist_{uuid.uuid4().hex[:8]}",
+            "timestamp": iso_now(),
+            "tool_id": "open_path",
+            "title": "Document Opened via Direct Path",
+            "details": f"Loaded '{doc_name}' ({p.stat().st_size/1024:.1f} KB, {session.meta['page_count']} pages).",
+            "stats_diff": ""
+        })
+        session.save_meta()
+        return session
 
     def create_session(
         self,
@@ -1607,7 +2374,16 @@ class PDFStudioEngine:
         session.meta["current_name"] = original_name
         session.meta["source_files"] = source_files or [{"name": original_name, "size": len(file_bytes)}]
         session.refresh_stats()
-        session.get_editing_state()
+        state = session.get_editing_state()
+        try:
+            doc = pymupdf.open(str(session.working_pdf_path))
+            if not doc.is_encrypted:
+                state["metadata"] = dict(doc.metadata or {})
+                state["toc"] = doc.get_toc(simple=True)
+                session.save_meta()
+            doc.close()
+        except Exception:
+            pass
 
         session.meta["history"].append({
             "id": f"hist_{uuid.uuid4().hex[:8]}",
@@ -1719,4 +2495,72 @@ class PDFStudioEngine:
             raise ValueError("Session not found.")
         with get_session_lock(session_id):
             return session.reset_to_original()
+    def get_toc(self, session_id: str) -> List[Dict[str, Any]]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.get_toc()
 
+    def set_toc(self, session_id: str, toc_items: List[Any]) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.set_toc(toc_items)
+
+    def get_document_metadata(self, session_id: str) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.get_document_metadata()
+
+    def update_document_metadata(self, session_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.update_document_metadata(updates)
+
+    def search_text(self, session_id: str, query: str, case_sensitive: bool = False, page_range: Optional[Union[str, List[int]]] = None) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.search_text(query=query, case_sensitive=case_sensitive, page_range=page_range)
+
+    def get_form_fields(self, session_id: str) -> List[Dict[str, Any]]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.get_form_fields()
+
+    def fill_form_fields(self, session_id: str, values: Dict[str, Any], flatten: bool = False) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.fill_form_fields(values=values, flatten=flatten)
+
+    def stamp_signature(self, session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.stamp_signature(params)
+
+    def extract_text(self, session_id: str, format: str = "text", pages: Union[str, List[int]] = "all") -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.extract_text(format=format, pages=pages)
+
+    def duplicate_pages(self, session_id: str, pages: Optional[List[int]] = None, page_range: Optional[str] = None) -> Dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found.")
+        with get_session_lock(session_id):
+            return session.duplicate_pages(pages=pages, page_range=page_range)

@@ -601,6 +601,17 @@ def find_available_port(start_port: int = 8767, max_port: int = 8799) -> int:
     return start_port
 
 
+LAUNCH_PDF_PATH = None
+
+def get_launch_pdf_path():
+    global LAUNCH_PDF_PATH
+    return LAUNCH_PDF_PATH
+
+def set_launch_pdf_path(path):
+    global LAUNCH_PDF_PATH
+    LAUNCH_PDF_PATH = path
+
+
 class DesktopBridge:
     """Native Python APIs directly exposed to the JavaScript window (window.pywebview.api)."""
     def __init__(self):
@@ -609,6 +620,9 @@ class DesktopBridge:
         self._force_close = False
         self._closing_saved = False
         self._get_hwnd_fn = None
+
+    def get_launch_pdf_path(self):
+        return get_launch_pdf_path()
 
     def set_window(self, window, get_hwnd_fn=None):
         self._window = window
@@ -984,6 +998,22 @@ def main():
     ui_instance_id = uuid.uuid4().hex
     print(f"[Main] Entering main(), argv={sys.argv}, instance_id={ui_instance_id}", flush=True)
 
+    # Check CLI arguments for PDF file association launch
+    if len(sys.argv) > 1 and sys.argv[1].strip('"\'').lower().endswith(".pdf"):
+        candidate = sys.argv[1].strip('"\'')
+        if os.path.isfile(candidate):
+            set_launch_pdf_path(os.path.abspath(candidate))
+        else:
+            set_launch_pdf_path(candidate)
+        print(f"[Main] Detected launch PDF path: {get_launch_pdf_path()}", flush=True)
+    else:
+        for arg in sys.argv[1:]:
+            clean_arg = str(arg).strip('"\'')
+            if clean_arg.lower().endswith(".pdf") and os.path.isfile(clean_arg):
+                set_launch_pdf_path(os.path.abspath(clean_arg))
+                print(f"[Main] Detected launch PDF path from argv: {get_launch_pdf_path()}", flush=True)
+                break
+
     # 1. Inspect CLI arguments for Windows protocol handler or Companion Extension launch
     is_from_ext = False
     target_route = None
@@ -998,6 +1028,11 @@ def main():
             target_route = "#activity"
         elif "#clients" in arg_lower:
             target_route = "#clients"
+        elif "#pdf-studio" in arg_lower or "#studio" in arg_lower or "route=pdf-studio" in arg_lower:
+            target_route = "#pdf-studio"
+
+    if get_launch_pdf_path() and not target_route:
+        target_route = "#pdf-studio"
 
     if is_from_ext and not target_route:
         target_route = "#save"
@@ -1140,6 +1175,8 @@ def main():
     extra_params = f"&ui_id={ui_instance_id}"
     if is_from_ext:
         extra_params += "&from_extension=1&skip_animation=1#save"
+    elif get_launch_pdf_path():
+        extra_params += "&launch_pdf=1#pdf-studio"
     target_url = f"http://127.0.0.1:{DESKTOP_PORT}/?desktop_app=1{extra_params}"
     print(f"[Main] Creating WebView2 window: {target_url} with restored state={saved_win_state}", flush=True)
 

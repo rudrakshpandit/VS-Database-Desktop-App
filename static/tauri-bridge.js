@@ -719,6 +719,32 @@
         body: JSON.stringify({ enabled: false })
       });
       return await resp.json();
+    },
+    getLaunchPdfPath: async function() {
+      if (typeof window !== 'undefined' && window.__VS_LAUNCH_PDF__) {
+        return window.__VS_LAUNCH_PDF__;
+      }
+      const inv = getTauriInvoke();
+      if (inv) {
+        try {
+          const res = await inv('get_launch_pdf_path');
+          if (res) return res;
+        } catch (_) {}
+      }
+      if (typeof window !== 'undefined' && window.pywebview?.api?.get_launch_pdf_path) {
+        try {
+          const res = await window.pywebview.api.get_launch_pdf_path();
+          if (res) return res;
+        } catch (_) {}
+      }
+      return null;
+    },
+    handlePdfLaunch: async function(filePath) {
+      if (!filePath) return false;
+      if (typeof global.openPdfFilePathInStudio === 'function') {
+        return await global.openPdfFilePathInStudio(filePath);
+      }
+      return false;
     }
   };
 
@@ -739,7 +765,8 @@
         open_local_folder: (path) => TauriBridge.openLocalFolder(path),
         get_client_connection_state: () => TauriBridge.getClientConnectionState(),
         get_client_autostart_status: () => TauriBridge.getClientAutostartStatus(),
-        set_client_autostart: (enabled) => TauriBridge.setClientAutostart(enabled)
+        set_client_autostart: (enabled) => TauriBridge.setClientAutostart(enabled),
+        get_launch_pdf_path: () => TauriBridge.getLaunchPdfPath()
       }
     };
     setTimeout(() => {
@@ -753,6 +780,96 @@
       document.addEventListener('DOMContentLoaded', applyDragRegions);
     } else {
       applyDragRegions();
+    }
+  }
+
+  // 11. Global native PDF launcher handler
+  global.openPdfFilePathInStudio = async function(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const cleanPath = filePath.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+    console.log('[PDF Viewer] Opening PDF in Studio:', cleanPath);
+
+    // Set navigation state immediately
+    if (typeof global.current !== 'undefined') {
+      global.current = 'pdf-studio';
+    }
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.hash = 'pdf-studio';
+    }
+    if (typeof global.safeNavigate === 'function') {
+      global.safeNavigate('studio');
+    } else if (typeof global.navigateTo === 'function') {
+      global.navigateTo('pdf-studio');
+    } else if (typeof global.nav === 'function') {
+      global.nav();
+    }
+
+    // Request backend to create PDF session from file path
+    const getApi = () => global.api || (typeof api === 'function' ? api : null);
+    let apiFn = getApi();
+    if (!apiFn) {
+      for (let attempt = 0; attempt < 25; attempt++) {
+        await new Promise(r => setTimeout(r, 200));
+        apiFn = getApi();
+        if (apiFn) break;
+      }
+    }
+
+    if (!apiFn) {
+      console.error('[PDF Viewer] API client unavailable to load PDF file.');
+      return false;
+    }
+
+    try {
+      const res = await apiFn('/api/pdf-studio/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: cleanPath })
+      });
+
+      if (res && res.ok && res.session) {
+        if (typeof global.openPdfStudioSession === 'function') {
+          global.openPdfStudioSession(res.session, res.thumbnails);
+          if (typeof global.renderStudioAll === 'function' && document.getElementById('studio-root')) {
+            global.renderStudioAll();
+          }
+          return true;
+        }
+      } else {
+        console.error('[PDF Viewer] Backend returned error for file path:', res?.error);
+        if (typeof global.studioToast === 'function') {
+          global.studioToast('Failed to open PDF: ' + (res?.error || 'Unknown error'));
+        }
+      }
+    } catch (err) {
+      console.error('[PDF Viewer] Network error opening PDF file path:', err);
+    }
+    return false;
+  };
+
+  // 12. Single-instance PDF event listener
+  if (typeof window !== 'undefined') {
+    const registerPdfOpenListener = async () => {
+      try {
+        if (window.__TAURI__?.event?.listen) {
+          await window.__TAURI__.event.listen('open-pdf-file', async (evt) => {
+            const pdfPath = evt.payload;
+            if (pdfPath) {
+              console.log('[TauriBridge] Received open-pdf-file event:', pdfPath);
+              if (typeof global.openPdfFilePathInStudio === 'function') {
+                await global.openPdfFilePathInStudio(pdfPath);
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('[TauriBridge] Error setting up open-pdf-file event listener:', err);
+      }
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', registerPdfOpenListener);
+    } else {
+      registerPdfOpenListener();
     }
   }
 

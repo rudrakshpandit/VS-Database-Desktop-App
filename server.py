@@ -7879,6 +7879,45 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return self.wfile.write(raw)
 
+        # PDF Studio Table of Contents / Bookmarks
+        if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/toc"):
+            sess_id = path.split("/")[4]
+            session = pdf_engine.get_session(sess_id)
+            if not session:
+                return self.send_json({"error": "PDF Studio session not found."}, 404)
+            toc = session.get_toc()
+            return self.send_json({"ok": True, "toc": toc})
+
+        # PDF Studio Detailed Document Metadata & Page Dimensions
+        if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/metadata"):
+            sess_id = path.split("/")[4]
+            session = pdf_engine.get_session(sess_id)
+            if not session:
+                return self.send_json({"error": "PDF Studio session not found."}, 404)
+            meta = session.get_document_metadata()
+            return self.send_json({"ok": True, "metadata": meta})
+
+        # PDF Studio Form Fields
+        if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/forms"):
+            sess_id = path.split("/")[4]
+            session = pdf_engine.get_session(sess_id)
+            if not session:
+                return self.send_json({"error": "PDF Studio session not found."}, 404)
+            forms = session.get_form_fields()
+            return self.send_json({"ok": True, "forms": forms})
+
+        # PDF Studio Plain Text / Markdown Export
+        if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/export-text"):
+            sess_id = path.split("/")[4]
+            session = pdf_engine.get_session(sess_id)
+            if not session:
+                return self.send_json({"error": "PDF Studio session not found."}, 404)
+            query_params = parse_qs(urlparse(self.path).query)
+            fmt = query_params.get("format", ["text"])[0]
+            pages = query_params.get("pages", ["all"])[0]
+            extracted = session.extract_text(format=fmt, pages=pages)
+            return self.send_json(extracted)
+
         if path == "/api/auth/status":
             ctx = self.get_auth_context()
             is_host_pc = self.is_host_client()
@@ -10553,8 +10592,25 @@ class Handler(BaseHTTPRequestHandler):
                 staging_mgr.clear_session(sess_id)
                 return self.send_json({"ok": True})
 
-            # Create PDF Studio Session (from staged files or direct upload)
+            # Direct Local File Path Opening for PDF Studio (No Base64 Overhead for Desktop / Tauri)
+            if path == "/api/pdf-studio/sessions/open-path":
+                fpath = payload.get("file_path") or payload.get("path")
+                if not fpath:
+                    raise ValueError("Missing 'file_path' or 'path' in request body.")
+                custom_name = payload.get("name") or payload.get("original_name")
+                session = pdf_engine.open_path(fpath, name=custom_name)
+                thumbs = pdf_engine.get_thumbnails(session.session_id)
+                return self.send_json({"ok": True, "session": session.to_dict(), "thumbnails": thumbs})
+
+            # Create PDF Studio Session (from local path, staged files, or direct upload)
             if path == "/api/pdf-studio/sessions":
+                if payload.get("file_path") or payload.get("path"):
+                    fpath = payload.get("file_path") or payload.get("path")
+                    custom_name = payload.get("name") or payload.get("original_name")
+                    session = pdf_engine.open_path(fpath, name=custom_name)
+                    thumbs = pdf_engine.get_thumbnails(session.session_id)
+                    return self.send_json({"ok": True, "session": session.to_dict(), "thumbnails": thumbs})
+
                 stg_sess_id = payload.get("staging_session_id")
                 staged_file_ids = payload.get("staged_file_ids", [])
 
@@ -10614,6 +10670,15 @@ class Handler(BaseHTTPRequestHandler):
                             pdf_engine.execute_tool(session.session_id, "merge_pdf", {"additional_files": [extra_bytes]})
                     else:
                         session = pdf_engine.create_session(first_name, first_bytes, source_files=source_files)
+                elif payload.get("file_path") or payload.get("path"):
+                    fp = payload.get("file_path") or payload.get("path")
+                    fp = os.path.abspath(str(fp).strip('"').strip("'"))
+                    if not os.path.exists(fp):
+                        raise ValueError(f"File not found on disk: {fp}")
+                    orig_name = payload.get("original_name") or os.path.basename(fp)
+                    with open(fp, "rb") as f:
+                        f_bytes = f.read()
+                    session = pdf_engine.create_session(orig_name, f_bytes)
                 elif payload.get("file_base64") or payload.get("data") or payload.get("base64"):
                     orig_name = payload.get("original_name") or "document.pdf"
                     b64_data = payload.get("file_base64") or payload.get("data") or payload.get("base64")
@@ -10667,6 +10732,68 @@ class Handler(BaseHTTPRequestHandler):
                 reset_res = session.reset_to_original()
                 thumbs = pdf_engine.get_thumbnails(sess_id)
                 return self.send_json({"ok": True, "reset": reset_res, "thumbnails": thumbs, "session": session.to_dict()})
+
+            # Update PDF Studio Document Metadata
+            if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/metadata"):
+                sess_id = path.split("/")[4]
+                session = pdf_engine.get_session(sess_id)
+                if not session:
+                    raise ValueError("Session not found.")
+                meta_updates = payload.get("metadata") or payload
+                res = session.update_document_metadata(meta_updates)
+                thumbs = pdf_engine.get_thumbnails(sess_id)
+                return self.send_json({"ok": True, "result": res, "metadata": res.get("metadata"), "session": session.to_dict(), "thumbnails": thumbs})
+
+            # Update PDF Studio TOC / Bookmarks
+            if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/toc"):
+                sess_id = path.split("/")[4]
+                session = pdf_engine.get_session(sess_id)
+                if not session:
+                    raise ValueError("Session not found.")
+                toc_items = payload.get("toc") if "toc" in payload else payload.get("bookmarks", [])
+                res = session.set_toc(toc_items)
+                thumbs = pdf_engine.get_thumbnails(sess_id)
+                return self.send_json({"ok": True, "result": res, "toc": res.get("toc"), "session": session.to_dict(), "thumbnails": thumbs})
+
+            # PDF Studio Fast Text Search
+            if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/search"):
+                sess_id = path.split("/")[4]
+                session = pdf_engine.get_session(sess_id)
+                if not session:
+                    raise ValueError("Session not found.")
+                q = payload.get("query") or payload.get("q") or ""
+                case_sens = bool(payload.get("case_sensitive", False))
+                prange = payload.get("page_range") or payload.get("pages")
+                results = session.search_text(query=q, case_sensitive=case_sens, page_range=prange)
+                return self.send_json(results)
+
+            # PDF Studio Form Field Filling & Flattening
+            if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/forms/fill"):
+                sess_id = path.split("/")[4]
+                session = pdf_engine.get_session(sess_id)
+                if not session:
+                    raise ValueError("Session not found.")
+                values = payload.get("values") or payload.get("fields") or {}
+                flatten = bool(payload.get("flatten", False))
+                res = session.fill_form_fields(values, flatten=flatten)
+                thumbs = pdf_engine.get_thumbnails(sess_id)
+                return self.send_json({"ok": True, "result": res, "session": session.to_dict(), "thumbnails": thumbs})
+
+            # PDF Studio Stamp Visual Signature
+            if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/sign"):
+                sess_id = path.split("/")[4]
+                session = pdf_engine.get_session(sess_id)
+                if not session:
+                    raise ValueError("Session not found.")
+                res = session.stamp_signature(payload)
+                thumbs = pdf_engine.get_thumbnails(sess_id)
+                return self.send_json({"ok": True, "result": res, "session": session.to_dict(), "thumbnails": thumbs})
+
+            # Close / Delete PDF Studio Session
+            if path.startswith("/api/pdf-studio/sessions/") and (path.endswith("/delete") or path.endswith("/close")):
+                sess_id = path.split("/")[4]
+                ok = pdf_engine.delete_session(sess_id)
+                return self.send_json({"ok": ok, "session_id": sess_id})
 
             # Apply PDF Studio Result to Staging Session (Save to Client Bridge)
             if path.startswith("/api/pdf-studio/sessions/") and path.endswith("/apply-to-staging"):
@@ -12743,6 +12870,11 @@ TASK:
             path = urlparse(self.path).path
             if path.startswith("/api/") and not self.protect_api(path):
                 return
+
+            if path.startswith("/api/pdf-studio/sessions/") and len(path.split("/")) == 5:
+                sess_id = path.split("/")[4]
+                ok = pdf_engine.delete_session(sess_id)
+                return self.send_json({"ok": ok, "session_id": sess_id})
 
             if path.startswith("/api/ai/"):
                 return self.handle_ai_delete(path)
